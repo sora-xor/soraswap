@@ -1,0 +1,796 @@
+seiyaku SaleFactory {
+  state SaleAsset: Map<Name, AssetDefinitionId>;
+  state PaymentAsset: Map<Name, AssetDefinitionId>;
+  state Treasury: Map<Name, AccountId>;
+  state UnitPrice: Map<Name, int>;
+  state SoftCap: Map<Name, int>;
+  state HardCap: Map<Name, int>;
+  state Raised: Map<Name, int>;
+  state Sold: Map<Name, int>;
+  state Closed: Map<Name, int>;
+  state Successful: Map<Name, int>;
+  state Seeded: Map<Name, int>;
+  state SeedInventory: Map<Name, int>;
+  state SeedVault: Map<Name, AccountId>;
+  state SeedPositionId: Map<Name, Name>;
+  state SeedBinId: Map<Name, int>;
+  state SeedPaymentAmount: Map<Name, int>;
+  state SeedSaleAmount: Map<Name, int>;
+  state SeedPaymentUsed: Map<Name, int>;
+  state SeedSaleUsed: Map<Name, int>;
+  state ClaimInventory: Map<Name, int>;
+  state ClaimedSupply: Map<Name, int>;
+  state RefundedPayment: Map<Name, int>;
+  state ClaimStartSlot: Map<Name, int>;
+  state ClaimEndSlot: Map<Name, int>;
+  state AllocationSale: Map<Name, Name>;
+  state AllocationBuyer: Map<Name, AccountId>;
+  state AllocationPaymentAmount: Map<Name, int>;
+  state AllocationSaleAmount: Map<Name, int>;
+  state AllocationClaimed: Map<Name, int>;
+  state AllocationRefunded: Map<Name, int>;
+
+  fn move_asset_if_needed(from: AccountId,
+                          to: AccountId,
+                          asset: AssetDefinitionId,
+                          amount: int) {
+    if amount > 0 {
+      if from != to {
+        transfer_asset(from, to, asset, amount);
+      }
+    }
+  }
+
+  fn assert_sale_exists(sale: Name) {
+    assert(contains(SaleAsset, sale), "sale missing");
+  }
+
+  fn assert_allocation_exists(allocation: Name) {
+    assert(contains(AllocationSale, allocation), "allocation missing");
+  }
+
+  fn validate_sale_config(unit_price: int, soft_cap: int, hard_cap: int) {
+    assert(unit_price > 0, "invalid unit price");
+    assert(soft_cap > 0, "invalid soft cap");
+    assert(hard_cap >= soft_cap, "invalid hard cap");
+  }
+
+  fn validate_vesting_config(claim_start_slot: int, claim_end_slot: int) {
+    assert(claim_start_slot >= 0, "invalid claim start");
+    assert(claim_end_slot >= claim_start_slot, "invalid claim end");
+  }
+
+  fn available_payment_for_seed(sale: Name) -> int {
+    let raised = get_or_insert_default(Raised, sale, 0);
+    let used = get_or_insert_default(SeedPaymentUsed, sale, 0);
+    let refunded = get_or_insert_default(RefundedPayment, sale, 0);
+    return raised - used - refunded;
+  }
+
+  fn vested_claimable(total_amount: int,
+                      claim_start_slot: int,
+                      claim_end_slot: int,
+                      current_slot: int) -> int {
+    if current_slot < claim_start_slot {
+      return 0;
+    }
+    if claim_end_slot <= claim_start_slot {
+      return total_amount;
+    }
+    if current_slot >= claim_end_slot {
+      return total_amount;
+    }
+    let vested_slots = current_slot - claim_start_slot;
+    let total_slots = claim_end_slot - claim_start_slot;
+    return (total_amount * vested_slots) / total_slots;
+  }
+
+  fn allocation_sale_for_buyer(allocation: Name, buyer: AccountId) -> Name {
+    assert_allocation_exists(allocation);
+    assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
+    return AllocationSale[allocation];
+  }
+
+  fn refund_amount_for(allocation: Name, sale: Name) -> int {
+    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
+    assert(get_or_insert_default(Successful, sale, 0) == 0, "sale successful");
+    assert(AllocationClaimed[allocation] == 0, "allocation claimed");
+    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
+    let amount = AllocationPaymentAmount[allocation];
+    assert(amount > 0, "nothing refundable");
+    return amount;
+  }
+
+  fn claim_amount_for(allocation: Name, sale: Name, current_slot: int) -> int {
+    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
+    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
+    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
+    let total_sale = AllocationSaleAmount[allocation];
+    let claimable = vested_claimable(
+      total_sale,
+      get_or_insert_default(ClaimStartSlot, sale, 0),
+      get_or_insert_default(ClaimEndSlot, sale, 0),
+      current_slot
+    );
+    let claimed = AllocationClaimed[allocation];
+    assert(claimable > claimed, "nothing claimable");
+    return claimable - claimed;
+  }
+
+  fn settle_claim_transfer(allocation: Name,
+                           sale: Name,
+                           buyer: AccountId,
+                           treasury: AccountId,
+                           sale_asset: AssetDefinitionId,
+                           amount: int) -> int {
+    let claimed = AllocationClaimed[allocation];
+    let claim_inventory = get_or_insert_default(ClaimInventory, sale, 0);
+    assert(claim_inventory >= amount, "insufficient claim inventory");
+    move_asset_if_needed(treasury, buyer, sale_asset, amount);
+    AllocationClaimed[allocation] = claimed + amount;
+    ClaimInventory[sale] = claim_inventory - amount;
+    ClaimedSupply[sale] = get_or_insert_default(ClaimedSupply, sale, 0) + amount;
+    return amount;
+  }
+
+  fn settle_refund_transfer(allocation: Name,
+                            sale: Name,
+                            buyer: AccountId,
+                            treasury: AccountId,
+                            payment_asset: AssetDefinitionId,
+                            amount: int) -> int {
+    move_asset_if_needed(treasury, buyer, payment_asset, amount);
+    AllocationRefunded[allocation] = 1;
+    RefundedPayment[sale] = get_or_insert_default(RefundedPayment, sale, 0) + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  view fn mirror_sale(sale: Name) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
+    assert_sale_exists(sale);
+    let raised = get_or(Raised, sale, 0);
+    let sold = get_or(Sold, sale, 0);
+    let closed = get_or(Closed, sale, 0);
+    let successful = get_or(Successful, sale, 0);
+    let seeded = get_or(Seeded, sale, 0);
+    let seed_inventory = get_or(SeedInventory, sale, 0);
+    let seed_bin_id = get_or(SeedBinId, sale, 0);
+    let seed_payment_amount = get_or(SeedPaymentAmount, sale, 0);
+    let seed_sale_amount = get_or(SeedSaleAmount, sale, 0);
+    let claim_inventory = get_or(ClaimInventory, sale, 0);
+    let claim_start_slot = get_or(ClaimStartSlot, sale, 0);
+    let claim_end_slot = get_or(ClaimEndSlot, sale, 0);
+    let seed_registered = 0;
+    if seed_payment_amount > 0 || seed_sale_amount > 0 {
+      seed_registered = 1;
+    }
+    return (
+      seed_registered,
+      raised,
+      sold,
+      closed,
+      successful,
+      seeded,
+      seed_inventory,
+      seed_bin_id,
+      seed_payment_amount,
+      seed_sale_amount,
+      claim_inventory,
+      claim_start_slot,
+      claim_end_slot
+    );
+  }
+
+  #[access(read="*", write="*")]
+  view fn sale_config(sale: Name) -> (AssetDefinitionId, AssetDefinitionId, AccountId, int, int, int, int, int) {
+    assert_sale_exists(sale);
+    return (
+      SaleAsset[sale],
+      PaymentAsset[sale],
+      Treasury[sale],
+      UnitPrice[sale],
+      get_or(SoftCap, sale, 1),
+      HardCap[sale],
+      get_or(ClaimStartSlot, sale, 0),
+      get_or(ClaimEndSlot, sale, 0)
+    );
+  }
+
+  #[access(read="*", write="*")]
+  view fn mirror_sale_accounting(sale: Name) -> (int, int, int, int) {
+    assert_sale_exists(sale);
+    return (
+      get_or(SeedPaymentUsed, sale, 0),
+      get_or(SeedSaleUsed, sale, 0),
+      get_or(ClaimedSupply, sale, 0),
+      get_or(RefundedPayment, sale, 0)
+    );
+  }
+
+  #[access(read="*", write="*")]
+  view fn mirror_allocation(allocation: Name) -> (int, int, int, int, int) {
+    if contains(AllocationSale, allocation) {
+      return (
+        1,
+        AllocationPaymentAmount[allocation],
+        AllocationSaleAmount[allocation],
+        AllocationClaimed[allocation],
+        AllocationRefunded[allocation]
+      );
+    }
+    return (0, 0, 0, 0, 0);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn refund_allocation(buyer: AccountId,
+                               allocation: Name) -> int permission(Admin) {
+    assert_allocation_exists(allocation);
+    let sale = AllocationSale[allocation];
+    assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
+    assert(Closed[sale] == 1, "sale open");
+    assert(Successful[sale] == 0, "sale successful");
+    assert(AllocationClaimed[allocation] == 0, "allocation claimed");
+    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
+    let amount = AllocationPaymentAmount[allocation];
+    assert(amount > 0, "nothing refundable");
+    let treasury = Treasury[sale];
+    let payment_asset = PaymentAsset[sale];
+    move_asset_if_needed(treasury, buyer, payment_asset, amount);
+    AllocationRefunded[allocation] = 1;
+    RefundedPayment[sale] = RefundedPayment[sale] + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn refund_allocation_with_assets(buyer: AccountId,
+                                           allocation: Name,
+                                           treasury: AccountId,
+                                           payment_asset: AssetDefinitionId) -> int permission(Admin) {
+    assert_allocation_exists(allocation);
+    assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
+    let sale = AllocationSale[allocation];
+    assert(Closed[sale] == 1, "sale open");
+    assert(Successful[sale] == 0, "sale successful");
+    assert(AllocationClaimed[allocation] == 0, "allocation claimed");
+    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
+    let amount = AllocationPaymentAmount[allocation];
+    assert(amount > 0, "nothing refundable");
+    move_asset_if_needed(treasury, buyer, payment_asset, amount);
+    AllocationRefunded[allocation] = 1;
+    RefundedPayment[sale] = RefundedPayment[sale] + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn refund_allocation_safe_with_assets(buyer: AccountId,
+                                                allocation: Name,
+                                                treasury: AccountId,
+                                                payment_asset: AssetDefinitionId) -> int permission(Admin) {
+    assert_allocation_exists(allocation);
+    assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
+    let sale = AllocationSale[allocation];
+    assert(Closed[sale] == 1, "sale open");
+    assert(Successful[sale] == 0, "sale successful");
+    assert(AllocationClaimed[allocation] == 0, "allocation claimed");
+    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
+    let amount = AllocationPaymentAmount[allocation];
+    assert(amount > 0, "nothing refundable");
+    move_asset_if_needed(treasury, buyer, payment_asset, amount);
+    AllocationRefunded[allocation] = 1;
+    RefundedPayment[sale] = RefundedPayment[sale] + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_refund_assets(buyer: AccountId,
+                                  allocation: Name,
+                                  treasury: AccountId,
+                                  payment_asset: AssetDefinitionId) -> int permission(Admin) {
+    let sale = allocation_sale_for_buyer(allocation, buyer);
+    let amount = refund_amount_for(allocation, sale);
+    return settle_refund_transfer(
+      allocation,
+      sale,
+      buyer,
+      treasury,
+      payment_asset,
+      amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_sale(sale: Name,
+                       sale_asset: AssetDefinitionId,
+                       payment_asset: AssetDefinitionId,
+                       treasury: AccountId,
+                       unit_price: int,
+                       hard_cap: int) permission(Admin) {
+    init_sale_impl(
+      sale,
+      sale_asset,
+      payment_asset,
+      treasury,
+      unit_price,
+      hard_cap
+    );
+  }
+
+  fn init_sale_impl(sale: Name,
+                    sale_asset: AssetDefinitionId,
+                    payment_asset: AssetDefinitionId,
+                    treasury: AccountId,
+                    unit_price: int,
+                    hard_cap: int) {
+    assert(!contains(SaleAsset, sale), "sale exists");
+    validate_sale_config(unit_price, 1, hard_cap);
+    SaleAsset[sale] = sale_asset;
+    PaymentAsset[sale] = payment_asset;
+    Treasury[sale] = treasury;
+    UnitPrice[sale] = unit_price;
+    SoftCap[sale] = 1;
+    HardCap[sale] = hard_cap;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn configure_sale(sale: Name,
+                            unit_price: int,
+                            soft_cap: int,
+                            hard_cap: int) permission(Admin) {
+    configure_sale_impl(sale, unit_price, soft_cap, hard_cap);
+  }
+
+  fn configure_sale_impl(sale: Name, unit_price: int, soft_cap: int, hard_cap: int) {
+    assert_sale_exists(sale);
+    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
+    validate_sale_config(unit_price, soft_cap, hard_cap);
+    UnitPrice[sale] = unit_price;
+    SoftCap[sale] = soft_cap;
+    HardCap[sale] = hard_cap;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn configure_vesting(sale: Name,
+                               claim_start_slot: int,
+                               claim_end_slot: int) permission(Admin) {
+    configure_vesting_impl(sale, claim_start_slot, claim_end_slot);
+  }
+
+  fn configure_vesting_impl(sale: Name, claim_start_slot: int, claim_end_slot: int) {
+    assert_sale_exists(sale);
+    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
+    validate_vesting_config(claim_start_slot, claim_end_slot);
+    ClaimStartSlot[sale] = claim_start_slot;
+    ClaimEndSlot[sale] = claim_end_slot;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn contribute(buyer: AccountId,
+                        sale: Name,
+                        payment_amount: int) -> int permission(Admin) {
+    return contribute_impl(buyer, sale, payment_amount);
+  }
+
+  fn contribute_impl(buyer: AccountId, sale: Name, payment_amount: int) -> int {
+    assert_sale_exists(sale);
+    return contribute_with_assets_impl(
+      buyer,
+      sale,
+      Treasury[sale],
+      PaymentAsset[sale],
+      SaleAsset[sale],
+      payment_amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn contribute_with_assets(buyer: AccountId,
+                                    sale: Name,
+                                    treasury: AccountId,
+                                    payment_asset: AssetDefinitionId,
+                                    sale_asset: AssetDefinitionId,
+                                    payment_amount: int) -> int permission(Admin) {
+    return contribute_with_assets_impl(
+      buyer,
+      sale,
+      treasury,
+      payment_asset,
+      sale_asset,
+      payment_amount
+    );
+  }
+
+  fn contribute_with_assets_impl(buyer: AccountId,
+                                 sale: Name,
+                                 treasury: AccountId,
+                                 payment_asset: AssetDefinitionId,
+                                 sale_asset: AssetDefinitionId,
+                                 payment_amount: int) -> int {
+    assert_sale_exists(sale);
+    assert(payment_amount > 0, "invalid payment");
+    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
+    let raised = get_or_insert_default(Raised, sale, 0);
+    let next = raised + payment_amount;
+    assert(next <= get_or_insert_default(HardCap, sale, 0), "hard cap");
+    let minted = payment_amount / get_or_insert_default(UnitPrice, sale, 1);
+    assert(minted > 0, "zero sale output");
+
+    move_asset_if_needed(buyer, treasury, payment_asset, payment_amount);
+    mint_asset(buyer, sale_asset, minted);
+    Raised[sale] = next;
+    Sold[sale] = get_or_insert_default(Sold, sale, 0) + minted;
+    return minted;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn contribute_recorded(buyer: AccountId,
+                                 sale: Name,
+                                 allocation: Name,
+                                 payment_amount: int) -> int permission(Admin) {
+    return contribute_recorded_with_assets_impl(
+      buyer,
+      sale,
+      allocation,
+      Treasury[sale],
+      PaymentAsset[sale],
+      payment_amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn contribute_recorded_with_assets(buyer: AccountId,
+                                             sale: Name,
+                                             allocation: Name,
+                                             treasury: AccountId,
+                                             payment_asset: AssetDefinitionId,
+                                             payment_amount: int) -> int permission(Admin) {
+    return contribute_recorded_with_assets_impl(
+      buyer,
+      sale,
+      allocation,
+      treasury,
+      payment_asset,
+      payment_amount
+    );
+  }
+
+  fn contribute_recorded_with_assets_impl(buyer: AccountId,
+                                          sale: Name,
+                                          allocation: Name,
+                                          treasury: AccountId,
+                                          payment_asset: AssetDefinitionId,
+                                          payment_amount: int) -> int {
+    assert_sale_exists(sale);
+    assert(!contains(AllocationSale, allocation), "allocation exists");
+    assert(payment_amount > 0, "invalid payment");
+    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
+    let raised = get_or_insert_default(Raised, sale, 0);
+    let next = raised + payment_amount;
+    assert(next <= get_or_insert_default(HardCap, sale, 0), "hard cap");
+    let sale_amount = payment_amount / get_or_insert_default(UnitPrice, sale, 1);
+    assert(sale_amount > 0, "zero sale output");
+
+    move_asset_if_needed(buyer, treasury, payment_asset, payment_amount);
+    AllocationSale[allocation] = sale;
+    AllocationBuyer[allocation] = buyer;
+    AllocationPaymentAmount[allocation] = payment_amount;
+    AllocationSaleAmount[allocation] = sale_amount;
+    AllocationClaimed[allocation] = 0;
+    AllocationRefunded[allocation] = 0;
+    Raised[sale] = next;
+    Sold[sale] = get_or_insert_default(Sold, sale, 0) + sale_amount;
+    return sale_amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn close_sale(sale: Name) permission(Admin) {
+    close_sale_impl(sale);
+  }
+
+  fn close_sale_impl(sale: Name) {
+    assert_sale_exists(sale);
+    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
+    Closed[sale] = 1;
+    if get_or_insert_default(Raised, sale, 0) >= get_or_insert_default(SoftCap, sale, 1) {
+      Successful[sale] = 1;
+    } else {
+      Successful[sale] = 0;
+    }
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn deposit_seed_inventory(owner: AccountId,
+                                    sale: Name,
+                                    amount: int) -> int permission(Admin) {
+    return deposit_seed_inventory_impl(
+      owner,
+      sale,
+      Treasury[sale],
+      SaleAsset[sale],
+      amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn deposit_seed_inventory_with_assets(owner: AccountId,
+                                                sale: Name,
+                                                treasury: AccountId,
+                                                sale_asset: AssetDefinitionId,
+                                                amount: int) -> int permission(Admin) {
+    return deposit_seed_inventory_impl(
+      owner,
+      sale,
+      treasury,
+      sale_asset,
+      amount
+    );
+  }
+
+  fn deposit_seed_inventory_impl(owner: AccountId,
+                                 sale: Name,
+                                 treasury: AccountId,
+                                 sale_asset: AssetDefinitionId,
+                                 amount: int) -> int {
+    assert_sale_exists(sale);
+    assert(amount > 0, "invalid amount");
+    assert(get_or_insert_default(Seeded, sale, 0) == 0, "sale seeded");
+    move_asset_if_needed(owner, treasury, sale_asset, amount);
+    SeedInventory[sale] = get_or_insert_default(SeedInventory, sale, 0) + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn deposit_claim_inventory(owner: AccountId,
+                                     sale: Name,
+                                     amount: int) -> int permission(Admin) {
+    return deposit_claim_inventory_impl(
+      owner,
+      sale,
+      Treasury[sale],
+      SaleAsset[sale],
+      amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn deposit_claim_inventory_with_assets(owner: AccountId,
+                                                 sale: Name,
+                                                 treasury: AccountId,
+                                                 sale_asset: AssetDefinitionId,
+                                                 amount: int) -> int permission(Admin) {
+    return deposit_claim_inventory_impl(
+      owner,
+      sale,
+      treasury,
+      sale_asset,
+      amount
+    );
+  }
+
+  fn deposit_claim_inventory_impl(owner: AccountId,
+                                  sale: Name,
+                                  treasury: AccountId,
+                                  sale_asset: AssetDefinitionId,
+                                  amount: int) -> int {
+    assert_sale_exists(sale);
+    assert(amount > 0, "invalid amount");
+    move_asset_if_needed(owner, treasury, sale_asset, amount);
+    ClaimInventory[sale] = get_or_insert_default(ClaimInventory, sale, 0) + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn register_seed_liquidity(sale: Name,
+                                     position_id: Name,
+                                     vault_account: AccountId,
+                                     bin_id: int,
+                                     payment_amount: int,
+                                     sale_amount: int) permission(Admin) {
+    register_seed_liquidity_impl(
+      sale,
+      position_id,
+      vault_account,
+      bin_id,
+      payment_amount,
+      sale_amount
+    );
+  }
+
+  fn register_seed_liquidity_impl(sale: Name,
+                                  position_id: Name,
+                                  vault_account: AccountId,
+                                  bin_id: int,
+                                  payment_amount: int,
+                                  sale_amount: int) {
+    assert_sale_exists(sale);
+    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
+    assert(get_or_insert_default(Seeded, sale, 0) == 0, "sale seeded");
+    assert(payment_amount > 0, "invalid payment amount");
+    assert(sale_amount > 0, "invalid sale amount");
+    SeedPositionId[sale] = position_id;
+    SeedVault[sale] = vault_account;
+    SeedBinId[sale] = bin_id;
+    SeedPaymentAmount[sale] = payment_amount;
+    SeedSaleAmount[sale] = sale_amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn seed_liquidity(sale: Name) -> int permission(Admin) {
+    return seed_liquidity_impl(
+      sale,
+      Treasury[sale],
+      SeedVault[sale],
+      PaymentAsset[sale],
+      SaleAsset[sale]
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn seed_liquidity_with_assets(sale: Name,
+                                        treasury: AccountId,
+                                        vault_account: AccountId,
+                                        payment_asset: AssetDefinitionId,
+                                        sale_asset: AssetDefinitionId) -> int permission(Admin) {
+    return seed_liquidity_impl(
+      sale,
+      treasury,
+      vault_account,
+      payment_asset,
+      sale_asset
+    );
+  }
+
+  fn seed_liquidity_impl(sale: Name,
+                         treasury: AccountId,
+                         vault_account: AccountId,
+                         payment_asset: AssetDefinitionId,
+                         sale_asset: AssetDefinitionId) -> int {
+    assert_sale_exists(sale);
+    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
+    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
+    assert(get_or_insert_default(Seeded, sale, 0) == 0, "sale seeded");
+    assert(contains(SeedPositionId, sale), "seed plan missing");
+    let payment_amount = get_or_insert_default(SeedPaymentAmount, sale, 0);
+    let sale_amount = get_or_insert_default(SeedSaleAmount, sale, 0);
+    assert(payment_amount > 0, "seed payment missing");
+    assert(sale_amount > 0, "seed sale missing");
+    assert(available_payment_for_seed(sale) >= payment_amount, "insufficient payment proceeds");
+    assert(get_or_insert_default(SeedInventory, sale, 0) >= sale_amount, "insufficient seed inventory");
+
+    SeedVault[sale] = vault_account;
+    move_asset_if_needed(treasury, vault_account, payment_asset, payment_amount);
+    move_asset_if_needed(treasury, vault_account, sale_asset, sale_amount);
+    SeedInventory[sale] = get_or_insert_default(SeedInventory, sale, 0) - sale_amount;
+    SeedPaymentUsed[sale] = get_or_insert_default(SeedPaymentUsed, sale, 0) + payment_amount;
+    SeedSaleUsed[sale] = get_or_insert_default(SeedSaleUsed, sale, 0) + sale_amount;
+    Seeded[sale] = 1;
+    return payment_amount + sale_amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn claim_allocation(buyer: AccountId,
+                              allocation: Name,
+                              current_slot: int) -> int permission(Admin) {
+    assert_allocation_exists(allocation);
+    let sale = AllocationSale[allocation];
+    assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
+    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
+    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
+    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
+    let total_sale = AllocationSaleAmount[allocation];
+    let claimable = vested_claimable(
+      total_sale,
+      get_or_insert_default(ClaimStartSlot, sale, 0),
+      get_or_insert_default(ClaimEndSlot, sale, 0),
+      current_slot
+    );
+    let claimed = AllocationClaimed[allocation];
+    assert(claimable > claimed, "nothing claimable");
+    let amount = claimable - claimed;
+    let claim_inventory = get_or_insert_default(ClaimInventory, sale, 0);
+    assert(claim_inventory >= amount, "insufficient claim inventory");
+    let treasury = Treasury[sale];
+    let sale_asset = SaleAsset[sale];
+    move_asset_if_needed(treasury, buyer, sale_asset, amount);
+    AllocationClaimed[allocation] = claimed + amount;
+    ClaimInventory[sale] = claim_inventory - amount;
+    ClaimedSupply[sale] = get_or_insert_default(ClaimedSupply, sale, 0) + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn claim_allocation_with_assets(buyer: AccountId,
+                                          allocation: Name,
+                                          treasury: AccountId,
+                                          sale_asset: AssetDefinitionId,
+                                          current_slot: int) -> int permission(Admin) {
+    assert_allocation_exists(allocation);
+    assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
+    let sale = AllocationSale[allocation];
+    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
+    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
+    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
+    let total_sale = AllocationSaleAmount[allocation];
+    let claimable = vested_claimable(
+      total_sale,
+      get_or_insert_default(ClaimStartSlot, sale, 0),
+      get_or_insert_default(ClaimEndSlot, sale, 0),
+      current_slot
+    );
+    let claimed = AllocationClaimed[allocation];
+    assert(claimable > claimed, "nothing claimable");
+    let amount = claimable - claimed;
+    let claim_inventory = get_or_insert_default(ClaimInventory, sale, 0);
+    assert(claim_inventory >= amount, "insufficient claim inventory");
+    move_asset_if_needed(treasury, buyer, sale_asset, amount);
+    AllocationClaimed[allocation] = claimed + amount;
+    ClaimInventory[sale] = claim_inventory - amount;
+    ClaimedSupply[sale] = get_or_insert_default(ClaimedSupply, sale, 0) + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn claim_allocation_safe_with_assets(buyer: AccountId,
+                                               allocation: Name,
+                                               treasury: AccountId,
+                                               sale_asset: AssetDefinitionId,
+                                               current_slot: int) -> int permission(Admin) {
+    assert_allocation_exists(allocation);
+    assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
+    let sale = AllocationSale[allocation];
+    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
+    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
+    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
+    let total_sale = AllocationSaleAmount[allocation];
+    let claimable = vested_claimable(
+      total_sale,
+      get_or_insert_default(ClaimStartSlot, sale, 0),
+      get_or_insert_default(ClaimEndSlot, sale, 0),
+      current_slot
+    );
+    let claimed = AllocationClaimed[allocation];
+    assert(claimable > claimed, "nothing claimable");
+    let amount = claimable - claimed;
+    let claim_inventory = get_or_insert_default(ClaimInventory, sale, 0);
+    assert(claim_inventory >= amount, "insufficient claim inventory");
+    move_asset_if_needed(treasury, buyer, sale_asset, amount);
+    AllocationClaimed[allocation] = claimed + amount;
+    ClaimInventory[sale] = claim_inventory - amount;
+    ClaimedSupply[sale] = get_or_insert_default(ClaimedSupply, sale, 0) + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_claim_assets(buyer: AccountId,
+                                 allocation: Name,
+                                 treasury: AccountId,
+                                 sale_asset: AssetDefinitionId,
+                                 current_slot: int) -> int permission(Admin) {
+    let sale = allocation_sale_for_buyer(allocation, buyer);
+    let amount = claim_amount_for(allocation, sale, current_slot);
+    return settle_claim_transfer(
+      allocation,
+      sale,
+      buyer,
+      treasury,
+      sale_asset,
+      amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn mark_seeded(sale: Name) permission(Admin) {
+    seed_liquidity_impl(
+      sale,
+      Treasury[sale],
+      SeedVault[sale],
+      PaymentAsset[sale],
+      SaleAsset[sale]
+    );
+  }
+
+}

@@ -1,0 +1,190 @@
+// Router quote helpers for xor#universal anchored paths.
+
+seiyaku DlmmRouter {
+  state int RouterInitialized;
+  state AssetDefinitionId BaseAsset;
+  state int DefaultFeePips;
+
+  fn ppm_scale() -> int {
+    return 1_000_000;
+  }
+
+  fn assert_valid_fee(fee_pips: int) {
+    assert(fee_pips >= 0, "negative fee_pips");
+    assert(fee_pips < ppm_scale(), "fee_pips too large");
+  }
+
+  fn assert_valid_bin_step(bin_step: int) {
+    assert(bin_step > 0, "invalid bin_step");
+    assert(bin_step <= 100_000, "bin_step too large");
+  }
+
+  fn abs_int(value: int) -> int {
+    if value < 0 {
+      return 0 - value;
+    }
+    return value;
+  }
+
+  fn base_asset_name() -> Name {
+    let base_asset = name!("base_asset");
+    return base_asset;
+  }
+
+  fn default_fee_pips_name() -> Name {
+    let default_fee_pips = name!("default_fee_pips");
+    return default_fee_pips;
+  }
+
+  fn amount_in_name() -> Name {
+    let amount_in = name!("amount_in");
+    return amount_in;
+  }
+
+  fn fee_pips_name() -> Name {
+    let fee_pips = name!("fee_pips");
+    return fee_pips;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    if RouterInitialized == 1 {
+      return DefaultFeePips;
+    }
+    return 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_router(base_asset: AssetDefinitionId, default_fee_pips: int) permission(Admin) {
+    init_router_impl(base_asset, default_fee_pips);
+  }
+
+  fn init_router_impl(base_asset: AssetDefinitionId, default_fee_pips: int) {
+    assert_valid_fee(default_fee_pips);
+    RouterInitialized = 1;
+    BaseAsset = base_asset;
+    DefaultFeePips = default_fee_pips;
+    info("dlmm_router_initialized");
+  }
+
+  view fn assert_router_config(default_fee_pips: int) -> int {
+    assert(RouterInitialized == 1, "router not initialized");
+    assert(DefaultFeePips == default_fee_pips, "unexpected default fee");
+    return DefaultFeePips;
+  }
+
+  view fn router_config() -> (AssetDefinitionId, int) {
+    assert(RouterInitialized == 1, "router not initialized");
+    return (BaseAsset, DefaultFeePips);
+  }
+
+  view fn mirror_state() -> (int, int) {
+    assert(RouterInitialized == 1, "router not initialized");
+    return (RouterInitialized, DefaultFeePips);
+  }
+
+  view fn quote_direct(reserve_in: int,
+                       reserve_out: int,
+                       amount_in: int,
+                       fee_pips: int) -> int {
+    return quote_direct_impl(reserve_in, reserve_out, amount_in, fee_pips);
+  }
+
+  fn quote_direct_impl(reserve_in: int,
+                       reserve_out: int,
+                       amount_in: int,
+                       fee_pips: int) -> int {
+    let effective = (amount_in * (ppm_scale() - fee_pips)) / ppm_scale();
+    if effective <= 0 {
+      return 0;
+    }
+    return (reserve_out * effective) / (reserve_in + effective);
+  }
+
+  fn bin_price_ppm(bin_id: int, bin_step: int) -> int {
+    let scale = ppm_scale();
+    assert_valid_bin_step(bin_step);
+
+    if bin_id >= 0 {
+      return scale + (bin_id * bin_step);
+    }
+
+    let denominator = scale + (abs_int(bin_id) * bin_step);
+    let price = (scale * scale) / denominator;
+    assert(price > 0, "bin price underflow");
+    return price;
+  }
+
+  view fn quote_bin(reserve_base: int,
+                    reserve_quote: int,
+                    amount_in: int,
+                    fee_pips: int,
+                    bin_id: int,
+                    bin_step: int,
+                    input_is_base: int,
+                    min_reserve_base: int,
+                    min_reserve_quote: int) -> int {
+    return quote_bin_impl(
+      reserve_base,
+      reserve_quote,
+      amount_in,
+      fee_pips,
+      bin_id,
+      bin_step,
+      input_is_base,
+      min_reserve_base,
+      min_reserve_quote
+    );
+  }
+
+  fn quote_bin_impl(reserve_base: int,
+                    reserve_quote: int,
+                    amount_in: int,
+                    fee_pips: int,
+                    bin_id: int,
+                    bin_step: int,
+                    input_is_base: int,
+                    min_reserve_base: int,
+                    min_reserve_quote: int) -> int {
+    let scale = ppm_scale();
+    let effective = (amount_in * (scale - fee_pips)) / scale;
+    let price = bin_price_ppm(bin_id, bin_step);
+    if effective <= 0 {
+      return 0;
+    }
+
+    if input_is_base == 1 {
+      let available_quote = reserve_quote - min_reserve_quote;
+      if available_quote <= 0 {
+        return 0;
+      }
+      let out = (effective * price) / scale;
+      if out > available_quote {
+        return available_quote;
+      }
+      return out;
+    }
+
+    assert(input_is_base == 0, "invalid direction");
+    let available_base = reserve_base - min_reserve_base;
+    if available_base <= 0 {
+      return 0;
+    }
+    let out = (effective * scale) / price;
+    if out > available_base {
+      return available_base;
+    }
+    return out;
+  }
+
+  view fn select_best_quote(direct_out: int, via_base_out: int) -> int {
+    return select_best_quote_impl(direct_out, via_base_out);
+  }
+
+  fn select_best_quote_impl(direct_out: int, via_base_out: int) -> int {
+    if direct_out >= via_base_out {
+      return direct_out;
+    }
+    return via_base_out;
+  }
+}

@@ -1,0 +1,399 @@
+seiyaku PolicyManager {
+  state SettlementAsset: Map<Name, AssetDefinitionId>;
+  state VaultAccount: Map<Name, AccountId>;
+  state DurationSlots: Map<Name, int>;
+  state PayoutBps: Map<Name, int>;
+  state Premium: Map<Name, int>;
+  state PolicyOwner: Map<Name, AccountId>;
+  state PolicyNotional: Map<Name, int>;
+  state PremiumPaid: Map<Name, int>;
+  state BreachElapsed: Map<Name, int>;
+  state Active: Map<Name, int>;
+  state ClaimPayout: Map<Name, int>;
+  state Expired: Map<Name, int>;
+  state ClaimCount: Map<Name, int>;
+
+  fn assert_policy_exists(policy: Name) {
+    assert(contains(SettlementAsset, policy), "policy missing");
+  }
+
+  fn move_asset_if_needed(from: AccountId,
+                          to: AccountId,
+                          asset: AssetDefinitionId,
+                          amount: int) {
+    if amount > 0 {
+      if from != to {
+        transfer_asset(from, to, asset, amount);
+      }
+    }
+  }
+
+  fn policy_name() -> Name {
+    let policy = name!("policy");
+    return policy;
+  }
+
+  fn settlement_asset_name() -> Name {
+    let settlement_asset = name!("settlement_asset");
+    return settlement_asset;
+  }
+
+  fn vault_account_name() -> Name {
+    let vault_account = name!("vault_account");
+    return vault_account;
+  }
+
+  fn duration_slots_name() -> Name {
+    let duration_slots = name!("duration_slots");
+    return duration_slots;
+  }
+
+  fn payout_bps_name() -> Name {
+    let payout_bps = name!("payout_bps");
+    return payout_bps;
+  }
+
+  fn premium_name() -> Name {
+    let premium = name!("premium");
+    return premium;
+  }
+
+  fn buyer_name() -> Name {
+    let buyer = name!("buyer");
+    return buyer;
+  }
+
+  fn covered_notional_name() -> Name {
+    let covered_notional = name!("covered_notional");
+    return covered_notional;
+  }
+
+  fn elapsed_slots_name() -> Name {
+    let elapsed_slots = name!("elapsed_slots");
+    return elapsed_slots;
+  }
+
+  fn claimant_name() -> Name {
+    let claimant = name!("claimant");
+    return claimant;
+  }
+
+  fn refund_bps_name() -> Name {
+    let refund_bps = name!("refund_bps");
+    return refund_bps;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_policy(policy: Name,
+                         settlement_asset: AssetDefinitionId,
+                         vault_account: AccountId,
+                         duration_slots: int,
+                         payout_bps: int,
+                         premium: int) permission(Admin) {
+    init_policy_impl(
+      policy,
+      settlement_asset,
+      vault_account,
+      duration_slots,
+      payout_bps,
+      premium
+    );
+  }
+
+  fn init_policy_impl(policy: Name,
+                      settlement_asset: AssetDefinitionId,
+                      vault_account: AccountId,
+                      duration_slots: int,
+                      payout_bps: int,
+                      premium: int) {
+    SettlementAsset[policy] = settlement_asset;
+    VaultAccount[policy] = vault_account;
+    DurationSlots[policy] = duration_slots;
+    PayoutBps[policy] = payout_bps;
+    Premium[policy] = premium;
+    BreachElapsed[policy] = 0;
+    Active[policy] = 0;
+    PolicyNotional[policy] = 0;
+    PremiumPaid[policy] = 0;
+    ClaimPayout[policy] = 0;
+    Expired[policy] = 0;
+    ClaimCount[policy] = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn configure_policy(policy: Name,
+                              duration_slots: int,
+                              payout_bps: int,
+                              premium: int) permission(Admin) {
+    configure_policy_impl(
+      policy,
+      duration_slots,
+      payout_bps,
+      premium
+    );
+  }
+
+  fn configure_policy_impl(policy: Name,
+                           duration_slots: int,
+                           payout_bps: int,
+                           premium: int) {
+    assert_policy_exists(policy);
+    assert(duration_slots > 0, "invalid duration");
+    assert(payout_bps > 0, "invalid payout bps");
+    assert(premium > 0, "invalid premium");
+    DurationSlots[policy] = duration_slots;
+    PayoutBps[policy] = payout_bps;
+    Premium[policy] = premium;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn buy_policy(buyer: AccountId, policy: Name) permission(Admin) {
+    buy_policy_impl(buyer, policy);
+  }
+
+  fn buy_policy_impl(buyer: AccountId, policy: Name) {
+    assert_policy_exists(policy);
+    buy_policy_with_assets_impl(
+      buyer,
+      policy,
+      VaultAccount[policy],
+      SettlementAsset[policy],
+      Premium[policy]
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn buy_policy_with_assets(buyer: AccountId,
+                                    policy: Name,
+                                    vault_account: AccountId,
+                                    settlement_asset: AssetDefinitionId,
+                                    premium: int) permission(Admin) {
+    buy_policy_with_assets_impl(
+      buyer,
+      policy,
+      vault_account,
+      settlement_asset,
+      premium
+    );
+  }
+
+  fn buy_policy_with_assets_impl(buyer: AccountId,
+                                 policy: Name,
+                                 vault_account: AccountId,
+                                 settlement_asset: AssetDefinitionId,
+                                 premium: int) {
+    buy_policy_sized_with_assets_impl(
+      buyer,
+      policy,
+      vault_account,
+      settlement_asset,
+      premium,
+      premium
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn buy_policy_sized(buyer: AccountId,
+                              policy: Name,
+                              covered_notional: int) permission(Admin) {
+    buy_policy_sized_impl(buyer, policy, covered_notional);
+  }
+
+  fn buy_policy_sized_impl(buyer: AccountId, policy: Name, covered_notional: int) {
+    assert_policy_exists(policy);
+    buy_policy_sized_with_assets_impl(
+      buyer,
+      policy,
+      VaultAccount[policy],
+      SettlementAsset[policy],
+      Premium[policy],
+      covered_notional
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn buy_policy_sized_with_assets(buyer: AccountId,
+                                          policy: Name,
+                                          vault_account: AccountId,
+                                          settlement_asset: AssetDefinitionId,
+                                          premium: int,
+                                          covered_notional: int) permission(Admin) {
+    buy_policy_sized_with_assets_impl(
+      buyer,
+      policy,
+      vault_account,
+      settlement_asset,
+      premium,
+      covered_notional
+    );
+  }
+
+  fn buy_policy_sized_with_assets_impl(buyer: AccountId,
+                                       policy: Name,
+                                       vault_account: AccountId,
+                                       settlement_asset: AssetDefinitionId,
+                                       premium: int,
+                                       covered_notional: int) {
+    assert_policy_exists(policy);
+    assert(get_or_insert_default(Active, policy, 0) == 0, "policy active");
+    assert(covered_notional > 0, "invalid covered notional");
+    move_asset_if_needed(buyer, vault_account, settlement_asset, premium);
+    PolicyOwner[policy] = buyer;
+    PolicyNotional[policy] = covered_notional;
+    PremiumPaid[policy] = premium;
+    Active[policy] = 1;
+    BreachElapsed[policy] = 0;
+    ClaimPayout[policy] = 0;
+    Expired[policy] = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn record_breach(policy: Name, elapsed_slots: int) permission(Admin) {
+    record_breach_impl(policy, elapsed_slots);
+  }
+
+  fn record_breach_impl(policy: Name, elapsed_slots: int) {
+    assert_policy_exists(policy);
+    assert(get_or_insert_default(Active, policy, 0) == 1, "inactive policy");
+    BreachElapsed[policy] = elapsed_slots;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_claim(claimant: AccountId,
+                          policy: Name,
+                          covered_notional: int) permission(Admin) {
+    settle_claim_impl(claimant, policy, covered_notional);
+  }
+
+  fn settle_claim_impl(claimant: AccountId, policy: Name, covered_notional: int) {
+    assert_policy_exists(policy);
+    settle_claim_with_assets_impl(
+      claimant,
+      policy,
+      VaultAccount[policy],
+      SettlementAsset[policy],
+      covered_notional
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_claim_with_assets(claimant: AccountId,
+                                      policy: Name,
+                                      vault_account: AccountId,
+                                      settlement_asset: AssetDefinitionId,
+                                      covered_notional: int) permission(Admin) {
+    settle_claim_with_assets_impl(
+      claimant,
+      policy,
+      vault_account,
+      settlement_asset,
+      covered_notional
+    );
+  }
+
+  fn settle_claim_with_assets_impl(claimant: AccountId,
+                                   policy: Name,
+                                   vault_account: AccountId,
+                                   settlement_asset: AssetDefinitionId,
+                                   covered_notional: int) {
+    assert_policy_exists(policy);
+    assert(get_or_insert_default(Active, policy, 0) == 1, "inactive policy");
+    assert(PolicyOwner[policy] == claimant, "claimant mismatch");
+    assert(get_or_insert_default(BreachElapsed, policy, 0) >= DurationSlots[policy], "breach window incomplete");
+    assert(covered_notional > 0, "invalid covered notional");
+    let notional_limit = get_or_insert_default(PolicyNotional, policy, 0);
+    let effective_notional = covered_notional;
+    if effective_notional > notional_limit {
+      effective_notional = notional_limit;
+    }
+    let payout = (effective_notional * PayoutBps[policy]) / 10_000;
+    move_asset_if_needed(vault_account, claimant, settlement_asset, payout);
+    Active[policy] = 0;
+    ClaimPayout[policy] = payout;
+    ClaimCount[policy] = get_or_insert_default(ClaimCount, policy, 0) + 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn cancel_policy(buyer: AccountId,
+                           policy: Name,
+                           refund_bps: int) permission(Admin) {
+    cancel_policy_with_assets_impl(
+      buyer,
+      policy,
+      VaultAccount[policy],
+      SettlementAsset[policy],
+      refund_bps
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn cancel_policy_with_assets(buyer: AccountId,
+                                       policy: Name,
+                                       vault_account: AccountId,
+                                       settlement_asset: AssetDefinitionId,
+                                       refund_bps: int) permission(Admin) {
+    cancel_policy_with_assets_impl(
+      buyer,
+      policy,
+      vault_account,
+      settlement_asset,
+      refund_bps
+    );
+  }
+
+  fn cancel_policy_with_assets_impl(buyer: AccountId,
+                                    policy: Name,
+                                    vault_account: AccountId,
+                                    settlement_asset: AssetDefinitionId,
+                                    refund_bps: int) {
+    assert_policy_exists(policy);
+    assert(get_or_insert_default(Active, policy, 0) == 1, "inactive policy");
+    assert(PolicyOwner[policy] == buyer, "buyer mismatch");
+    assert(get_or_insert_default(BreachElapsed, policy, 0) == 0, "breach recorded");
+    let refund = (get_or_insert_default(PremiumPaid, policy, 0) * refund_bps) / 10_000;
+    move_asset_if_needed(vault_account, buyer, settlement_asset, refund);
+    Active[policy] = 0;
+    Expired[policy] = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn expire_policy(policy: Name, elapsed_slots: int) permission(Admin) {
+    assert_policy_exists(policy);
+    assert(get_or_insert_default(Active, policy, 0) == 1, "inactive policy");
+    assert(elapsed_slots >= DurationSlots[policy], "policy live");
+    assert(get_or_insert_default(BreachElapsed, policy, 0) < DurationSlots[policy], "claim pending");
+    Active[policy] = 0;
+    Expired[policy] = 1;
+  }
+
+  view fn policy_config(policy: Name) -> (AssetDefinitionId, AccountId, int, int, int) {
+    assert_policy_exists(policy);
+    return (
+      SettlementAsset[policy],
+      VaultAccount[policy],
+      get_or(DurationSlots, policy, 0),
+      get_or(PayoutBps, policy, 0),
+      get_or(Premium, policy, 0)
+    );
+  }
+
+  view fn mirror_policy(policy: Name) -> (int, int, int, int, int, int, int, int, int) {
+    assert_policy_exists(policy);
+    return (
+      get_or(Active, policy, 0),
+      get_or(DurationSlots, policy, 0),
+      get_or(PayoutBps, policy, 0),
+      get_or(PremiumPaid, policy, 0),
+      get_or(PolicyNotional, policy, 0),
+      get_or(BreachElapsed, policy, 0),
+      get_or(ClaimPayout, policy, 0),
+      get_or(Expired, policy, 0),
+      get_or(ClaimCount, policy, 0)
+    );
+  }
+}

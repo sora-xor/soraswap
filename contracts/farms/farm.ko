@@ -1,0 +1,306 @@
+seiyaku Farm {
+  state StakeAsset: Map<Name, AssetDefinitionId>;
+  state RewardAsset: Map<Name, AssetDefinitionId>;
+  state Treasury: Map<Name, AccountId>;
+  state RewardRate: Map<Name, int>;
+  state TotalStaked: Map<Name, int>;
+  state RewardBudget: Map<Name, int>;
+  state RewardDistributed: Map<Name, int>;
+  state PositionOwner: Map<Name, AccountId>;
+  state StakeOf: Map<Name, int>;
+  state Accrued: Map<Name, int>;
+  state PositionClaimed: Map<Name, int>;
+
+  fn farm_key() -> Name {
+    let farm = name!("farm");
+    return farm;
+  }
+
+  fn assert_position_owner(position: Name, staker: AccountId) {
+    assert(contains(PositionOwner, position), "position missing");
+    assert(PositionOwner[position] == staker, "staker mismatch");
+  }
+
+  fn move_asset_if_needed(from: AccountId,
+                          to: AccountId,
+                          asset: AssetDefinitionId,
+                          amount: int) {
+    if amount > 0 {
+      if from != to {
+        transfer_asset(from, to, asset, amount);
+      }
+    }
+  }
+
+  fn stake_asset_name() -> Name {
+    let stake_asset = name!("stake_asset");
+    return stake_asset;
+  }
+
+  fn reward_asset_name() -> Name {
+    let reward_asset = name!("reward_asset");
+    return reward_asset;
+  }
+
+  fn treasury_name() -> Name {
+    let treasury = name!("treasury");
+    return treasury;
+  }
+
+  fn reward_rate_name() -> Name {
+    let reward_rate = name!("reward_rate");
+    return reward_rate;
+  }
+
+  fn funder_name() -> Name {
+    let funder = name!("funder");
+    return funder;
+  }
+
+  fn amount_name() -> Name {
+    let amount = name!("amount");
+    return amount;
+  }
+
+  fn staker_name() -> Name {
+    let staker = name!("staker");
+    return staker;
+  }
+
+  fn position_name() -> Name {
+    let position = name!("position");
+    return position;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_farm(stake_asset: AssetDefinitionId,
+                       reward_asset: AssetDefinitionId,
+                       treasury: AccountId,
+                       reward_rate: int) permission(Admin) {
+    init_farm_impl(stake_asset, reward_asset, treasury, reward_rate);
+  }
+
+  fn init_farm_impl(stake_asset: AssetDefinitionId,
+                    reward_asset: AssetDefinitionId,
+                    treasury: AccountId,
+                    reward_rate: int) {
+    let farm = farm_key();
+    StakeAsset[farm] = stake_asset;
+    RewardAsset[farm] = reward_asset;
+    Treasury[farm] = treasury;
+    RewardRate[farm] = reward_rate;
+    TotalStaked[farm] = 0;
+    RewardBudget[farm] = 0;
+    RewardDistributed[farm] = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn configure_farm(reward_rate: int) permission(Admin) {
+    assert(reward_rate >= 0, "invalid reward rate");
+    RewardRate[farm_key()] = reward_rate;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn fund_rewards(funder: AccountId, amount: int) -> int permission(Admin) {
+    let farm = farm_key();
+    return fund_rewards_with_assets_impl(
+      funder,
+      Treasury[farm],
+      RewardAsset[farm],
+      amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn fund_rewards_with_assets(funder: AccountId,
+                                      treasury: AccountId,
+                                      reward_asset: AssetDefinitionId,
+                                      amount: int) -> int permission(Admin) {
+    return fund_rewards_with_assets_impl(
+      funder,
+      treasury,
+      reward_asset,
+      amount
+    );
+  }
+
+  fn fund_rewards_with_assets_impl(funder: AccountId,
+                                   treasury: AccountId,
+                                   reward_asset: AssetDefinitionId,
+                                   amount: int) -> int {
+    assert(amount > 0, "invalid reward amount");
+    let farm = farm_key();
+    move_asset_if_needed(funder, treasury, reward_asset, amount);
+    RewardBudget[farm] = get_or_insert_default(RewardBudget, farm, 0) + amount;
+    return amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn stake(staker: AccountId, position: Name, amount: int) permission(Admin) {
+    stake_impl(staker, position, amount);
+  }
+
+  fn stake_impl(staker: AccountId, position: Name, amount: int) {
+    let farm = farm_key();
+    stake_with_assets_impl(
+      staker,
+      position,
+      Treasury[farm],
+      StakeAsset[farm],
+      amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn stake_with_assets(staker: AccountId,
+                               position: Name,
+                               treasury: AccountId,
+                               stake_asset: AssetDefinitionId,
+                               amount: int) permission(Admin) {
+    stake_with_assets_impl(
+      staker,
+      position,
+      treasury,
+      stake_asset,
+      amount
+    );
+  }
+
+  fn stake_with_assets_impl(staker: AccountId,
+                            position: Name,
+                            treasury: AccountId,
+                            stake_asset: AssetDefinitionId,
+                            amount: int) {
+    let farm = farm_key();
+    assert(amount > 0, "invalid amount");
+    if contains(PositionOwner, position) {
+      assert(PositionOwner[position] == staker, "staker mismatch");
+    } else {
+      PositionOwner[position] = staker;
+      PositionClaimed[position] = 0;
+    }
+    move_asset_if_needed(staker, treasury, stake_asset, amount);
+    StakeOf[position] = get_or_insert_default(StakeOf, position, 0) + amount;
+    Accrued[position] = get_or_insert_default(Accrued, position, 0) + (amount * RewardRate[farm]);
+    TotalStaked[farm] = get_or_insert_default(TotalStaked, farm, 0) + amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn unstake(staker: AccountId, position: Name, amount: int) permission(Admin) {
+    unstake_impl(staker, position, amount);
+  }
+
+  fn unstake_impl(staker: AccountId, position: Name, amount: int) {
+    let farm = farm_key();
+    unstake_with_assets_impl(
+      staker,
+      position,
+      Treasury[farm],
+      StakeAsset[farm],
+      amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn unstake_with_assets(staker: AccountId,
+                                 position: Name,
+                                 treasury: AccountId,
+                                 stake_asset: AssetDefinitionId,
+                                 amount: int) permission(Admin) {
+    unstake_with_assets_impl(
+      staker,
+      position,
+      treasury,
+      stake_asset,
+      amount
+    );
+  }
+
+  fn unstake_with_assets_impl(staker: AccountId,
+                              position: Name,
+                              treasury: AccountId,
+                              stake_asset: AssetDefinitionId,
+                              amount: int) {
+    assert_position_owner(position, staker);
+    assert(amount > 0, "invalid amount");
+    let staked = get_or_insert_default(StakeOf, position, 0);
+    assert(staked >= amount, "insufficient stake");
+    move_asset_if_needed(treasury, staker, stake_asset, amount);
+    StakeOf[position] = staked - amount;
+    let farm = farm_key();
+    TotalStaked[farm] = get_or_insert_default(TotalStaked, farm, 0) - amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn claim(staker: AccountId, position: Name) permission(Admin) {
+    claim_impl(staker, position);
+  }
+
+  fn claim_impl(staker: AccountId, position: Name) {
+    let farm = farm_key();
+    claim_with_assets_impl(staker, position, Treasury[farm], RewardAsset[farm]);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn claim_with_assets(staker: AccountId,
+                               position: Name,
+                               treasury: AccountId,
+                               reward_asset: AssetDefinitionId) permission(Admin) {
+    claim_with_assets_impl(
+      staker,
+      position,
+      treasury,
+      reward_asset
+    );
+  }
+
+  fn claim_with_assets_impl(staker: AccountId,
+                            position: Name,
+                            treasury: AccountId,
+                            reward_asset: AssetDefinitionId) {
+    assert_position_owner(position, staker);
+    let reward = get_or_insert_default(Accrued, position, 0);
+    assert(reward > 0, "no reward");
+    let farm = farm_key();
+    assert(get_or_insert_default(RewardBudget, farm, 0) >= reward, "insufficient reward budget");
+    move_asset_if_needed(treasury, staker, reward_asset, reward);
+    Accrued[position] = 0;
+    RewardBudget[farm] = get_or_insert_default(RewardBudget, farm, 0) - reward;
+    RewardDistributed[farm] = get_or_insert_default(RewardDistributed, farm, 0) + reward;
+    PositionClaimed[position] = get_or_insert_default(PositionClaimed, position, 0) + reward;
+  }
+
+  view fn farm_config() -> (AssetDefinitionId, AssetDefinitionId, AccountId, int) {
+    let farm = farm_key();
+    assert(contains(StakeAsset, farm), "farm not initialized");
+    return (
+      StakeAsset[farm],
+      RewardAsset[farm],
+      Treasury[farm],
+      RewardRate[farm]
+    );
+  }
+
+  view fn mirror_position(position: Name) -> (int, int, int, int, int, int, int, int) {
+    let farm = farm_key();
+    let position_registered = 0;
+    if contains(PositionOwner, position) {
+      position_registered = 1;
+    }
+    return (
+      position_registered,
+      get_or(StakeOf, position, 0),
+      get_or(Accrued, position, 0),
+      get_or(PositionClaimed, position, 0),
+      get_or(TotalStaked, farm, 0),
+      get_or(RewardBudget, farm, 0),
+      get_or(RewardDistributed, farm, 0),
+      get_or(RewardRate, farm, 0)
+    );
+  }
+}

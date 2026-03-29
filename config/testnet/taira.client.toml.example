@@ -1,0 +1,26 @@
+chain = "809574f5-fee7-5e69-bfcf-52451e42d50f"
+torii_url = "https://taira.sora.org/"
+
+# Fill these with your public testnet credentials and keep the copied file
+# untracked. The example stays in git; the real file should not.
+#
+# As observed on March 25, 2026, live Taira still uses the legacy public
+# testnet chain id above. If Taira is redeployed with a new chain id, update
+# this field to match the live network before running any deploy or smoke flow.
+#
+# The SoraSwap testnet scripts will now try, in order:
+# 1. self-registration of the signer on-chain
+# 2. Torii /v1/accounts/onboard when enabled
+# 3. faucet-puzzle probing for a funding path
+#
+# If all of those are unavailable, the scripts will stop with the exact live
+# rejection reason.
+[account]
+domain = "change-me"
+public_key = "ed0120CHANGE_ME"
+private_key = "802620CHANGE_ME"
+
+# Uncomment if the target Torii deployment requires auth.
+#[basic_auth]
+#web_login = "change-me"
+#password = "change-me"

@@ -1,0 +1,38 @@
+# macOS
+.DS_Store
+
+# Build and compile outputs
+artifacts/**
+build/
+dist/
+
+# Local runtime state
+tmp*
+deployments/local/**
+!deployments/local/.gitkeep
+deployments/testnet/**
+!deployments/testnet/.gitkeep
+
+# Local config and credentials
+.env
+.env.local
+config/testnet/*.toml
+!config/testnet/*.example
+config/*.local.toml
+*.pid
+*.log
+
+# IDE/editor
+.idea/
+.vscode/
+
+# Rust/Node/Python transient outputs if used in helper tooling
+target/
+node_modules/
+__pycache__/
+*.pyc
+*.tsbuildinfo
+
+# Generated manifests and compiled bytecode kept untracked by default
+*.to
+*.manifest.json

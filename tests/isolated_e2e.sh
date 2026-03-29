@@ -1,0 +1,32 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+export SORASWAP_LOCALNET_DIR="${SORASWAP_LOCALNET_DIR:-$ROOT/tmp/iroha-localnet-verify}"
+export SORASWAP_LOCALNET_BASE_API_PORT="${SORASWAP_LOCALNET_BASE_API_PORT:-18080}"
+export SORASWAP_LOCALNET_BASE_P2P_PORT="${SORASWAP_LOCALNET_BASE_P2P_PORT:-11337}"
+export SORASWAP_LOCALNET_CONSENSUS_MODE="${SORASWAP_LOCALNET_CONSENSUS_MODE:-permissioned}"
+export SORASWAP_LOCALNET_BLOCK_TIME_MS="${SORASWAP_LOCALNET_BLOCK_TIME_MS:-5000}"
+export SORASWAP_LOCALNET_COMMIT_TIME_MS="${SORASWAP_LOCALNET_COMMIT_TIME_MS:-5000}"
+export SORASWAP_ASSERT_BOOTSTRAP_STATE="${SORASWAP_ASSERT_BOOTSTRAP_STATE:-1}"
+export SORASWAP_RUN_TESTNET_SMOKE="${SORASWAP_RUN_TESTNET_SMOKE:-0}"
+export SORASWAP_BOOTSTRAP_SCOPE="${SORASWAP_BOOTSTRAP_SCOPE:-full}"
+export SORASWAP_SMOKE_SCOPE="${SORASWAP_SMOKE_SCOPE:-$SORASWAP_BOOTSTRAP_SCOPE}"
+
+cleanup() {
+  "$ROOT/scripts/local_down.sh" >/dev/null 2>&1 || true
+}
+
+trap cleanup EXIT
+
+"$ROOT/scripts/local_down.sh" >/dev/null 2>&1 || true
+"$ROOT/scripts/local_up.sh"
+"$ROOT/scripts/deploy_local.sh"
+SORASWAP_CLIENT_CONFIG="$SORASWAP_LOCALNET_DIR/client.toml" \
+  "$ROOT/scripts/smoke_local.sh"
+
+if [[ "$SORASWAP_RUN_TESTNET_SMOKE" == "1" ]]; then
+  SORASWAP_CLIENT_CONFIG="$SORASWAP_LOCALNET_DIR/client.toml" \
+    "$ROOT/scripts/smoke_testnet.sh"
+fi

@@ -1,0 +1,791 @@
+seiyaku PerpsEngine {
+  state CollateralAsset: Map<Name, AssetDefinitionId>;
+  state VaultAccount: Map<Name, AccountId>;
+  state FundingBps: Map<Name, int>;
+  state MaxLeverageBps: Map<Name, int>;
+  state MaintenanceMarginBps: Map<Name, int>;
+  state LiquidationFeeBps: Map<Name, int>;
+  state PositionOwner: Map<Name, AccountId>;
+  state PositionSize: Map<Name, int>;
+  state PositionCollateral: Map<Name, int>;
+  state PositionEntryPrice: Map<Name, int>;
+  state PositionMarkPrice: Map<Name, int>;
+  state PositionIndexPrice: Map<Name, int>;
+  state FundingAccrued: Map<Name, int>;
+  state RealizedPnl: Map<Name, int>;
+  state Liquidated: Map<Name, int>;
+
+  fn engine_key() -> Name {
+    let engine = name!("engine");
+    return engine;
+  }
+
+  fn required_initial_collateral(size: int, max_leverage_bps: int) -> int {
+    return (size * 10_000 + max_leverage_bps - 1) / max_leverage_bps;
+  }
+
+  fn required_maintenance_collateral(size: int, maintenance_margin_bps: int) -> int {
+    return (size * maintenance_margin_bps + 10_000 - 1) / 10_000;
+  }
+
+  fn price_scale_bps() -> int {
+    return 10_000;
+  }
+
+  fn assert_positive_price(price_bps: int) {
+    assert(price_bps > 0, "invalid price");
+  }
+
+  fn position_entry_price_value(position: Name) -> int {
+    if contains(PositionEntryPrice, position) {
+      return PositionEntryPrice[position];
+    }
+    return price_scale_bps();
+  }
+
+  fn position_mark_price_value(position: Name) -> int {
+    if contains(PositionMarkPrice, position) {
+      return PositionMarkPrice[position];
+    }
+    return position_entry_price_value(position);
+  }
+
+  fn position_index_price_value(position: Name) -> int {
+    if contains(PositionIndexPrice, position) {
+      return PositionIndexPrice[position];
+    }
+    return position_entry_price_value(position);
+  }
+
+  fn unrealized_pnl(size: int, entry_price_bps: int, mark_price_bps: int) -> int {
+    assert_positive_price(entry_price_bps);
+    assert_positive_price(mark_price_bps);
+    return (size * (mark_price_bps - entry_price_bps)) / price_scale_bps();
+  }
+
+  fn funding_payment(size: int,
+                     funding_bps: int,
+                     mark_price_bps: int,
+                     index_price_bps: int) -> int {
+    assert_positive_price(mark_price_bps);
+    assert_positive_price(index_price_bps);
+    return (size * (mark_price_bps - index_price_bps) * funding_bps) /
+      price_scale_bps() / 10_000;
+  }
+
+  fn position_equity(position: Name, mark_price_bps: int) -> int {
+    return get_or_insert_default(PositionCollateral, position, 0) +
+      unrealized_pnl(
+        get_or_insert_default(PositionSize, position, 0),
+        position_entry_price_value(position),
+        mark_price_bps
+      );
+  }
+
+  fn leverage_bps(size: int, collateral: int) -> int {
+    if collateral <= 0 {
+      return 0;
+    }
+    return (size * 10_000 + collateral - 1) / collateral;
+  }
+
+  fn assert_position_owner(position: Name, trader: AccountId) {
+    assert(contains(PositionOwner, position), "position missing");
+    assert(PositionOwner[position] == trader, "trader mismatch");
+    assert(get_or_insert_default(PositionSize, position, 0) > 0, "position closed");
+    assert(get_or_insert_default(Liquidated, position, 0) == 0, "position liquidated");
+  }
+
+  fn move_asset_if_needed(from: AccountId,
+                          to: AccountId,
+                          asset: AssetDefinitionId,
+                          amount: int) {
+    if amount > 0 {
+      if from != to {
+        transfer_asset(from, to, asset, amount);
+      }
+    }
+  }
+
+  fn trader_name() -> Name {
+    let trader = name!("trader");
+    return trader;
+  }
+
+  fn position_name() -> Name {
+    let position = name!("position");
+    return position;
+  }
+
+  fn size_name() -> Name {
+    let size = name!("size");
+    return size;
+  }
+
+  fn collateral_name() -> Name {
+    let collateral = name!("collateral");
+    return collateral;
+  }
+
+  fn amount_name() -> Name {
+    let amount = name!("amount");
+    return amount;
+  }
+
+  fn vault_account_name() -> Name {
+    let vault_account = name!("vault_account");
+    return vault_account;
+  }
+
+  fn collateral_asset_name() -> Name {
+    let collateral_asset = name!("collateral_asset");
+    return collateral_asset;
+  }
+
+  fn funding_bps_name() -> Name {
+    let funding_bps = name!("funding_bps");
+    return funding_bps;
+  }
+
+  fn mark_price_name() -> Name {
+    let mark_price = name!("mark_price");
+    return mark_price;
+  }
+
+  fn index_price_name() -> Name {
+    let index_price = name!("index_price");
+    return index_price;
+  }
+
+  fn payout_name() -> Name {
+    let payout = name!("payout");
+    return payout;
+  }
+
+  fn liquidator_name() -> Name {
+    let liquidator = name!("liquidator");
+    return liquidator;
+  }
+
+  fn maintenance_margin_bps_name() -> Name {
+    let maintenance_margin_bps = name!("maintenance_margin_bps");
+    return maintenance_margin_bps;
+  }
+
+  fn liquidation_fee_bps_name() -> Name {
+    let liquidation_fee_bps = name!("liquidation_fee_bps");
+    return liquidation_fee_bps;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_engine(collateral_asset: AssetDefinitionId,
+                         vault_account: AccountId,
+                         funding_bps: int) permission(Admin) {
+    init_engine_impl(collateral_asset, vault_account, funding_bps);
+  }
+
+  fn init_engine_impl(collateral_asset: AssetDefinitionId,
+                      vault_account: AccountId,
+                      funding_bps: int) {
+    let engine = engine_key();
+    CollateralAsset[engine] = collateral_asset;
+    VaultAccount[engine] = vault_account;
+    FundingBps[engine] = funding_bps;
+    MaxLeverageBps[engine] = 50_000;
+    MaintenanceMarginBps[engine] = 500;
+    LiquidationFeeBps[engine] = 1_000;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn configure_risk(funding_bps: int,
+                            max_leverage_bps: int,
+                            maintenance_margin_bps: int,
+                            liquidation_fee_bps: int) permission(Admin) {
+    configure_risk_impl(
+      funding_bps,
+      max_leverage_bps,
+      maintenance_margin_bps,
+      liquidation_fee_bps
+    );
+  }
+
+  fn configure_risk_impl(funding_bps: int,
+                         max_leverage_bps: int,
+                         maintenance_margin_bps: int,
+                         liquidation_fee_bps: int) {
+    assert(max_leverage_bps > 10_000, "invalid max leverage");
+    assert(maintenance_margin_bps > 0, "invalid maintenance margin");
+    assert(liquidation_fee_bps >= 0, "invalid liquidation fee");
+    let engine = engine_key();
+    FundingBps[engine] = funding_bps;
+    MaxLeverageBps[engine] = max_leverage_bps;
+    MaintenanceMarginBps[engine] = maintenance_margin_bps;
+    LiquidationFeeBps[engine] = liquidation_fee_bps;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn open_position(trader: AccountId,
+                           position: Name,
+                           size: int,
+                           collateral: int) permission(Admin) {
+    open_position_impl(trader, position, size, collateral);
+  }
+
+  fn open_position_impl(trader: AccountId,
+                        position: Name,
+                        size: int,
+                        collateral: int) {
+    let engine = engine_key();
+    open_position_priced_with_assets_impl(
+      trader,
+      position,
+      VaultAccount[engine],
+      CollateralAsset[engine],
+      size,
+      collateral,
+      price_scale_bps()
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn open_position_with_assets(trader: AccountId,
+                                       position: Name,
+                                       vault_account: AccountId,
+                                       collateral_asset: AssetDefinitionId,
+                                       size: int,
+                                       collateral: int) permission(Admin) {
+    open_position_priced_with_assets_impl(
+      trader,
+      position,
+      vault_account,
+      collateral_asset,
+      size,
+      collateral,
+      price_scale_bps()
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn open_position_priced(trader: AccountId,
+                                  position: Name,
+                                  size: int,
+                                  collateral: int,
+                                  entry_price_bps: int) permission(Admin) {
+    let engine = engine_key();
+    open_position_priced_with_assets_impl(
+      trader,
+      position,
+      VaultAccount[engine],
+      CollateralAsset[engine],
+      size,
+      collateral,
+      entry_price_bps
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn open_position_priced_with_assets(trader: AccountId,
+                                              position: Name,
+                                              vault_account: AccountId,
+                                              collateral_asset: AssetDefinitionId,
+                                              size: int,
+                                              collateral: int,
+                                              entry_price_bps: int) permission(Admin) {
+    open_position_priced_with_assets_impl(
+      trader,
+      position,
+      vault_account,
+      collateral_asset,
+      size,
+      collateral,
+      entry_price_bps
+    );
+  }
+
+  fn open_position_priced_with_assets_impl(trader: AccountId,
+                                           position: Name,
+                                           vault_account: AccountId,
+                                           collateral_asset: AssetDefinitionId,
+                                           size: int,
+                                           collateral: int,
+                                           entry_price_bps: int) {
+    assert(size > 0, "invalid size");
+    assert(collateral > 0, "invalid collateral");
+    assert_positive_price(entry_price_bps);
+    let engine = engine_key();
+    let min_collateral = required_initial_collateral(size, MaxLeverageBps[engine]);
+    assert(collateral >= min_collateral, "insufficient collateral");
+    if contains(PositionOwner, position) {
+      assert(get_or_insert_default(PositionSize, position, 0) == 0, "position exists");
+    }
+    move_asset_if_needed(trader, vault_account, collateral_asset, collateral);
+    PositionOwner[position] = trader;
+    PositionSize[position] = size;
+    PositionCollateral[position] = collateral;
+    PositionEntryPrice[position] = entry_price_bps;
+    PositionMarkPrice[position] = entry_price_bps;
+    PositionIndexPrice[position] = entry_price_bps;
+    FundingAccrued[position] = 0;
+    RealizedPnl[position] = 0;
+    Liquidated[position] = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn add_collateral(trader: AccountId,
+                            position: Name,
+                            amount: int) permission(Admin) {
+    add_collateral_impl(trader, position, amount);
+  }
+
+  fn add_collateral_impl(trader: AccountId, position: Name, amount: int) {
+    let engine = engine_key();
+    add_collateral_with_assets_impl(
+      trader,
+      position,
+      VaultAccount[engine],
+      CollateralAsset[engine],
+      amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn add_collateral_with_assets(trader: AccountId,
+                                        position: Name,
+                                        vault_account: AccountId,
+                                        collateral_asset: AssetDefinitionId,
+                                        amount: int) permission(Admin) {
+    add_collateral_with_assets_impl(
+      trader,
+      position,
+      vault_account,
+      collateral_asset,
+      amount
+    );
+  }
+
+  fn add_collateral_with_assets_impl(trader: AccountId,
+                                     position: Name,
+                                     vault_account: AccountId,
+                                     collateral_asset: AssetDefinitionId,
+                                     amount: int) {
+    assert_position_owner(position, trader);
+    assert(amount > 0, "invalid collateral");
+    move_asset_if_needed(trader, vault_account, collateral_asset, amount);
+    PositionCollateral[position] = get_or_insert_default(PositionCollateral, position, 0) + amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn remove_collateral(trader: AccountId,
+                               position: Name,
+                               amount: int) permission(Admin) {
+    remove_collateral_impl(trader, position, amount);
+  }
+
+  fn remove_collateral_impl(trader: AccountId, position: Name, amount: int) {
+    let engine = engine_key();
+    remove_collateral_with_assets_impl(
+      trader,
+      position,
+      VaultAccount[engine],
+      CollateralAsset[engine],
+      amount
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn remove_collateral_with_assets(trader: AccountId,
+                                           position: Name,
+                                           vault_account: AccountId,
+                                           collateral_asset: AssetDefinitionId,
+                                           amount: int) permission(Admin) {
+    remove_collateral_with_assets_impl(
+      trader,
+      position,
+      vault_account,
+      collateral_asset,
+      amount
+    );
+  }
+
+  fn remove_collateral_with_assets_impl(trader: AccountId,
+                                        position: Name,
+                                        vault_account: AccountId,
+                                        collateral_asset: AssetDefinitionId,
+                                        amount: int) {
+    assert_position_owner(position, trader);
+    assert(amount > 0, "invalid collateral");
+    let engine = engine_key();
+    let current_collateral = get_or_insert_default(PositionCollateral, position, 0);
+    assert(current_collateral >= amount, "insufficient collateral");
+    let next_collateral = current_collateral - amount;
+    let maintenance = required_maintenance_collateral(
+      get_or_insert_default(PositionSize, position, 0),
+      MaintenanceMarginBps[engine]
+    );
+    let next_equity = next_collateral + unrealized_pnl(
+      get_or_insert_default(PositionSize, position, 0),
+      position_entry_price_value(position),
+      position_mark_price_value(position)
+    );
+    assert(next_equity >= maintenance, "maintenance margin");
+    move_asset_if_needed(vault_account, trader, collateral_asset, amount);
+    PositionCollateral[position] = next_collateral;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_funding(trader: AccountId,
+                            position: Name,
+                            mark_price: int,
+                            index_price: int) permission(Admin) {
+    settle_funding_impl(
+      trader,
+      position,
+      mark_price,
+      index_price
+    );
+  }
+
+  fn settle_funding_impl(trader: AccountId,
+                         position: Name,
+                         mark_price: int,
+                         index_price: int) {
+    let engine = engine_key();
+    settle_funding_with_assets_impl(
+      trader,
+      position,
+      VaultAccount[engine],
+      CollateralAsset[engine],
+      FundingBps[engine],
+      mark_price,
+      index_price
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_funding_with_assets(trader: AccountId,
+                                        position: Name,
+                                        vault_account: AccountId,
+                                        collateral_asset: AssetDefinitionId,
+                                        funding_bps: int,
+                                        mark_price: int,
+                                        index_price: int) permission(Admin) {
+    settle_funding_with_assets_impl(
+      trader,
+      position,
+      vault_account,
+      collateral_asset,
+      funding_bps,
+      mark_price,
+      index_price
+    );
+  }
+
+  fn settle_funding_with_assets_impl(trader: AccountId,
+                                     position: Name,
+                                     _vault_account: AccountId,
+                                     _collateral_asset: AssetDefinitionId,
+                                     funding_bps: int,
+                                     mark_price: int,
+                                     index_price: int) {
+    assert_position_owner(position, trader);
+    assert_positive_price(mark_price);
+    assert_positive_price(index_price);
+    let size = get_or_insert_default(PositionSize, position, 0);
+    let pay = funding_payment(size, funding_bps, mark_price, index_price);
+    if pay > 0 {
+      let next_collateral = get_or_insert_default(PositionCollateral, position, 0) - pay;
+      assert(next_collateral >= 0, "negative collateral");
+      PositionCollateral[position] = next_collateral;
+    } else {
+      let receive = 0 - pay;
+      PositionCollateral[position] = get_or_insert_default(PositionCollateral, position, 0) + receive;
+    }
+    PositionMarkPrice[position] = mark_price;
+    PositionIndexPrice[position] = index_price;
+    FundingAccrued[position] = get_or_insert_default(FundingAccrued, position, 0) + pay;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn close_position(trader: AccountId,
+                            position: Name,
+                            payout: int) permission(Admin) {
+    close_position_impl(trader, position, payout);
+  }
+
+  fn close_position_impl(trader: AccountId, position: Name, payout: int) {
+    let engine = engine_key();
+    close_position_with_assets_impl(
+      trader,
+      position,
+      VaultAccount[engine],
+      CollateralAsset[engine],
+      payout
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn close_position_with_assets(trader: AccountId,
+                                        position: Name,
+                                        vault_account: AccountId,
+                                        collateral_asset: AssetDefinitionId,
+                                        payout: int) permission(Admin) {
+    close_position_with_assets_impl(
+      trader,
+      position,
+      vault_account,
+      collateral_asset,
+      payout
+    );
+  }
+
+  fn close_position_with_assets_impl(trader: AccountId,
+                                     position: Name,
+                                     vault_account: AccountId,
+                                     collateral_asset: AssetDefinitionId,
+                                     payout: int) {
+    assert_position_owner(position, trader);
+    assert(payout >= 0, "invalid payout");
+    let remaining_collateral = get_or_insert_default(PositionCollateral, position, 0);
+    let max_payout = position_equity(position, position_mark_price_value(position));
+    assert(max_payout >= 0, "negative equity");
+    assert(payout <= max_payout, "payout exceeds equity");
+    RealizedPnl[position] = get_or_insert_default(RealizedPnl, position, 0) + (payout - remaining_collateral);
+    move_asset_if_needed(vault_account, trader, collateral_asset, payout);
+    PositionSize[position] = 0;
+    PositionCollateral[position] = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn close_position_marked(trader: AccountId,
+                                   position: Name,
+                                   mark_price: int) -> int permission(Admin) {
+    let engine = engine_key();
+    return close_position_marked_with_assets_impl(
+      trader,
+      position,
+      VaultAccount[engine],
+      CollateralAsset[engine],
+      mark_price
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn close_position_marked_with_assets(trader: AccountId,
+                                               position: Name,
+                                               vault_account: AccountId,
+                                               collateral_asset: AssetDefinitionId,
+                                               mark_price: int) -> int permission(Admin) {
+    return close_position_marked_with_assets_impl(
+      trader,
+      position,
+      vault_account,
+      collateral_asset,
+      mark_price
+    );
+  }
+
+  fn close_position_marked_with_assets_impl(trader: AccountId,
+                                            position: Name,
+                                            vault_account: AccountId,
+                                            collateral_asset: AssetDefinitionId,
+                                            mark_price: int) -> int {
+    assert_position_owner(position, trader);
+    assert_positive_price(mark_price);
+    PositionMarkPrice[position] = mark_price;
+    let pnl = unrealized_pnl(
+      get_or_insert_default(PositionSize, position, 0),
+      position_entry_price_value(position),
+      mark_price
+    );
+    let payout = position_equity(position, mark_price);
+    assert(payout >= 0, "negative equity");
+    RealizedPnl[position] = get_or_insert_default(RealizedPnl, position, 0) + pnl;
+    move_asset_if_needed(vault_account, trader, collateral_asset, payout);
+    PositionSize[position] = 0;
+    PositionCollateral[position] = 0;
+    return payout;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn liquidate_position(liquidator: AccountId,
+                                position: Name) -> int permission(Admin) {
+    let engine = engine_key();
+    return liquidate_position_with_assets_impl(
+      liquidator,
+      position,
+      VaultAccount[engine],
+      CollateralAsset[engine],
+      MaintenanceMarginBps[engine],
+      LiquidationFeeBps[engine]
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn liquidate_position_with_assets(liquidator: AccountId,
+                                            position: Name,
+                                            vault_account: AccountId,
+                                            collateral_asset: AssetDefinitionId,
+                                            maintenance_margin_bps: int,
+                                            liquidation_fee_bps: int) -> int permission(Admin) {
+    return liquidate_position_with_assets_impl(
+      liquidator,
+      position,
+      vault_account,
+      collateral_asset,
+      maintenance_margin_bps,
+      liquidation_fee_bps
+    );
+  }
+
+  fn liquidate_position_with_assets_impl(liquidator: AccountId,
+                                         position: Name,
+                                         vault_account: AccountId,
+                                         collateral_asset: AssetDefinitionId,
+                                         maintenance_margin_bps: int,
+                                         liquidation_fee_bps: int) -> int {
+    assert(contains(PositionOwner, position), "position missing");
+    assert(get_or_insert_default(PositionSize, position, 0) > 0, "position closed");
+    assert(get_or_insert_default(Liquidated, position, 0) == 0, "position liquidated");
+    let current_collateral = position_equity(position, position_mark_price_value(position));
+    let maintenance = required_maintenance_collateral(
+      get_or_insert_default(PositionSize, position, 0),
+      maintenance_margin_bps
+    );
+    assert(current_collateral < maintenance, "position healthy");
+    let reward = 0;
+    if current_collateral > 0 {
+      reward = (current_collateral * liquidation_fee_bps) / 10_000;
+      move_asset_if_needed(vault_account, liquidator, collateral_asset, reward);
+    }
+    RealizedPnl[position] = get_or_insert_default(RealizedPnl, position, 0) +
+      unrealized_pnl(
+        get_or_insert_default(PositionSize, position, 0),
+        position_entry_price_value(position),
+        position_mark_price_value(position)
+      ) - reward;
+    PositionSize[position] = 0;
+    PositionCollateral[position] = 0;
+    Liquidated[position] = 1;
+    return reward;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn liquidate_position_marked(liquidator: AccountId,
+                                       position: Name,
+                                       mark_price: int) -> int permission(Admin) {
+    let engine = engine_key();
+    return liquidate_position_marked_with_assets_impl(
+      liquidator,
+      position,
+      VaultAccount[engine],
+      CollateralAsset[engine],
+      MaintenanceMarginBps[engine],
+      LiquidationFeeBps[engine],
+      mark_price
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn liquidate_position_marked_with_assets(liquidator: AccountId,
+                                                   position: Name,
+                                                   vault_account: AccountId,
+                                                   collateral_asset: AssetDefinitionId,
+                                                   maintenance_margin_bps: int,
+                                                   liquidation_fee_bps: int,
+                                                   mark_price: int) -> int permission(Admin) {
+    return liquidate_position_marked_with_assets_impl(
+      liquidator,
+      position,
+      vault_account,
+      collateral_asset,
+      maintenance_margin_bps,
+      liquidation_fee_bps,
+      mark_price
+    );
+  }
+
+  fn liquidate_position_marked_with_assets_impl(liquidator: AccountId,
+                                                position: Name,
+                                                vault_account: AccountId,
+                                                collateral_asset: AssetDefinitionId,
+                                                maintenance_margin_bps: int,
+                                                liquidation_fee_bps: int,
+                                                mark_price: int) -> int {
+    assert_positive_price(mark_price);
+    PositionMarkPrice[position] = mark_price;
+    return liquidate_position_with_assets_impl(
+      liquidator,
+      position,
+      vault_account,
+      collateral_asset,
+      maintenance_margin_bps,
+      liquidation_fee_bps
+    );
+  }
+
+  view fn evaluate_position(position: Name, mark_price: int) -> (int, int, int, int, int) {
+    assert(contains(PositionOwner, position), "position missing");
+    assert_positive_price(mark_price);
+    let size = get_or(PositionSize, position, 0);
+    let pnl = unrealized_pnl(
+      size,
+      position_entry_price_value(position),
+      mark_price
+    );
+    let equity = get_or(PositionCollateral, position, 0) + pnl;
+    let engine = engine_key();
+    let maintenance = required_maintenance_collateral(size, MaintenanceMarginBps[engine]);
+    let liquidatable = 0;
+    if size > 0 && equity < maintenance {
+      liquidatable = 1;
+    }
+    return (
+      pnl,
+      equity,
+      maintenance,
+      leverage_bps(size, get_or(PositionCollateral, position, 0)),
+      liquidatable
+    );
+  }
+
+  view fn engine_config() -> (AssetDefinitionId, AccountId, int, int, int, int) {
+    let engine = engine_key();
+    assert(contains(CollateralAsset, engine), "engine not initialized");
+    return (
+      CollateralAsset[engine],
+      VaultAccount[engine],
+      get_or(FundingBps, engine, 0),
+      get_or(MaxLeverageBps, engine, 0),
+      get_or(MaintenanceMarginBps, engine, 0),
+      get_or(LiquidationFeeBps, engine, 0)
+    );
+  }
+
+  view fn mirror_position(position: Name) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
+    let engine = engine_key();
+    let position_registered = 0;
+    if contains(PositionOwner, position) {
+      position_registered = 1;
+    }
+    return (
+      position_registered,
+      get_or(PositionSize, position, 0),
+      get_or(PositionCollateral, position, 0),
+      get_or(FundingAccrued, position, 0),
+      get_or(RealizedPnl, position, 0),
+      get_or(Liquidated, position, 0),
+      get_or(FundingBps, engine, 0),
+      get_or(MaxLeverageBps, engine, 0),
+      get_or(MaintenanceMarginBps, engine, 0),
+      get_or(LiquidationFeeBps, engine, 0),
+      position_entry_price_value(position),
+      position_mark_price_value(position),
+      position_index_price_value(position)
+    );
+  }
+}

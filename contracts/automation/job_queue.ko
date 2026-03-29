@@ -1,0 +1,244 @@
+seiyaku JobQueue {
+  state JobOwner: Map<Name, AccountId>;
+  state JobExecutor: Map<Name, AccountId>;
+  state JobPayloadHash: Map<Name, int>;
+  state JobStatus: Map<Name, int>;
+  state RetryCount: Map<Name, int>;
+  state JobNextSlot: Map<Name, int>;
+  state JobCronIntervalSlots: Map<Name, int>;
+  state JobMaxRetries: Map<Name, int>;
+  state JobRetryDelaySlots: Map<Name, int>;
+  state JobLastRunSlot: Map<Name, int>;
+  state JobRunCount: Map<Name, int>;
+
+  fn assert_job_exists(job: Name) {
+    assert(contains(JobOwner, job), "job missing");
+  }
+
+  fn assert_job_executor(job: Name, executor: AccountId) {
+    if contains(JobExecutor, job) {
+      assert(JobExecutor[job] == executor, "executor mismatch");
+    }
+  }
+
+  fn job_name() -> Name {
+    let job = name!("job");
+    return job;
+  }
+
+  fn executor_name() -> Name {
+    let executor = name!("executor");
+    return executor;
+  }
+
+  fn current_slot_name() -> Name {
+    let current_slot = name!("current_slot");
+    return current_slot;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn enqueue(job: Name, owner: AccountId, payload_hash: int) permission(Admin) {
+    enqueue_impl(job, owner, payload_hash);
+  }
+
+  fn enqueue_impl(job: Name, owner: AccountId, payload_hash: int) {
+    assert(!contains(JobOwner, job), "job exists");
+    JobOwner[job] = owner;
+    JobPayloadHash[job] = payload_hash;
+    JobStatus[job] = 1;
+    RetryCount[job] = 0;
+    JobNextSlot[job] = 0;
+    JobCronIntervalSlots[job] = 0;
+    JobMaxRetries[job] = 0;
+    JobRetryDelaySlots[job] = 0;
+    JobLastRunSlot[job] = 0;
+    JobRunCount[job] = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn assign_executor(job: Name, executor: AccountId) permission(Admin) {
+    assign_executor_impl(job, executor);
+  }
+
+  fn assign_executor_impl(job: Name, executor: AccountId) {
+    assert_job_exists(job);
+    JobExecutor[job] = executor;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn configure_job(job: Name,
+                           next_slot: int,
+                           max_retries: int,
+                           retry_delay_slots: int) permission(Admin) {
+    configure_job_impl(
+      job,
+      next_slot,
+      max_retries,
+      retry_delay_slots
+    );
+  }
+
+  fn configure_job_impl(job: Name,
+                        next_slot: int,
+                        max_retries: int,
+                        retry_delay_slots: int) {
+    assert_job_exists(job);
+    assert(next_slot >= 0, "invalid next slot");
+    assert(max_retries >= 0, "invalid max retries");
+    assert(retry_delay_slots >= 0, "invalid retry delay");
+    JobNextSlot[job] = next_slot;
+    JobMaxRetries[job] = max_retries;
+    JobRetryDelaySlots[job] = retry_delay_slots;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn configure_cron(job: Name, interval_slots: int) permission(Admin) {
+    configure_cron_impl(job, interval_slots);
+  }
+
+  fn configure_cron_impl(job: Name, interval_slots: int) {
+    assert_job_exists(job);
+    assert(interval_slots >= 0, "invalid interval");
+    JobCronIntervalSlots[job] = interval_slots;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn mark_running(job: Name, current_slot: int) permission(Admin) {
+    assert(!contains(JobExecutor, job), "executor required");
+    mark_running_impl(job, current_slot);
+  }
+
+  fn mark_running_impl(job: Name, current_slot: int) {
+    assert_job_exists(job);
+    assert(get_or_insert_default(JobStatus, job, 0) == 1, "job not queued");
+    assert(current_slot >= get_or_insert_default(JobNextSlot, job, 0), "job not ready");
+    JobStatus[job] = 2;
+    JobLastRunSlot[job] = current_slot;
+    JobRunCount[job] = get_or_insert_default(JobRunCount, job, 0) + 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn dispatch_job(job: Name,
+                          executor: AccountId,
+                          current_slot: int) permission(Admin) {
+    dispatch_job_impl(job, executor, current_slot);
+  }
+
+  fn dispatch_job_impl(job: Name, executor: AccountId, current_slot: int) {
+    assert_job_exists(job);
+    assert_job_executor(job, executor);
+    mark_running_impl(job, current_slot);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn mark_done(job: Name) permission(Admin) {
+    mark_done_impl(job);
+  }
+
+  fn mark_done_impl(job: Name) {
+    assert_job_exists(job);
+    let status = get_or_insert_default(JobStatus, job, 0);
+    assert(status != 3, "job already done");
+    assert(status != 5, "job canceled");
+    JobStatus[job] = 3;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn complete_run(job: Name,
+                          executor: AccountId,
+                          current_slot: int) permission(Admin) {
+    complete_run_impl(job, executor, current_slot);
+  }
+
+  fn complete_run_impl(job: Name,
+                       executor: AccountId,
+                       current_slot: int) {
+    assert_job_exists(job);
+    assert_job_executor(job, executor);
+    assert(get_or_insert_default(JobStatus, job, 0) == 2, "job not running");
+    assert(current_slot >= get_or_insert_default(JobLastRunSlot, job, 0), "invalid current slot");
+    let interval_slots = get_or_insert_default(JobCronIntervalSlots, job, 0);
+    if interval_slots > 0 {
+      JobStatus[job] = 1;
+      JobNextSlot[job] = current_slot + interval_slots;
+    } else {
+      JobStatus[job] = 3;
+    }
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn retry(job: Name) permission(Admin) {
+    retry_impl(job, get_or_insert_default(JobLastRunSlot, job, 0));
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn retry_at(job: Name, current_slot: int) permission(Admin) {
+    retry_impl(job, current_slot);
+  }
+
+  fn retry_impl(job: Name, current_slot: int) {
+    assert_job_exists(job);
+    let retries = get_or_insert_default(RetryCount, job, 0);
+    let max_retries = get_or_insert_default(JobMaxRetries, job, 0);
+    if max_retries > 0 {
+      assert(retries < max_retries, "retry limit");
+    }
+    JobStatus[job] = 1;
+    RetryCount[job] = retries + 1;
+    JobNextSlot[job] = current_slot + get_or_insert_default(JobRetryDelaySlots, job, 0);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn pause_job(job: Name) permission(Admin) {
+    assert_job_exists(job);
+    let status = get_or_insert_default(JobStatus, job, 0);
+    assert(status == 1 || status == 2, "job not active");
+    JobStatus[job] = 4;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn resume_job(job: Name, current_slot: int) permission(Admin) {
+    assert_job_exists(job);
+    assert(get_or_insert_default(JobStatus, job, 0) == 4, "job not paused");
+    JobStatus[job] = 1;
+    JobNextSlot[job] = current_slot;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn cancel_job(job: Name) permission(Admin) {
+    assert_job_exists(job);
+    let status = get_or_insert_default(JobStatus, job, 0);
+    assert(status != 3, "job already done");
+    assert(status != 5, "job already canceled");
+    JobStatus[job] = 5;
+  }
+
+  view fn mirror_job(job: Name) -> (int, int, int, int, int, int, int, int, int, int, int) {
+    let job_registered = 0;
+    let executor_bound = 0;
+    if contains(JobOwner, job) {
+      job_registered = 1;
+    }
+    if contains(JobExecutor, job) {
+      executor_bound = 1;
+    }
+    return (
+      job_registered,
+      executor_bound,
+      get_or(JobPayloadHash, job, 0),
+      get_or(JobStatus, job, 0),
+      get_or(RetryCount, job, 0),
+      get_or(JobNextSlot, job, 0),
+      get_or(JobCronIntervalSlots, job, 0),
+      get_or(JobMaxRetries, job, 0),
+      get_or(JobRetryDelaySlots, job, 0),
+      get_or(JobLastRunSlot, job, 0),
+      get_or(JobRunCount, job, 0)
+    );
+  }
+}
