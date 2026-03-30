@@ -1963,18 +1963,85 @@ ensure_public_testnet_signer_ready() {
 ensure_domain_sns_lease() {
   local config="$1"
   local domain_label="$2"
+  local output
   if iroha_cli_json --config "$config" app sns registration --selector "${domain_label}.domain" \
     >/dev/null 2>&1; then
     return 0
   fi
 
-  iroha_cli --config "$config" app sns register \
-    --label "$domain_label" \
-    --suffix-id "$SORASWAP_SNS_DOMAIN_SUFFIX_ID" \
-    --term-years 1 \
-    --pricing-class 0 \
-    --payment-asset-id "$SORASWAP_SNS_PAYMENT_ASSET_ID" \
-    --payment-gross 120 \
-    --payment-settlement '"dummy-tx"' \
-    --payment-signature '"dummy-signature"'
+  if output="$(
+    iroha_cli --config "$config" app sns register \
+      --label "$domain_label" \
+      --suffix-id "$SORASWAP_SNS_DOMAIN_SUFFIX_ID" \
+      --term-years 1 \
+      --pricing-class 0 \
+      --payment-asset-id "$SORASWAP_SNS_PAYMENT_ASSET_ID" \
+      --payment-gross 120 \
+      --payment-settlement '"dummy-tx"' \
+      --payment-signature '"dummy-signature"' 2>&1
+  )"; then
+    return 0
+  fi
+
+  if [[ "$output" == *"ERR_UNEXPECTED_NETWORK_PREFIX"* ]]; then
+    local torii_base payload_json tmp http_code
+
+    torii_base="$(torii_base_from_config "$config")"
+    payload_json="$(jq -cn \
+      --arg owner "$SORASWAP_AUTHORITY" \
+      --arg payer "$SORASWAP_AUTHORITY" \
+      --arg label "$domain_label" \
+      --arg asset_id "$SORASWAP_SNS_PAYMENT_ASSET_ID" \
+      --argjson suffix_id "$SORASWAP_SNS_DOMAIN_SUFFIX_ID" \
+      '{
+        selector: {
+          version: 1,
+          suffix_id: $suffix_id,
+          label: $label
+        },
+        owner: $owner,
+        controllers: [{
+          controller_type: {
+            kind: "Account"
+          },
+          account_address: $owner,
+          resolver_template_id: null,
+          payload: {}
+        }],
+        term_years: 1,
+        pricing_class_hint: 0,
+        payment: {
+          asset_id: $asset_id,
+          gross_amount: 120,
+          net_amount: 120,
+          settlement_tx: "dummy-tx",
+          payer: $payer,
+          signature: "dummy-signature"
+        },
+        governance: null,
+        metadata: {}
+      }')"
+    tmp="$(mktemp)"
+    http_code="$(curl -sS -o "$tmp" -w '%{http_code}' \
+      -H 'Accept: application/json' \
+      -H 'Content-Type: application/json' \
+      -H 'X-Iroha-API-Version: 1.1' \
+      -X POST \
+      "$torii_base/v1/sns/names" \
+      -d "$payload_json" || true)"
+    if [[ "$http_code" == "201" ]]; then
+      rm -f "$tmp"
+      return 0
+    fi
+    if [[ "$http_code" == "409" ]]; then
+      rm -f "$tmp"
+      return 0
+    fi
+    echo "sns register fallback failed for ${domain_label}.domain: HTTP ${http_code}: $(cat "$tmp")" >&2
+    rm -f "$tmp"
+    return 1
+  fi
+
+  printf '%s\n' "$output" >&2
+  return 1
 }
