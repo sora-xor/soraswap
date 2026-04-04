@@ -141,14 +141,14 @@ seiyaku DlmmPool {
   }
 
   fn bin_reserve_base_value(bin_id: int) -> int {
-    if contains(BinReserveBase, bin_id) {
+    if BinReserveBase.contains(bin_id) {
       return BinReserveBase[bin_id];
     }
     return 0;
   }
 
   fn bin_reserve_quote_value(bin_id: int) -> int {
-    if contains(BinReserveQuote, bin_id) {
+    if BinReserveQuote.contains(bin_id) {
       return BinReserveQuote[bin_id];
     }
     return 0;
@@ -159,56 +159,56 @@ seiyaku DlmmPool {
   }
 
   fn bin_share_supply_value(bin_id: int) -> int {
-    if contains(BinShareSupply, bin_id) {
+    if BinShareSupply.contains(bin_id) {
       return BinShareSupply[bin_id];
     }
     return 0;
   }
 
   fn bin_fee_growth_base_value(bin_id: int) -> int {
-    if contains(BinFeeGrowthBase, bin_id) {
+    if BinFeeGrowthBase.contains(bin_id) {
       return BinFeeGrowthBase[bin_id];
     }
     return 0;
   }
 
   fn bin_fee_growth_quote_value(bin_id: int) -> int {
-    if contains(BinFeeGrowthQuote, bin_id) {
+    if BinFeeGrowthQuote.contains(bin_id) {
       return BinFeeGrowthQuote[bin_id];
     }
     return 0;
   }
 
   fn position_shares_value(position_id: Name) -> int {
-    if contains(PositionShares, position_id) {
+    if PositionShares.contains(position_id) {
       return PositionShares[position_id];
     }
     return 0;
   }
 
   fn position_fee_debt_base_value(position_id: Name) -> int {
-    if contains(PositionFeeDebtBase, position_id) {
+    if PositionFeeDebtBase.contains(position_id) {
       return PositionFeeDebtBase[position_id];
     }
     return 0;
   }
 
   fn position_fee_debt_quote_value(position_id: Name) -> int {
-    if contains(PositionFeeDebtQuote, position_id) {
+    if PositionFeeDebtQuote.contains(position_id) {
       return PositionFeeDebtQuote[position_id];
     }
     return 0;
   }
 
   fn position_credit_base_value(position_id: Name) -> int {
-    if contains(PositionCreditBase, position_id) {
+    if PositionCreditBase.contains(position_id) {
       return PositionCreditBase[position_id];
     }
     return 0;
   }
 
   fn position_credit_quote_value(position_id: Name) -> int {
-    if contains(PositionCreditQuote, position_id) {
+    if PositionCreditQuote.contains(position_id) {
       return PositionCreditQuote[position_id];
     }
     return 0;
@@ -308,7 +308,7 @@ seiyaku DlmmPool {
   }
 
   fn assert_position_exists(position_id: Name) {
-    assert(contains(PositionOwner, position_id), "position not found");
+    assert(PositionOwner.contains(position_id), "position not found");
   }
 
   fn accrue_position_fees(position_id: Name) {
@@ -528,7 +528,7 @@ seiyaku DlmmPool {
       assert(reserve_quote + quote_amount <= cap, "quote reserve cap");
     }
 
-    if contains(PositionOwner, position_id) {
+    if PositionOwner.contains(position_id) {
       assert(PositionOwner[position_id] == provider, "position owner mismatch");
       assert(PositionBinId[position_id] == bin_id, "position bin mismatch");
       accrue_position_fees(position_id);
@@ -716,18 +716,172 @@ seiyaku DlmmPool {
   view fn mirror_position(position_id: Name) -> (int, int, int, int, int, int, int) {
     assert_pool_initialized();
     let position_registered = 0;
-    if contains(PositionOwner, position_id) {
+    if PositionOwner.contains(position_id) {
       position_registered = 1;
     }
     return (
       position_registered,
-      get_or(PositionBinId, position_id, 0),
+      PositionBinId.get_or(position_id, 0),
       position_shares_value(position_id),
       position_fee_debt_base_value(position_id),
       position_fee_debt_quote_value(position_id),
       position_credit_base_value(position_id),
       position_credit_quote_value(position_id)
     );
+  }
+
+  // Keep spot helpers adjacent to the swap entrypoints so the hot path avoids
+  // far control-transfer stubs on older runtimes.
+  fn spot_assert_pool_initialized() {
+    assert(PoolInitialized == 1, "pool not initialized");
+  }
+
+  fn spot_abs_int(value: int) -> int {
+    if value < 0 {
+      return 0 - value;
+    }
+    return value;
+  }
+
+  fn spot_ppm_scale() -> int {
+    return 1_000_000;
+  }
+
+  fn spot_fee_growth_scale() -> int {
+    return 1_000_000_000;
+  }
+
+  fn spot_assert_valid_fee(fee_pips: int) {
+    assert(fee_pips >= 0, "negative fee_pips");
+    assert(fee_pips < spot_ppm_scale(), "fee_pips too large");
+  }
+
+  fn spot_assert_valid_bin_step(bin_step: int) {
+    assert(bin_step > 0, "invalid bin_step");
+    assert(bin_step <= 100_000, "bin_step too large");
+  }
+
+  fn spot_assert_valid_bin_id(bin_id: int) {
+    assert(spot_abs_int(bin_id) <= 200_000, "bin_id too large");
+  }
+
+  fn spot_bin_reserve_base_value(bin_id: int) -> int {
+    if BinReserveBase.contains(bin_id) {
+      return BinReserveBase[bin_id];
+    }
+    return 0;
+  }
+
+  fn spot_bin_reserve_quote_value(bin_id: int) -> int {
+    if BinReserveQuote.contains(bin_id) {
+      return BinReserveQuote[bin_id];
+    }
+    return 0;
+  }
+
+  fn spot_bin_share_supply_value(bin_id: int) -> int {
+    if BinShareSupply.contains(bin_id) {
+      return BinShareSupply[bin_id];
+    }
+    return 0;
+  }
+
+  fn spot_bin_fee_growth_base_value(bin_id: int) -> int {
+    if BinFeeGrowthBase.contains(bin_id) {
+      return BinFeeGrowthBase[bin_id];
+    }
+    return 0;
+  }
+
+  fn spot_bin_fee_growth_quote_value(bin_id: int) -> int {
+    if BinFeeGrowthQuote.contains(bin_id) {
+      return BinFeeGrowthQuote[bin_id];
+    }
+    return 0;
+  }
+
+  fn spot_move_asset_if_needed(from: AccountId,
+                               to: AccountId,
+                               asset: AssetDefinitionId,
+                               amount: int) {
+    if amount > 0 {
+      if from != to {
+        transfer_asset(from, to, asset, amount);
+      }
+    }
+  }
+
+  fn spot_fee_adjusted_amount(amount_in: int, fee_pips: int) -> int {
+    if amount_in <= 0 {
+      return 0;
+    }
+    spot_assert_valid_fee(fee_pips);
+    return (amount_in * (spot_ppm_scale() - fee_pips)) / spot_ppm_scale();
+  }
+
+  fn spot_fee_paid_amount(amount_in: int, fee_pips: int) -> int {
+    let effective = spot_fee_adjusted_amount(amount_in, fee_pips);
+    return amount_in - effective;
+  }
+
+  fn spot_credit_bin_fee_growth_base(bin_id: int, fee_paid: int) {
+    let share_supply = spot_bin_share_supply_value(bin_id);
+    if fee_paid <= 0 || share_supply <= 0 {
+      return;
+    }
+    BinFeeGrowthBase[bin_id] = spot_bin_fee_growth_base_value(bin_id) +
+      ((fee_paid * spot_fee_growth_scale()) / share_supply);
+  }
+
+  fn spot_credit_bin_fee_growth_quote(bin_id: int, fee_paid: int) {
+    let share_supply = spot_bin_share_supply_value(bin_id);
+    if fee_paid <= 0 || share_supply <= 0 {
+      return;
+    }
+    BinFeeGrowthQuote[bin_id] = spot_bin_fee_growth_quote_value(bin_id) +
+      ((fee_paid * spot_fee_growth_scale()) / share_supply);
+  }
+
+  fn spot_ceil_div(numerator: int, denominator: int) -> int {
+    assert(denominator > 0, "invalid denominator");
+    if numerator <= 0 {
+      return 0;
+    }
+    return (numerator + denominator - 1) / denominator;
+  }
+
+  fn spot_gross_from_net(net_amount: int, fee_pips: int) -> int {
+    if net_amount <= 0 {
+      return 0;
+    }
+    let gross = spot_ceil_div(
+      net_amount * spot_ppm_scale(),
+      spot_ppm_scale() - fee_pips
+    );
+    if spot_fee_adjusted_amount(gross, fee_pips) < net_amount {
+      return gross + 1;
+    }
+    return gross;
+  }
+
+  fn spot_bin_price_ppm(bin_id: int, bin_step: int) -> int {
+    let scale = spot_ppm_scale();
+    spot_assert_valid_bin_step(bin_step);
+    spot_assert_valid_bin_id(bin_id);
+
+    if bin_id >= 0 {
+      return scale + (bin_id * bin_step);
+    }
+
+    let denominator = scale + (spot_abs_int(bin_id) * bin_step);
+    let price = (scale * scale) / denominator;
+    assert(price > 0, "bin price underflow");
+    return price;
+  }
+
+  fn spot_price_impact_bps(start_price: int, current_price: int) -> int {
+    assert(start_price > 0, "invalid start price");
+    return (spot_abs_int(current_price - start_price) * 10_000) / start_price;
   }
 
   fn try_swap_exact_in_base_side_single_bin(trader: AccountId,
@@ -741,26 +895,26 @@ seiyaku DlmmPool {
     }
 
     let current_bin = ActiveBin;
-    let reserve_quote = bin_reserve_quote_value(current_bin);
+    let reserve_quote = spot_bin_reserve_quote_value(current_bin);
     let available_quote = reserve_quote - MinReserveQuote;
 
     if available_quote <= 0 {
       return 0;
     }
 
-    let output = (fee_adjusted_amount(amount_in, FeePips) *
-      bin_price_ppm(current_bin, BinStep)) / ppm_scale();
+    let output = (spot_fee_adjusted_amount(amount_in, FeePips) *
+      spot_bin_price_ppm(current_bin, BinStep)) / spot_ppm_scale();
     if output <= 0 || output >= available_quote {
       return 0;
     }
 
-    BinReserveBase[current_bin] = bin_reserve_base_value(current_bin) + amount_in;
+    BinReserveBase[current_bin] = spot_bin_reserve_base_value(current_bin) + amount_in;
     BinReserveQuote[current_bin] = reserve_quote - output;
-    let fee_paid = fee_paid_amount(amount_in, FeePips);
-    credit_bin_fee_growth_base(current_bin, fee_paid);
+    let fee_paid = spot_fee_paid_amount(amount_in, FeePips);
+    spot_credit_bin_fee_growth_base(current_bin, fee_paid);
     assert(output >= min_out, "slippage");
-    move_asset_if_needed(trader, vault, base_asset, amount_in);
-    move_asset_if_needed(vault, trader, quote_asset, output);
+    spot_move_asset_if_needed(trader, vault, base_asset, amount_in);
+    spot_move_asset_if_needed(vault, trader, quote_asset, output);
     return output;
   }
 
@@ -773,12 +927,12 @@ seiyaku DlmmPool {
     let fee_pips = FeePips;
     let bin_step = BinStep;
     let start_bin = ActiveBin;
-    let start_price = bin_price_ppm(start_bin, bin_step);
+    let start_price = spot_bin_price_ppm(start_bin, bin_step);
     let impact_cap = ImpactCapBps;
     let min_quote = MinReserveQuote;
     let max_bins = MaxBinsPerSwap;
     let cap = BinLiquidityCap;
-    let scale = ppm_scale();
+    let scale = spot_ppm_scale();
     let current_bin = start_bin;
     let bins_crossed = 0;
     let amount_remaining = amount_in;
@@ -787,13 +941,13 @@ seiyaku DlmmPool {
     let stop = 0;
 
     while amount_remaining > 0 && bins_crossed < max_bins && stop == 0 {
-      let reserve_base = bin_reserve_base_value(current_bin);
-      let reserve_quote = bin_reserve_quote_value(current_bin);
+      let reserve_base = spot_bin_reserve_base_value(current_bin);
+      let reserve_quote = spot_bin_reserve_quote_value(current_bin);
       let available_quote = reserve_quote - min_quote;
-      let price = bin_price_ppm(current_bin, bin_step);
+      let price = spot_bin_price_ppm(current_bin, bin_step);
 
       if impact_cap > 0 {
-        if price_impact_bps(start_price, price) > impact_cap {
+        if spot_price_impact_bps(start_price, price) > impact_cap {
           stop = 1;
         }
       } else {
@@ -818,19 +972,19 @@ seiyaku DlmmPool {
 
           if stop == 0 {
             let gross_used = gross_limit;
-            let effective_limit = fee_adjusted_amount(gross_limit, fee_pips);
+            let effective_limit = spot_fee_adjusted_amount(gross_limit, fee_pips);
             if effective_limit <= 0 {
               stop = 1;
             } else {
               let projected_out = (effective_limit * price) / scale;
               let output = projected_out;
               if projected_out >= available_quote {
-                let net_needed = ceil_div(available_quote * scale, price);
-                gross_used = gross_from_net(net_needed, fee_pips);
+                let net_needed = spot_ceil_div(available_quote * scale, price);
+                gross_used = spot_gross_from_net(net_needed, fee_pips);
                 if gross_used > gross_limit {
                   gross_used = gross_limit;
                 }
-                let effective_used = fee_adjusted_amount(gross_used, fee_pips);
+                let effective_used = spot_fee_adjusted_amount(gross_used, fee_pips);
                 output = (effective_used * price) / scale;
                 if output > available_quote {
                   output = available_quote;
@@ -840,10 +994,10 @@ seiyaku DlmmPool {
               if gross_used <= 0 || output <= 0 {
                 stop = 1;
               } else {
-                let fee_paid = fee_paid_amount(gross_used, fee_pips);
+                let fee_paid = spot_fee_paid_amount(gross_used, fee_pips);
                 BinReserveBase[current_bin] = reserve_base + gross_used;
                 BinReserveQuote[current_bin] = reserve_quote - output;
-                credit_bin_fee_growth_base(current_bin, fee_paid);
+                spot_credit_bin_fee_growth_base(current_bin, fee_paid);
 
                 amount_remaining = amount_remaining - gross_used;
                 amount_used = amount_used + gross_used;
@@ -868,8 +1022,8 @@ seiyaku DlmmPool {
 
     assert(amount_used > 0, "insufficient input used");
     assert(amount_out >= min_out, "slippage");
-    move_asset_if_needed(trader, vault, base_asset, amount_used);
-    move_asset_if_needed(vault, trader, quote_asset, amount_out);
+    spot_move_asset_if_needed(trader, vault, base_asset, amount_used);
+    spot_move_asset_if_needed(vault, trader, quote_asset, amount_out);
     return amount_out;
   }
 
@@ -882,12 +1036,12 @@ seiyaku DlmmPool {
     let fee_pips = FeePips;
     let bin_step = BinStep;
     let start_bin = ActiveBin;
-    let start_price = bin_price_ppm(start_bin, bin_step);
+    let start_price = spot_bin_price_ppm(start_bin, bin_step);
     let impact_cap = ImpactCapBps;
     let min_base = MinReserveBase;
     let max_bins = MaxBinsPerSwap;
     let cap = BinLiquidityCap;
-    let scale = ppm_scale();
+    let scale = spot_ppm_scale();
     let current_bin = start_bin;
     let bins_crossed = 0;
     let amount_remaining = amount_in;
@@ -896,13 +1050,13 @@ seiyaku DlmmPool {
     let stop = 0;
 
     while amount_remaining > 0 && bins_crossed < max_bins && stop == 0 {
-      let reserve_base = bin_reserve_base_value(current_bin);
-      let reserve_quote = bin_reserve_quote_value(current_bin);
+      let reserve_base = spot_bin_reserve_base_value(current_bin);
+      let reserve_quote = spot_bin_reserve_quote_value(current_bin);
       let available_base = reserve_base - min_base;
-      let price = bin_price_ppm(current_bin, bin_step);
+      let price = spot_bin_price_ppm(current_bin, bin_step);
 
       if impact_cap > 0 {
-        if price_impact_bps(start_price, price) > impact_cap {
+        if spot_price_impact_bps(start_price, price) > impact_cap {
           stop = 1;
         }
       } else {
@@ -927,19 +1081,19 @@ seiyaku DlmmPool {
 
           if stop == 0 {
             let gross_used = gross_limit;
-            let effective_limit = fee_adjusted_amount(gross_limit, fee_pips);
+            let effective_limit = spot_fee_adjusted_amount(gross_limit, fee_pips);
             if effective_limit <= 0 {
               stop = 1;
             } else {
               let projected_out = (effective_limit * scale) / price;
               let output = projected_out;
               if projected_out >= available_base {
-                let net_needed = ceil_div(available_base * price, scale);
-                gross_used = gross_from_net(net_needed, fee_pips);
+                let net_needed = spot_ceil_div(available_base * price, scale);
+                gross_used = spot_gross_from_net(net_needed, fee_pips);
                 if gross_used > gross_limit {
                   gross_used = gross_limit;
                 }
-                let effective_used = fee_adjusted_amount(gross_used, fee_pips);
+                let effective_used = spot_fee_adjusted_amount(gross_used, fee_pips);
                 output = (effective_used * scale) / price;
                 if output > available_base {
                   output = available_base;
@@ -949,10 +1103,10 @@ seiyaku DlmmPool {
               if gross_used <= 0 || output <= 0 {
                 stop = 1;
               } else {
-                let fee_paid = fee_paid_amount(gross_used, fee_pips);
+                let fee_paid = spot_fee_paid_amount(gross_used, fee_pips);
                 BinReserveQuote[current_bin] = reserve_quote + gross_used;
                 BinReserveBase[current_bin] = reserve_base - output;
-                credit_bin_fee_growth_quote(current_bin, fee_paid);
+                spot_credit_bin_fee_growth_quote(current_bin, fee_paid);
 
                 amount_remaining = amount_remaining - gross_used;
                 amount_used = amount_used + gross_used;
@@ -977,8 +1131,8 @@ seiyaku DlmmPool {
 
     assert(amount_used > 0, "insufficient input used");
     assert(amount_out >= min_out, "slippage");
-    move_asset_if_needed(trader, vault, quote_asset, amount_used);
-    move_asset_if_needed(vault, trader, base_asset, amount_out);
+    spot_move_asset_if_needed(trader, vault, quote_asset, amount_used);
+    spot_move_asset_if_needed(vault, trader, base_asset, amount_out);
     return amount_out;
   }
 
@@ -1008,7 +1162,7 @@ seiyaku DlmmPool {
                                     quote_asset: AssetDefinitionId,
                                     amount_in: int,
                                     min_out: int) -> int {
-    assert_pool_initialized();
+    spot_assert_pool_initialized();
     if amount_in <= 0 {
       return 0;
     }

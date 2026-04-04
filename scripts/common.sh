@@ -233,7 +233,7 @@ iroha_cli_json() {
 normalize_hash_literal() {
   local value="$1"
   value="${value#hash:}"
-  value="${value%%#*}"
+  value="${value%%\#*}"
   echo "${value:l}"
 }
 
@@ -279,6 +279,19 @@ require_file() {
     echo "missing required file: $file_path" >&2
     exit 1
   fi
+}
+
+configure_cli_account_chain_discriminant() {
+  local config="$1"
+  local torii_base
+
+  torii_base="$(torii_base_from_config "$config")"
+  if [[ "$torii_base" == "https://taira.sora.org" ]]; then
+    export IROHA_ACCOUNT_CHAIN_DISCRIMINANT="$SORASWAP_TESTNET_CHAIN_DISCRIMINANT"
+    return 0
+  fi
+
+  unset IROHA_ACCOUNT_CHAIN_DISCRIMINANT || true
 }
 
 client_config_or_default() {
@@ -615,7 +628,21 @@ treasury_account_for_mode() {
 account_exists() {
   local config="$1"
   local account_id="$2"
-  iroha_cli_json --config "$config" ledger account get --id "$account_id" >/dev/null 2>&1
+  local torii_base encoded_account http_code
+
+  if iroha_cli_json --config "$config" ledger account get --id "$account_id" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! is_contract_address_literal "$account_id"; then
+    return 1
+  fi
+
+  torii_base="$(torii_base_from_config "$config")"
+  encoded_account="$(uri_encode "$account_id")"
+  http_code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    "$torii_base/v1/accounts/${encoded_account}" || true)"
+  [[ "$http_code" == "200" ]]
 }
 
 wait_for_account_exists() {
@@ -648,8 +675,7 @@ ensure_account_registered() {
 
   echo "register account: $account_id -> $domain"
   iroha_cli --machine --config "$config" ledger account register \
-    --id "$account_id" \
-    --domain "$domain"
+    --id "$account_id"
 }
 
 read_norito_error_message() {
@@ -927,6 +953,50 @@ print(visit(document) or 0)
 PY
 }
 
+max_deploy_nonce_for_env_records() {
+  local env="$1"
+  local fingerprint_json="$2"
+  local record_path nonce max_nonce=-1
+
+  for record_path in "$SORASWAP_ROOT/deployments/${env}"/*.deploy.json(N); do
+    if ! jq -e \
+      --argjson current "$fingerprint_json" \
+      '
+        (.chain_fingerprint // {}) as $stored
+        | $stored.torii_url == $current.torii_url
+        and $stored.chain == $current.chain
+        and $stored.block_1_hash == $current.block_1_hash
+      ' "$record_path" >/dev/null 2>&1; then
+      continue
+    fi
+
+    nonce="$(jq -r '.deploy_nonce // -1' "$record_path" 2>/dev/null || echo -1)"
+    if [[ "$nonce" =~ '^[0-9]+$' ]] && (( nonce > max_nonce )); then
+      max_nonce="$nonce"
+    fi
+  done
+
+  echo $(( max_nonce + 1 ))
+}
+
+account_has_any_positive_asset_balance() {
+  local config="$1"
+  local account_id="$2"
+  local torii_base encoded_account response
+
+  torii_base="$(torii_base_from_config "$config")"
+  encoded_account="$(uri_encode "$account_id")"
+  if ! response="$(
+    curl -fsS \
+      "$torii_base/v1/accounts/${encoded_account}/assets?scope=global&limit=50" \
+      2>/dev/null
+  )"; then
+    return 1
+  fi
+
+  jq -e 'any(.items[]?; ((.quantity | tonumber?) // 0) > 0)' <<<"$response" >/dev/null
+}
+
 claim_public_testnet_faucet() {
   local config="$1"
   local account_id="$2"
@@ -970,7 +1040,7 @@ claim_public_testnet_faucet() {
   if [[ -n "$tx_hash" ]]; then
     local pipeline_json pipeline_kind
     if pipeline_json="$(wait_for_transaction_terminal_status "$config" "$tx_hash" 90 1 auto)"; then
-      pipeline_kind="$(jq -r '.content.status.kind // empty' <<<"$pipeline_json")"
+      pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_json")"
       case "$pipeline_kind" in
         Applied|Committed)
           :
@@ -1003,13 +1073,21 @@ warn_if_testnet_tx_gossip_cap_low() {
 asset_definition_alias_exists() {
   local config="$1"
   local alias="$2"
-  iroha_cli_json --config "$config" ledger asset definition get --alias "$alias" >/dev/null 2>&1
+  local torii_base
+
+  torii_base="$(torii_base_from_config "$config")"
+  curl -sS -o /dev/null -w '%{http_code}' \
+    "$torii_base/v1/assets/definitions/$(uri_encode "$alias")" \
+    | grep -q '^200$'
 }
 
 asset_definition_id_for_alias() {
   local config="$1"
   local alias="$2"
-  iroha_cli_json --config "$config" ledger asset definition get --alias "$alias" \
+  local torii_base
+
+  torii_base="$(torii_base_from_config "$config")"
+  curl -sS "$torii_base/v1/assets/definitions/$(uri_encode "$alias")" \
     | jq -r '.id'
 }
 
@@ -1111,11 +1189,24 @@ contract_instance_exists() {
   local contract_id="$3"
   local response
 
-  response="$(iroha_cli_json --config "$config" app contracts instances \
-    --dataspace "$dataspace" \
-    --contains "$contract_id")"
+  response="$(contract_instances_json "$config" "$dataspace" "$contract_id")"
   jq -e --arg cid "$contract_id" \
     'any(.instances[]?; .contract_id == $cid)' <<<"$response" >/dev/null
+}
+
+contract_instances_json() {
+  local config="$1"
+  local dataspace="$2"
+  local contains="${3:-}"
+  local torii_base url
+
+  torii_base="$(torii_base_from_config "$config")"
+  url="$torii_base/v1/contracts/instances/$(uri_encode "$dataspace")"
+  if [[ -n "$contains" ]]; then
+    url="$url?contains=$(uri_encode "$contains")"
+  fi
+
+  curl -fsS "$url"
 }
 
 contract_instance_json() {
@@ -1124,9 +1215,7 @@ contract_instance_json() {
   local contract_id="$3"
   local response
 
-  response="$(iroha_cli_json --config "$config" app contracts instances \
-    --dataspace "$dataspace" \
-    --contains "$contract_id")"
+  response="$(contract_instances_json "$config" "$dataspace" "$contract_id")"
   jq -c --arg cid "$contract_id" \
     '.instances[]? | select(.contract_id == $cid)' <<<"$response"
 }
@@ -1136,7 +1225,7 @@ wait_for_contract_instance() {
   local dataspace="$2"
   local contract_id="$3"
   local expected_code_hash="${4:-}"
-  local attempts="${5:-60}"
+  local attempts="${5:-${SORASWAP_CONTRACT_INSTANCE_WAIT_SECS:-180}}"
   local sleep_seconds="${6:-1}"
   local attempt=1
   local instance_json current_code_hash
@@ -1400,6 +1489,16 @@ pipeline_transaction_status_json() {
   esac
 }
 
+pipeline_status_kind_from_json() {
+  local response_json="$1"
+  jq -r '.status.kind // .content.status.kind // empty' <<<"$response_json"
+}
+
+pipeline_status_content_from_json() {
+  local response_json="$1"
+  jq -c '.status.rejection_reason // .content.status.content // .content.status // null' <<<"$response_json"
+}
+
 wait_for_transaction_commit() {
   local config="$1"
   local tx_hash="$2"
@@ -1431,7 +1530,7 @@ wait_for_transaction_terminal_status() {
 
   while (( attempt <= attempts )); do
     if response="$(pipeline_transaction_status_json "$config" "$tx_hash" "$scope" 2>/dev/null)"; then
-      kind="$(jq -r '.content.status.kind // empty' <<<"$response")"
+      kind="$(pipeline_status_kind_from_json "$response")"
       latest_kind="$kind"
       case "$kind" in
         Applied|Committed|Rejected|Expired)
@@ -1502,7 +1601,7 @@ call_contract_and_wait() {
     >/dev/null
   tx_hash="$(echo "$response" | jq -r '.tx_hash_hex')"
   if pipeline_json="$(wait_for_transaction_terminal_status "$config" "$tx_hash" 60 1 auto)"; then
-    pipeline_kind="$(jq -r '.content.status.kind // empty' <<<"$pipeline_json")"
+    pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_json")"
     case "$pipeline_kind" in
       Applied|Committed)
         if tx_json="$(committed_transaction_json "$config" "$tx_hash" 5 1 2>/dev/null)"; then
@@ -1510,7 +1609,7 @@ call_contract_and_wait() {
         fi
         ;;
       Rejected|Expired)
-        pipeline_content="$(jq -c '.content.status.content // .content.status' <<<"$pipeline_json")"
+        pipeline_content="$(pipeline_status_content_from_json "$pipeline_json")"
         echo "$contract_id.$entrypoint failed for transaction $tx_hash: $pipeline_content" >&2
         return 1
         ;;
@@ -1747,12 +1846,19 @@ deploy_one() {
   fi
 
   pre_nonce="$(account_contract_deploy_nonce "$config" "$SORASWAP_AUTHORITY")"
-  predicted_address="$(derive_contract_address_for_deploy "$config" "$SORASWAP_AUTHORITY" "$pre_nonce" "$dataspace" "$env")"
+  if [[ "$pre_nonce" == "0" && -n "${SORASWAP_CHAIN_FINGERPRINT_JSON:-}" ]] \
+    && is_contract_address_literal "$SORASWAP_AUTHORITY"; then
+    pre_nonce="$(max_deploy_nonce_for_env_records "$env" "${SORASWAP_CHAIN_FINGERPRINT_JSON}")"
+  fi
+  predicted_address="$(derive_contract_address_for_deploy "$config" "$SORASWAP_AUTHORITY" "$pre_nonce" "$dataspace" "$env" 2>/dev/null || true)"
   response_json=""
   normal_error=""
   deploy_strategy=""
 
   if normal_output="$(submit_contract_deploy_file "$config" "$code_file" "$dataspace" 2>&1)"; then
+    if [[ -z "$predicted_address" ]]; then
+      predicted_address="$(jq -r '.contract_address // empty' <<<"$normal_output")"
+    fi
     if ! jq -e \
       --arg expected_address "$predicted_address" \
       --arg dataspace "$dataspace" \
@@ -1760,7 +1866,8 @@ deploy_one() {
       '
         .ok == true
         and .dataspace == $dataspace
-        and .contract_address == $expected_address
+        and (.contract_address | type == "string" and length > 0)
+        and (($expected_address | length) == 0 or .contract_address == $expected_address)
         and ((.code_hash_hex | ascii_downcase) == $code_hash_hex)
       ' <<<"$normal_output" >/dev/null; then
       deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
@@ -1771,7 +1878,7 @@ deploy_one() {
       return 1
     fi
     response_json="$normal_output"
-    instance_json="$(wait_for_contract_instance "$config" "$dataspace" "$predicted_address" "$expected_code_hash" 90 1 2>/dev/null || true)"
+    instance_json="$(wait_for_contract_instance "$config" "$dataspace" "$predicted_address" "$expected_code_hash" "${SORASWAP_CONTRACT_INSTANCE_WAIT_SECS:-180}" 1 2>/dev/null || true)"
     if [[ -n "$instance_json" ]]; then
       deploy_strategy="normal"
     fi
@@ -1779,10 +1886,10 @@ deploy_one() {
     normal_error="$normal_output"
   fi
 
-  if [[ -z "$instance_json" ]]; then
+  if [[ -z "$instance_json" && -z "$response_json" ]]; then
     post_nonce="$(account_contract_deploy_nonce "$config" "$SORASWAP_AUTHORITY")"
     if (( post_nonce > pre_nonce )); then
-      instance_json="$(wait_for_contract_instance "$config" "$dataspace" "$predicted_address" "$expected_code_hash" 90 1 2>/dev/null || true)"
+      instance_json="$(wait_for_contract_instance "$config" "$dataspace" "$predicted_address" "$expected_code_hash" "${SORASWAP_CONTRACT_INSTANCE_WAIT_SECS:-180}" 1 2>/dev/null || true)"
       if [[ -z "$instance_json" ]]; then
         deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
           --arg contract_key "$contract_key" \
@@ -1821,6 +1928,21 @@ deploy_one() {
     fi
   fi
 
+  if [[ -z "$instance_json" && -n "$response_json" ]]; then
+    deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
+      --arg contract_key "$contract_key" \
+      --arg contract_address "$predicted_address" \
+      --arg response "$response_json" \
+      '{
+        contract_key: $contract_key,
+        stage: "normal_deploy_wait",
+        contract_address: $contract_address,
+        response: $response
+      }')"
+    echo "normal deploy completed for $contract_key but instance did not become visible at $predicted_address" >&2
+    return 1
+  fi
+
   if [[ -z "$instance_json" ]]; then
     split_output="$(split_contract_deploy_cli \
       --config "$config" \
@@ -1857,7 +1979,7 @@ deploy_one() {
       return 1
     fi
     response_json="$split_output"
-    instance_json="$(wait_for_contract_instance "$config" "$dataspace" "$predicted_address" "$expected_code_hash" 90 1 2>/dev/null || true)"
+    instance_json="$(wait_for_contract_instance "$config" "$dataspace" "$predicted_address" "$expected_code_hash" "${SORASWAP_CONTRACT_INSTANCE_WAIT_SECS:-180}" 1 2>/dev/null || true)"
     if [[ -z "$instance_json" ]]; then
       deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
         --arg contract_key "$contract_key" \
@@ -1899,6 +2021,7 @@ deploy_one() {
 ensure_client() {
   local config="$1"
   require_file "$config"
+  configure_cli_account_chain_discriminant "$config"
 }
 
 ensure_account_exists() {
@@ -1931,6 +2054,10 @@ ensure_public_testnet_signer_ready() {
     balance="$(asset_value_for_account "$config" "$fee_alias" "$account_id")"
     if numeric_gt_zero "$balance"; then
       echo "testnet signer ready: $account_id holds $balance of $fee_alias"
+      return 0
+    fi
+    if account_has_any_positive_asset_balance "$config" "$account_id"; then
+      echo "testnet signer ready: $account_id holds a positive live asset balance before $fee_alias is query-visible"
       return 0
     fi
   fi

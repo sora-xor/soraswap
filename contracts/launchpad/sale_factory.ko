@@ -42,11 +42,11 @@ seiyaku SaleFactory {
   }
 
   fn assert_sale_exists(sale: Name) {
-    assert(contains(SaleAsset, sale), "sale missing");
+    assert(SaleAsset.contains(sale), "sale missing");
   }
 
   fn assert_allocation_exists(allocation: Name) {
-    assert(contains(AllocationSale, allocation), "allocation missing");
+    assert(AllocationSale.contains(allocation), "allocation missing");
   }
 
   fn validate_sale_config(unit_price: int, soft_cap: int, hard_cap: int) {
@@ -61,9 +61,9 @@ seiyaku SaleFactory {
   }
 
   fn available_payment_for_seed(sale: Name) -> int {
-    let raised = get_or_insert_default(Raised, sale, 0);
-    let used = get_or_insert_default(SeedPaymentUsed, sale, 0);
-    let refunded = get_or_insert_default(RefundedPayment, sale, 0);
+    let raised = Raised.get_or(sale, 0);
+    let used = SeedPaymentUsed.get_or(sale, 0);
+    let refunded = RefundedPayment.get_or(sale, 0);
     return raised - used - refunded;
   }
 
@@ -92,8 +92,8 @@ seiyaku SaleFactory {
   }
 
   fn refund_amount_for(allocation: Name, sale: Name) -> int {
-    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
-    assert(get_or_insert_default(Successful, sale, 0) == 0, "sale successful");
+    assert(Closed.get_or(sale, 0) == 1, "sale open");
+    assert(Successful.get_or(sale, 0) == 0, "sale successful");
     assert(AllocationClaimed[allocation] == 0, "allocation claimed");
     assert(AllocationRefunded[allocation] == 0, "allocation refunded");
     let amount = AllocationPaymentAmount[allocation];
@@ -102,14 +102,13 @@ seiyaku SaleFactory {
   }
 
   fn claim_amount_for(allocation: Name, sale: Name, current_slot: int) -> int {
-    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
-    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
+    assert(Closed.get_or(sale, 0) == 1, "sale open");
+    assert(Successful.get_or(sale, 0) == 1, "sale failed");
     assert(AllocationRefunded[allocation] == 0, "allocation refunded");
     let total_sale = AllocationSaleAmount[allocation];
     let claimable = vested_claimable(
       total_sale,
-      get_or_insert_default(ClaimStartSlot, sale, 0),
-      get_or_insert_default(ClaimEndSlot, sale, 0),
+      ClaimStartSlot.get_or(sale, 0), ClaimEndSlot.get_or(sale, 0),
       current_slot
     );
     let claimed = AllocationClaimed[allocation];
@@ -124,12 +123,12 @@ seiyaku SaleFactory {
                            sale_asset: AssetDefinitionId,
                            amount: int) -> int {
     let claimed = AllocationClaimed[allocation];
-    let claim_inventory = get_or_insert_default(ClaimInventory, sale, 0);
+    let claim_inventory = ClaimInventory.get_or(sale, 0);
     assert(claim_inventory >= amount, "insufficient claim inventory");
     move_asset_if_needed(treasury, buyer, sale_asset, amount);
     AllocationClaimed[allocation] = claimed + amount;
     ClaimInventory[sale] = claim_inventory - amount;
-    ClaimedSupply[sale] = get_or_insert_default(ClaimedSupply, sale, 0) + amount;
+    ClaimedSupply[sale] = ClaimedSupply.get_or(sale, 0) + amount;
     return amount;
   }
 
@@ -141,7 +140,7 @@ seiyaku SaleFactory {
                             amount: int) -> int {
     move_asset_if_needed(treasury, buyer, payment_asset, amount);
     AllocationRefunded[allocation] = 1;
-    RefundedPayment[sale] = get_or_insert_default(RefundedPayment, sale, 0) + amount;
+    RefundedPayment[sale] = RefundedPayment.get_or(sale, 0) + amount;
     return amount;
   }
 
@@ -153,18 +152,18 @@ seiyaku SaleFactory {
   #[access(read="*", write="*")]
   view fn mirror_sale(sale: Name) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
     assert_sale_exists(sale);
-    let raised = get_or(Raised, sale, 0);
-    let sold = get_or(Sold, sale, 0);
-    let closed = get_or(Closed, sale, 0);
-    let successful = get_or(Successful, sale, 0);
-    let seeded = get_or(Seeded, sale, 0);
-    let seed_inventory = get_or(SeedInventory, sale, 0);
-    let seed_bin_id = get_or(SeedBinId, sale, 0);
-    let seed_payment_amount = get_or(SeedPaymentAmount, sale, 0);
-    let seed_sale_amount = get_or(SeedSaleAmount, sale, 0);
-    let claim_inventory = get_or(ClaimInventory, sale, 0);
-    let claim_start_slot = get_or(ClaimStartSlot, sale, 0);
-    let claim_end_slot = get_or(ClaimEndSlot, sale, 0);
+    let raised = Raised.get_or(sale, 0);
+    let sold = Sold.get_or(sale, 0);
+    let closed = Closed.get_or(sale, 0);
+    let successful = Successful.get_or(sale, 0);
+    let seeded = Seeded.get_or(sale, 0);
+    let seed_inventory = SeedInventory.get_or(sale, 0);
+    let seed_bin_id = SeedBinId.get_or(sale, 0);
+    let seed_payment_amount = SeedPaymentAmount.get_or(sale, 0);
+    let seed_sale_amount = SeedSaleAmount.get_or(sale, 0);
+    let claim_inventory = ClaimInventory.get_or(sale, 0);
+    let claim_start_slot = ClaimStartSlot.get_or(sale, 0);
+    let claim_end_slot = ClaimEndSlot.get_or(sale, 0);
     let seed_registered = 0;
     if seed_payment_amount > 0 || seed_sale_amount > 0 {
       seed_registered = 1;
@@ -194,10 +193,10 @@ seiyaku SaleFactory {
       PaymentAsset[sale],
       Treasury[sale],
       UnitPrice[sale],
-      get_or(SoftCap, sale, 1),
+      SoftCap.get_or(sale, 1),
       HardCap[sale],
-      get_or(ClaimStartSlot, sale, 0),
-      get_or(ClaimEndSlot, sale, 0)
+      ClaimStartSlot.get_or(sale, 0),
+      ClaimEndSlot.get_or(sale, 0)
     );
   }
 
@@ -205,16 +204,16 @@ seiyaku SaleFactory {
   view fn mirror_sale_accounting(sale: Name) -> (int, int, int, int) {
     assert_sale_exists(sale);
     return (
-      get_or(SeedPaymentUsed, sale, 0),
-      get_or(SeedSaleUsed, sale, 0),
-      get_or(ClaimedSupply, sale, 0),
-      get_or(RefundedPayment, sale, 0)
+      SeedPaymentUsed.get_or(sale, 0),
+      SeedSaleUsed.get_or(sale, 0),
+      ClaimedSupply.get_or(sale, 0),
+      RefundedPayment.get_or(sale, 0)
     );
   }
 
   #[access(read="*", write="*")]
   view fn mirror_allocation(allocation: Name) -> (int, int, int, int, int) {
-    if contains(AllocationSale, allocation) {
+    if AllocationSale.contains(allocation) {
       return (
         1,
         AllocationPaymentAmount[allocation],
@@ -326,7 +325,7 @@ seiyaku SaleFactory {
                     treasury: AccountId,
                     unit_price: int,
                     hard_cap: int) {
-    assert(!contains(SaleAsset, sale), "sale exists");
+    assert(!SaleAsset.contains(sale), "sale exists");
     validate_sale_config(unit_price, 1, hard_cap);
     SaleAsset[sale] = sale_asset;
     PaymentAsset[sale] = payment_asset;
@@ -346,7 +345,7 @@ seiyaku SaleFactory {
 
   fn configure_sale_impl(sale: Name, unit_price: int, soft_cap: int, hard_cap: int) {
     assert_sale_exists(sale);
-    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
+    assert(Closed.get_or(sale, 0) == 0, "sale closed");
     validate_sale_config(unit_price, soft_cap, hard_cap);
     UnitPrice[sale] = unit_price;
     SoftCap[sale] = soft_cap;
@@ -362,7 +361,7 @@ seiyaku SaleFactory {
 
   fn configure_vesting_impl(sale: Name, claim_start_slot: int, claim_end_slot: int) {
     assert_sale_exists(sale);
-    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
+    assert(Closed.get_or(sale, 0) == 0, "sale closed");
     validate_vesting_config(claim_start_slot, claim_end_slot);
     ClaimStartSlot[sale] = claim_start_slot;
     ClaimEndSlot[sale] = claim_end_slot;
@@ -412,17 +411,17 @@ seiyaku SaleFactory {
                                  payment_amount: int) -> int {
     assert_sale_exists(sale);
     assert(payment_amount > 0, "invalid payment");
-    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
-    let raised = get_or_insert_default(Raised, sale, 0);
+    assert(Closed.get_or(sale, 0) == 0, "sale closed");
+    let raised = Raised.get_or(sale, 0);
     let next = raised + payment_amount;
-    assert(next <= get_or_insert_default(HardCap, sale, 0), "hard cap");
-    let minted = payment_amount / get_or_insert_default(UnitPrice, sale, 1);
+    assert(next <= HardCap.get_or(sale, 0), "hard cap");
+    let minted = payment_amount / UnitPrice.get_or(sale, 1);
     assert(minted > 0, "zero sale output");
 
     move_asset_if_needed(buyer, treasury, payment_asset, payment_amount);
     mint_asset(buyer, sale_asset, minted);
     Raised[sale] = next;
-    Sold[sale] = get_or_insert_default(Sold, sale, 0) + minted;
+    Sold[sale] = Sold.get_or(sale, 0) + minted;
     return minted;
   }
 
@@ -465,13 +464,13 @@ seiyaku SaleFactory {
                                           payment_asset: AssetDefinitionId,
                                           payment_amount: int) -> int {
     assert_sale_exists(sale);
-    assert(!contains(AllocationSale, allocation), "allocation exists");
+    assert(!AllocationSale.contains(allocation), "allocation exists");
     assert(payment_amount > 0, "invalid payment");
-    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
-    let raised = get_or_insert_default(Raised, sale, 0);
+    assert(Closed.get_or(sale, 0) == 0, "sale closed");
+    let raised = Raised.get_or(sale, 0);
     let next = raised + payment_amount;
-    assert(next <= get_or_insert_default(HardCap, sale, 0), "hard cap");
-    let sale_amount = payment_amount / get_or_insert_default(UnitPrice, sale, 1);
+    assert(next <= HardCap.get_or(sale, 0), "hard cap");
+    let sale_amount = payment_amount / UnitPrice.get_or(sale, 1);
     assert(sale_amount > 0, "zero sale output");
 
     move_asset_if_needed(buyer, treasury, payment_asset, payment_amount);
@@ -482,7 +481,7 @@ seiyaku SaleFactory {
     AllocationClaimed[allocation] = 0;
     AllocationRefunded[allocation] = 0;
     Raised[sale] = next;
-    Sold[sale] = get_or_insert_default(Sold, sale, 0) + sale_amount;
+    Sold[sale] = Sold.get_or(sale, 0) + sale_amount;
     return sale_amount;
   }
 
@@ -493,9 +492,9 @@ seiyaku SaleFactory {
 
   fn close_sale_impl(sale: Name) {
     assert_sale_exists(sale);
-    assert(get_or_insert_default(Closed, sale, 0) == 0, "sale closed");
+    assert(Closed.get_or(sale, 0) == 0, "sale closed");
     Closed[sale] = 1;
-    if get_or_insert_default(Raised, sale, 0) >= get_or_insert_default(SoftCap, sale, 1) {
+    if Raised.get_or(sale, 0) >= SoftCap.get_or(sale, 1) {
       Successful[sale] = 1;
     } else {
       Successful[sale] = 0;
@@ -537,9 +536,9 @@ seiyaku SaleFactory {
                                  amount: int) -> int {
     assert_sale_exists(sale);
     assert(amount > 0, "invalid amount");
-    assert(get_or_insert_default(Seeded, sale, 0) == 0, "sale seeded");
+    assert(Seeded.get_or(sale, 0) == 0, "sale seeded");
     move_asset_if_needed(owner, treasury, sale_asset, amount);
-    SeedInventory[sale] = get_or_insert_default(SeedInventory, sale, 0) + amount;
+    SeedInventory[sale] = SeedInventory.get_or(sale, 0) + amount;
     return amount;
   }
 
@@ -579,7 +578,7 @@ seiyaku SaleFactory {
     assert_sale_exists(sale);
     assert(amount > 0, "invalid amount");
     move_asset_if_needed(owner, treasury, sale_asset, amount);
-    ClaimInventory[sale] = get_or_insert_default(ClaimInventory, sale, 0) + amount;
+    ClaimInventory[sale] = ClaimInventory.get_or(sale, 0) + amount;
     return amount;
   }
 
@@ -607,8 +606,8 @@ seiyaku SaleFactory {
                                   payment_amount: int,
                                   sale_amount: int) {
     assert_sale_exists(sale);
-    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
-    assert(get_or_insert_default(Seeded, sale, 0) == 0, "sale seeded");
+    assert(Closed.get_or(sale, 0) == 1, "sale open");
+    assert(Seeded.get_or(sale, 0) == 0, "sale seeded");
     assert(payment_amount > 0, "invalid payment amount");
     assert(sale_amount > 0, "invalid sale amount");
     SeedPositionId[sale] = position_id;
@@ -650,23 +649,23 @@ seiyaku SaleFactory {
                          payment_asset: AssetDefinitionId,
                          sale_asset: AssetDefinitionId) -> int {
     assert_sale_exists(sale);
-    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
-    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
-    assert(get_or_insert_default(Seeded, sale, 0) == 0, "sale seeded");
-    assert(contains(SeedPositionId, sale), "seed plan missing");
-    let payment_amount = get_or_insert_default(SeedPaymentAmount, sale, 0);
-    let sale_amount = get_or_insert_default(SeedSaleAmount, sale, 0);
+    assert(Closed.get_or(sale, 0) == 1, "sale open");
+    assert(Successful.get_or(sale, 0) == 1, "sale failed");
+    assert(Seeded.get_or(sale, 0) == 0, "sale seeded");
+    assert(SeedPositionId.contains(sale), "seed plan missing");
+    let payment_amount = SeedPaymentAmount.get_or(sale, 0);
+    let sale_amount = SeedSaleAmount.get_or(sale, 0);
     assert(payment_amount > 0, "seed payment missing");
     assert(sale_amount > 0, "seed sale missing");
     assert(available_payment_for_seed(sale) >= payment_amount, "insufficient payment proceeds");
-    assert(get_or_insert_default(SeedInventory, sale, 0) >= sale_amount, "insufficient seed inventory");
+    assert(SeedInventory.get_or(sale, 0) >= sale_amount, "insufficient seed inventory");
 
     SeedVault[sale] = vault_account;
     move_asset_if_needed(treasury, vault_account, payment_asset, payment_amount);
     move_asset_if_needed(treasury, vault_account, sale_asset, sale_amount);
-    SeedInventory[sale] = get_or_insert_default(SeedInventory, sale, 0) - sale_amount;
-    SeedPaymentUsed[sale] = get_or_insert_default(SeedPaymentUsed, sale, 0) + payment_amount;
-    SeedSaleUsed[sale] = get_or_insert_default(SeedSaleUsed, sale, 0) + sale_amount;
+    SeedInventory[sale] = SeedInventory.get_or(sale, 0) - sale_amount;
+    SeedPaymentUsed[sale] = SeedPaymentUsed.get_or(sale, 0) + payment_amount;
+    SeedSaleUsed[sale] = SeedSaleUsed.get_or(sale, 0) + sale_amount;
     Seeded[sale] = 1;
     return payment_amount + sale_amount;
   }
@@ -678,27 +677,26 @@ seiyaku SaleFactory {
     assert_allocation_exists(allocation);
     let sale = AllocationSale[allocation];
     assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
-    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
-    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
+    assert(Closed.get_or(sale, 0) == 1, "sale open");
+    assert(Successful.get_or(sale, 0) == 1, "sale failed");
     assert(AllocationRefunded[allocation] == 0, "allocation refunded");
     let total_sale = AllocationSaleAmount[allocation];
     let claimable = vested_claimable(
       total_sale,
-      get_or_insert_default(ClaimStartSlot, sale, 0),
-      get_or_insert_default(ClaimEndSlot, sale, 0),
+      ClaimStartSlot.get_or(sale, 0), ClaimEndSlot.get_or(sale, 0),
       current_slot
     );
     let claimed = AllocationClaimed[allocation];
     assert(claimable > claimed, "nothing claimable");
     let amount = claimable - claimed;
-    let claim_inventory = get_or_insert_default(ClaimInventory, sale, 0);
+    let claim_inventory = ClaimInventory.get_or(sale, 0);
     assert(claim_inventory >= amount, "insufficient claim inventory");
     let treasury = Treasury[sale];
     let sale_asset = SaleAsset[sale];
     move_asset_if_needed(treasury, buyer, sale_asset, amount);
     AllocationClaimed[allocation] = claimed + amount;
     ClaimInventory[sale] = claim_inventory - amount;
-    ClaimedSupply[sale] = get_or_insert_default(ClaimedSupply, sale, 0) + amount;
+    ClaimedSupply[sale] = ClaimedSupply.get_or(sale, 0) + amount;
     return amount;
   }
 
@@ -711,25 +709,24 @@ seiyaku SaleFactory {
     assert_allocation_exists(allocation);
     assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
     let sale = AllocationSale[allocation];
-    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
-    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
+    assert(Closed.get_or(sale, 0) == 1, "sale open");
+    assert(Successful.get_or(sale, 0) == 1, "sale failed");
     assert(AllocationRefunded[allocation] == 0, "allocation refunded");
     let total_sale = AllocationSaleAmount[allocation];
     let claimable = vested_claimable(
       total_sale,
-      get_or_insert_default(ClaimStartSlot, sale, 0),
-      get_or_insert_default(ClaimEndSlot, sale, 0),
+      ClaimStartSlot.get_or(sale, 0), ClaimEndSlot.get_or(sale, 0),
       current_slot
     );
     let claimed = AllocationClaimed[allocation];
     assert(claimable > claimed, "nothing claimable");
     let amount = claimable - claimed;
-    let claim_inventory = get_or_insert_default(ClaimInventory, sale, 0);
+    let claim_inventory = ClaimInventory.get_or(sale, 0);
     assert(claim_inventory >= amount, "insufficient claim inventory");
     move_asset_if_needed(treasury, buyer, sale_asset, amount);
     AllocationClaimed[allocation] = claimed + amount;
     ClaimInventory[sale] = claim_inventory - amount;
-    ClaimedSupply[sale] = get_or_insert_default(ClaimedSupply, sale, 0) + amount;
+    ClaimedSupply[sale] = ClaimedSupply.get_or(sale, 0) + amount;
     return amount;
   }
 
@@ -742,25 +739,24 @@ seiyaku SaleFactory {
     assert_allocation_exists(allocation);
     assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
     let sale = AllocationSale[allocation];
-    assert(get_or_insert_default(Closed, sale, 0) == 1, "sale open");
-    assert(get_or_insert_default(Successful, sale, 0) == 1, "sale failed");
+    assert(Closed.get_or(sale, 0) == 1, "sale open");
+    assert(Successful.get_or(sale, 0) == 1, "sale failed");
     assert(AllocationRefunded[allocation] == 0, "allocation refunded");
     let total_sale = AllocationSaleAmount[allocation];
     let claimable = vested_claimable(
       total_sale,
-      get_or_insert_default(ClaimStartSlot, sale, 0),
-      get_or_insert_default(ClaimEndSlot, sale, 0),
+      ClaimStartSlot.get_or(sale, 0), ClaimEndSlot.get_or(sale, 0),
       current_slot
     );
     let claimed = AllocationClaimed[allocation];
     assert(claimable > claimed, "nothing claimable");
     let amount = claimable - claimed;
-    let claim_inventory = get_or_insert_default(ClaimInventory, sale, 0);
+    let claim_inventory = ClaimInventory.get_or(sale, 0);
     assert(claim_inventory >= amount, "insufficient claim inventory");
     move_asset_if_needed(treasury, buyer, sale_asset, amount);
     AllocationClaimed[allocation] = claimed + amount;
     ClaimInventory[sale] = claim_inventory - amount;
-    ClaimedSupply[sale] = get_or_insert_default(ClaimedSupply, sale, 0) + amount;
+    ClaimedSupply[sale] = ClaimedSupply.get_or(sale, 0) + amount;
     return amount;
   }
 
