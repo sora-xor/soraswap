@@ -2,26 +2,51 @@
 
 Contract: `contracts/perps/perps_engine.ko`
 
-Public entrypoints:
+Lifecycle and control entrypoints:
 - `main() -> int`
-- `init_engine(collateral_asset, vault_account, funding_bps)`
-- `configure_risk(funding_bps, max_leverage_bps, maintenance_margin_bps, liquidation_fee_bps)`
-- `open_position(trader, position, size, collateral)`
-- `open_position_with_assets(trader, position, vault_account, collateral_asset, size, collateral)`
-- `add_collateral(trader, position, amount)`
-- `add_collateral_with_assets(trader, position, vault_account, collateral_asset, amount)`
-- `remove_collateral(trader, position, amount)`
-- `remove_collateral_with_assets(trader, position, vault_account, collateral_asset, amount)`
-- `settle_funding(trader, position, mark_price, index_price)`
-- `settle_funding_with_assets(trader, position, vault_account, collateral_asset, funding_bps, mark_price, index_price)`
-- `close_position(trader, position, payout)`
-- `close_position_with_assets(trader, position, vault_account, collateral_asset, payout)`
-- `liquidate_position(liquidator, position) -> int`
-- `liquidate_position_with_assets(liquidator, position, vault_account, collateral_asset, maintenance_margin_bps, liquidation_fee_bps) -> int`
-- `engine_config() -> (AssetDefinitionId, AccountId, int, int, int, int)`
-- `mirror_position(position) -> (int, int, int, int, int, int, int, int, int, int, int, int, int)`
+- `init_engine(collateral_asset, risk_vault_contract)`
+- `sync_automation(executor, funding_job_id, liquidation_job_id, cadence_slots, backlog_cap, safe_mode)`
+- `bind_risk_vault(risk_vault_contract)`
+- `bind_contract(contract_id)`
+- `enter_withdrawal_only()`
+- `exit_withdrawal_only()`
+
+Market admin entrypoints:
+- `register_market(asset, max_leverage_bps, maintenance_margin_bps, liquidation_fee_bps, open_interest_cap, funding_bps, funding_interval_slots, oracle_stale_slots, backlog_limit, utilisation_clamp_bps, liquidation_stress_limit) -> int`
+- `update_market(market_id, max_leverage_bps, maintenance_margin_bps, liquidation_fee_bps, open_interest_cap, funding_bps, funding_interval_slots, oracle_stale_slots, backlog_limit, utilisation_clamp_bps, liquidation_stress_limit, guard_flags, active)`
+- `admin_repair_orphan_position(position_id, mark_price_bps, index_price_bps)`
+- `heartbeat(market_id, current_backlog, safe_mode)`
+
+Trading and liquidation entrypoints:
+- Verified oracle payload tuple used below:
+  `(mark_price_bps, index_price_bps, confidence_bps, oracle_slot, current_slot, status_flags, attestation_hash)`
+- `open_position(market_id, size, margin, requested_leverage_bps, oracle_payload) -> int`
+- `modify_position(position_id, size_delta, margin_delta, requested_leverage_bps, oracle_payload) -> int`
+- `add_margin(position_id, amount) -> int`
+- `remove_margin(position_id, amount, oracle_payload) -> int`
+- `sync_funding(market_id, oracle_payload) -> int`
+- `run_liquidation_pass(market_id, max_positions, oracle_payload) -> int`
+- `close_position(position_id, oracle_payload) -> int`
+
+Views:
+- `engine_config() -> (AssetDefinitionId, bytes, int, int, int, int, int, int)`
+- `market_state(market_id) -> (int, int, int, int, int, int, int, int, int, int, int, int, int)`
+- `market_oracle_state(market_id) -> (int, int, int)`
+- `position_state(position_id) -> (int, int, int, int, int, int, int, int, int, int, int)`
+- `position_liquidation_state(position_id) -> (int, int, int)`
+- `liquidation_state(market_id) -> (int, int, int, int, int, int, int)`
+- `risk_state(market_id) -> (int, int, int, int, int, int, int, int)`
+- `automation_state() -> (int, int, int, int, int, int, int)`
 
 Notes:
-- The engine now enforces a configurable max-leverage check at open and a maintenance-margin check on collateral withdrawals.
-- Funding settlement is modeled as internal collateral adjustment plus accumulated funding readback rather than an external transfer on every funding tick.
-- `engine_config` and `mirror_position` are `view fn` entrypoints consumed through `/v1/contracts/view`.
+- Position ids are contract-assigned integers; caller-chosen position names were removed.
+- Bucket `1` in `risk_vault` is the canonical perps liability ledger, and `exposure_id = position_id`.
+- `open_position`, size-increasing `modify_position`, and margin updates route collateral through `risk_vault` instead of direct perps-owned custody transfers.
+- `run_liquidation_pass(...)` is the canonical liquidation path. The first unhealthy pass queues the position, a later healthy pass auto-recovers it, and a later unhealthy pass liquidates it once the queued slot is older than the current oracle slot.
+- `close_position` and liquidation payouts settle through bucket `1`, then release the liability in the same flow.
+- Automatic liquidations pay the keeper fee to `authority()` and return any remaining positive residual equity to the original position owner.
+- `admin_repair_orphan_position(...)` is owner-only recovery tooling for long-lived environments such as Taira where a historical position can remain open after the bound `risk_vault` liability is gone; it closes the stale position without attempting payout settlement.
+- All risk-bearing perps mutations except `add_margin` now consume the verified oracle payload tuple plus attestation hash. The raw `settle_funding(position, mark_price, index_price)` and naked payout helpers were removed.
+- Engine-side risk guards clamp openings and modifications on market pause, backlog, utilisation, liquidation stress, withdrawal-only mode, and automation safe mode.
+- The stored `risk_vault_contract` is the deployed `risk_vault` contract address literal carried as a UTF-8 `bytes` field for ABI v1 `call_contract(...)` routing. View surfaces expose that field as hex-encoded bytes.
+- `main()` is a write entrypoint, not a `view fn`; bootstrap and smoke should use the typed views above.

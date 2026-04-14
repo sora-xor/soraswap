@@ -1,0 +1,248 @@
+seiyaku ShoutOption {
+  state int ShoutInitialized;
+  state AccountId ShoutOwner;
+  state AccountId ShoutController;
+  state AccountId ShoutGuardian;
+  state int ShoutWithdrawalOnly;
+
+  state ShoutSeriesExpirySlot: Map<int, int>;
+  state ShoutSeriesStatus: Map<int, int>;
+  state ShoutSeriesStrikeBps: Map<int, int>;
+
+  state ShoutPositionOwner: Map<int, AccountId>;
+  state ShoutPositionSeriesId: Map<int, int>;
+  state ShoutPositionNotional: Map<int, int>;
+  state ShoutPositionStrikeBps: Map<int, int>;
+  state ShoutPositionShoutFloor: Map<int, int>;
+  state ShoutPositionLastOracleMark: Map<int, int>;
+  state ShoutPositionPayout: Map<int, int>;
+  state ShoutPositionStatus: Map<int, int>;
+
+  fn assert_initialized() {
+    assert(ShoutInitialized == 1, "product not initialized");
+  }
+
+  fn assert_owner() {
+    assert_initialized();
+    assert(ShoutOwner == authority(), "product owner mismatch");
+  }
+
+  fn assert_owner_or_controller() {
+    assert_initialized();
+    if ShoutOwner == authority() {
+      return;
+    }
+    assert(ShoutController == authority(), "product controller mismatch");
+  }
+
+  fn assert_position_exists(position_id: int) {
+    assert(ShoutPositionOwner.contains(position_id), "position missing");
+  }
+
+  fn assert_position_owner(position_id: int) {
+    assert_position_exists(position_id);
+    assert(ShoutPositionOwner[position_id] == authority(), "position owner mismatch");
+  }
+
+  fn assert_position_operator(position_id: int) {
+    assert_position_exists(position_id);
+    if ShoutPositionOwner[position_id] == authority() {
+      return;
+    }
+    assert_owner_or_controller();
+  }
+
+  fn max_int(a: int, b: int) -> int {
+    if a >= b {
+      return a;
+    }
+    return b;
+  }
+
+  fn assert_oracle_payload(mark_price_bps: int,
+                           oracle_slot: int,
+                           current_slot: int,
+                           status_flags: int,
+                           attestation_hash: int) {
+    assert(mark_price_bps >= 0, "invalid mark");
+    assert(current_slot >= oracle_slot, "invalid oracle slot");
+    assert(status_flags == 0, "oracle degraded");
+    assert(attestation_hash > 0, "missing attestation");
+  }
+
+  fn option_registered(position_id: int) -> int {
+    if ShoutPositionOwner.contains(position_id) {
+      return 1;
+    }
+    return 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return ShoutInitialized;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_product(guardian: AccountId) {
+    assert(ShoutInitialized == 0, "product initialized");
+    ShoutInitialized = 1;
+    ShoutOwner = authority();
+    ShoutController = authority();
+    ShoutGuardian = guardian;
+    ShoutWithdrawalOnly = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn bind_controller(controller: AccountId) {
+    assert_owner();
+    ShoutController = controller;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn enter_withdrawal_only() {
+    assert_owner();
+    ShoutWithdrawalOnly = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn exit_withdrawal_only() {
+    assert_owner();
+    ShoutWithdrawalOnly = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn sync_series(series_id: int,
+                         expiry_slot: int,
+                         strike_bps: int) {
+    assert_owner_or_controller();
+    assert(expiry_slot >= 0, "invalid expiry");
+    assert(strike_bps > 0, "invalid strike");
+    ShoutSeriesExpirySlot[series_id] = expiry_slot;
+    ShoutSeriesStatus[series_id] = ShoutSeriesStatus.ensure(series_id, 1);
+    ShoutSeriesStrikeBps[series_id] = strike_bps;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn sync_series_c2c(series_id: int,
+                             expiry_slot: int,
+                             strike_bps: int) -> int {
+    sync_series(series_id, expiry_slot, strike_bps);
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn register_position(position_id: int,
+                               series_id: int,
+                               owner: AccountId,
+                               notional: int,
+                               strike_bps: int) {
+    assert_initialized();
+    assert_owner_or_controller();
+    assert(ShoutWithdrawalOnly == 0, "withdrawal only");
+    assert(!ShoutPositionOwner.contains(position_id), "position exists");
+    assert(notional > 0, "invalid notional");
+    ShoutPositionOwner[position_id] = owner;
+    ShoutPositionSeriesId[position_id] = series_id;
+    ShoutPositionNotional[position_id] = notional;
+    ShoutPositionStrikeBps[position_id] = strike_bps;
+    ShoutPositionShoutFloor[position_id] = 0;
+    ShoutPositionLastOracleMark[position_id] = 0;
+    ShoutPositionPayout[position_id] = 0;
+    ShoutPositionStatus[position_id] = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn register_position_c2c(position_id: int,
+                                   series_id: int,
+                                   owner: AccountId,
+                                   notional: int,
+                                   strike_bps: int) -> int {
+    register_position(position_id, series_id, owner, notional, strike_bps);
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn record_shout(position_id: int,
+                          mark_price_bps: int,
+                          oracle_slot: int,
+                          current_slot: int,
+                          status_flags: int,
+                          attestation_hash: int) {
+    assert_initialized();
+    assert_position_operator(position_id);
+    assert(ShoutPositionStatus.get_or(position_id, 0) == 1, "position inactive");
+    assert_oracle_payload(mark_price_bps, oracle_slot, current_slot, status_flags, attestation_hash);
+    let next_floor = max_int(ShoutPositionShoutFloor.get_or(position_id, 0), mark_price_bps);
+    ShoutPositionShoutFloor[position_id] = next_floor;
+    ShoutPositionLastOracleMark[position_id] = mark_price_bps;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn record_shout_c2c(position_id: int,
+                              mark_price_bps: int,
+                              oracle_slot: int,
+                              current_slot: int,
+                              status_flags: int,
+                              attestation_hash: int) -> int {
+    record_shout(position_id, mark_price_bps, oracle_slot, current_slot, status_flags, attestation_hash);
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn exercise_position(position_id: int,
+                               mark_price_bps: int,
+                               oracle_slot: int,
+                               current_slot: int,
+                               status_flags: int,
+                               attestation_hash: int) -> int {
+    assert_initialized();
+    assert_position_operator(position_id);
+    assert(ShoutPositionStatus.get_or(position_id, 0) == 1, "position inactive");
+    assert_oracle_payload(mark_price_bps, oracle_slot, current_slot, status_flags, attestation_hash);
+    let strike_bps = ShoutPositionStrikeBps.get_or(position_id, 0);
+    let floor_bps = max_int(ShoutPositionShoutFloor.get_or(position_id, 0), mark_price_bps);
+    let intrinsic_bps = floor_bps - strike_bps;
+    let payout = 0;
+    if intrinsic_bps > 0 {
+      payout = (ShoutPositionNotional.get_or(position_id, 0) * intrinsic_bps) / 10_000;
+    }
+    ShoutPositionLastOracleMark[position_id] = mark_price_bps;
+    ShoutPositionPayout[position_id] = payout;
+    ShoutPositionStatus[position_id] = 2;
+    return payout;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn expire_series(series_id: int, current_slot: int) {
+    assert_owner_or_controller();
+    assert(ShoutSeriesExpirySlot.contains(series_id), "series missing");
+    assert(current_slot >= ShoutSeriesExpirySlot[series_id], "series live");
+    ShoutSeriesStatus[series_id] = 3;
+  }
+
+  view fn series_state(series_id: int) -> (int, int, int, int) {
+    let registered = 0;
+    if ShoutSeriesExpirySlot.contains(series_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      ShoutSeriesExpirySlot.get_or(series_id, 0),
+      ShoutSeriesStrikeBps.get_or(series_id, 0),
+      ShoutSeriesStatus.get_or(series_id, 0)
+    );
+  }
+
+  view fn position_state(position_id: int) -> (int, int, int, int, int, int, int, int) {
+    return (
+      option_registered(position_id),
+      ShoutPositionSeriesId.get_or(position_id, 0),
+      ShoutPositionNotional.get_or(position_id, 0),
+      ShoutPositionStrikeBps.get_or(position_id, 0),
+      ShoutPositionShoutFloor.get_or(position_id, 0),
+      ShoutPositionLastOracleMark.get_or(position_id, 0),
+      ShoutPositionPayout.get_or(position_id, 0),
+      ShoutPositionStatus.get_or(position_id, 0)
+    );
+  }
+}

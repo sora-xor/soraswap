@@ -1,0 +1,126 @@
+seiyaku LaunchpadLiquidityExecutor {
+  state int ExecutorInitialized;
+  state AccountId ExecutorOwner;
+  state bytes PoolContract;
+  state AssetDefinitionId BaseAsset;
+  state AssetDefinitionId QuoteAsset;
+  state int ExecutorContractBound;
+  state AccountId ExecutorContractId;
+  state int SaleFactoryBound;
+  state AccountId SaleFactoryContractId;
+
+  fn assert_initialized() {
+    assert(ExecutorInitialized == 1, "executor not initialized");
+  }
+
+  fn assert_owner() {
+    assert_initialized();
+    assert(ExecutorOwner == authority(), "executor owner mismatch");
+  }
+
+  fn assert_contract_bound() {
+    assert(ExecutorContractBound == 1, "executor contract unbound");
+  }
+
+  fn assert_sale_factory() {
+    assert(SaleFactoryBound == 1, "sale factory unbound");
+    assert(SaleFactoryContractId == authority(), "sale factory mismatch");
+  }
+
+  fn move_asset_if_needed(from: AccountId,
+                          to: AccountId,
+                          asset: AssetDefinitionId,
+                          amount: int) {
+    if amount > 0 {
+      if from != to {
+        transfer_asset(from, to, asset, amount);
+      }
+    }
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return ExecutorInitialized;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_executor(pool_contract: bytes,
+                           base_asset: AssetDefinitionId,
+                           quote_asset: AssetDefinitionId) {
+    assert(ExecutorInitialized == 0, "executor initialized");
+    ExecutorInitialized = 1;
+    ExecutorOwner = authority();
+    PoolContract = pool_contract;
+    BaseAsset = base_asset;
+    QuoteAsset = quote_asset;
+    ExecutorContractBound = 0;
+    ExecutorContractId = authority();
+    SaleFactoryBound = 0;
+    SaleFactoryContractId = authority();
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn bind_contract(contract_id: AccountId) {
+    assert_owner();
+    ExecutorContractId = contract_id;
+    ExecutorContractBound = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn bind_sale_factory(factory_contract: AccountId) {
+    assert_owner();
+    SaleFactoryContractId = factory_contract;
+    SaleFactoryBound = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn bind_pool_contract(pool_contract: bytes) {
+    assert_owner();
+    PoolContract = pool_contract;
+  }
+
+  view fn executor_config() -> (AssetDefinitionId, AssetDefinitionId, int, int) {
+    assert_initialized();
+    return (
+      BaseAsset,
+      QuoteAsset,
+      ExecutorContractBound,
+      SaleFactoryBound
+    );
+  }
+
+  #[access(read="*", write="*")]
+  view fn executor_binding_details() -> (bytes, AccountId, AccountId, int, int) {
+    assert_initialized();
+    return (
+      PoolContract,
+      ExecutorContractId,
+      SaleFactoryContractId,
+      ExecutorContractBound,
+      SaleFactoryBound
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn seed_liquidity(funding_account: AccountId,
+                            bin_id: int,
+                            base_amount: int,
+                            quote_amount: int) -> int permission(AssetOps) {
+    let payload = json_object();
+    let payload = json_set_int(payload, name("bin_id"), bin_id);
+    let payload = json_set_int(payload, name("base_amount"), base_amount);
+    let payload = json_set_int(payload, name("quote_amount"), quote_amount);
+    assert_initialized();
+    assert_contract_bound();
+    assert_sale_factory();
+    assert(base_amount >= 0, "invalid base_amount");
+    assert(quote_amount >= 0, "invalid quote_amount");
+    assert(base_amount > 0 || quote_amount > 0, "zero liquidity");
+    assert(funding_account == authority(), "funding account mismatch");
+    move_asset_if_needed(funding_account, ExecutorContractId, BaseAsset, base_amount);
+    move_asset_if_needed(funding_account, ExecutorContractId, QuoteAsset, quote_amount);
+    let seeded = call_contract(PoolContract, "seed_bin_c2c", payload);
+    assert(decode_int(seeded) == 1, "pool seed failed");
+    return base_amount + quote_amount;
+  }
+}

@@ -1,0 +1,239 @@
+seiyaku OutperformanceOption {
+  state int OutperfInitialized;
+  state AccountId OutperfOwner;
+  state AccountId OutperfController;
+  state AccountId OutperfGuardian;
+  state int OutperfWithdrawalOnly;
+
+  state OutperfSeriesExpirySlot: Map<int, int>;
+  state OutperfSeriesCollateralMultiplierBps: Map<int, int>;
+  state OutperfSeriesStatus: Map<int, int>;
+  state OutperfSeriesFinalBaseReturnBps: Map<int, int>;
+  state OutperfSeriesFinalQuoteReturnBps: Map<int, int>;
+  state OutperfSeriesSettlementReady: Map<int, int>;
+
+  state OutperfPositionOwner: Map<int, AccountId>;
+  state OutperfPositionSeriesId: Map<int, int>;
+  state OutperfPositionNotional: Map<int, int>;
+  state OutperfPositionCollateralMultiplierBps: Map<int, int>;
+  state OutperfPositionBaseReturnBps: Map<int, int>;
+  state OutperfPositionQuoteReturnBps: Map<int, int>;
+  state OutperfPositionPayout: Map<int, int>;
+  state OutperfPositionSettlementReady: Map<int, int>;
+  state OutperfPositionStatus: Map<int, int>;
+
+  fn assert_initialized() {
+    assert(OutperfInitialized == 1, "product not initialized");
+  }
+
+  fn assert_owner() {
+    assert_initialized();
+    assert(OutperfOwner == authority(), "product owner mismatch");
+  }
+
+  fn assert_owner_or_controller() {
+    assert_initialized();
+    if OutperfOwner == authority() {
+      return;
+    }
+    assert(OutperfController == authority(), "product controller mismatch");
+  }
+
+  fn assert_position_exists(position_id: int) {
+    assert(OutperfPositionOwner.contains(position_id), "position missing");
+  }
+
+  fn assert_position_owner(position_id: int) {
+    assert_position_exists(position_id);
+    assert(OutperfPositionOwner[position_id] == authority(), "position owner mismatch");
+  }
+
+  fn assert_position_operator(position_id: int) {
+    assert_position_exists(position_id);
+    if OutperfPositionOwner[position_id] == authority() {
+      return;
+    }
+    assert_owner_or_controller();
+  }
+
+  fn position_registered(position_id: int) -> int {
+    if OutperfPositionOwner.contains(position_id) {
+      return 1;
+    }
+    return 0;
+  }
+
+  fn max_int(a: int, b: int) -> int {
+    if a >= b {
+      return a;
+    }
+    return b;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return OutperfInitialized;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_product(guardian: AccountId) {
+    assert(OutperfInitialized == 0, "product initialized");
+    OutperfInitialized = 1;
+    OutperfOwner = authority();
+    OutperfController = authority();
+    OutperfGuardian = guardian;
+    OutperfWithdrawalOnly = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn bind_controller(controller: AccountId) {
+    assert_owner();
+    OutperfController = controller;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn enter_withdrawal_only() {
+    assert_owner();
+    OutperfWithdrawalOnly = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn exit_withdrawal_only() {
+    assert_owner();
+    OutperfWithdrawalOnly = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn sync_series(series_id: int,
+                         expiry_slot: int,
+                         collateral_multiplier_bps: int) {
+    assert_owner_or_controller();
+    assert(expiry_slot >= 0, "invalid expiry");
+    assert(collateral_multiplier_bps > 0, "invalid collateral multiplier");
+    OutperfSeriesExpirySlot[series_id] = expiry_slot;
+    OutperfSeriesCollateralMultiplierBps[series_id] = collateral_multiplier_bps;
+    OutperfSeriesStatus[series_id] = OutperfSeriesStatus.ensure(series_id, 1);
+    OutperfSeriesFinalBaseReturnBps[series_id] = OutperfSeriesFinalBaseReturnBps.ensure(series_id, 0);
+    OutperfSeriesFinalQuoteReturnBps[series_id] = OutperfSeriesFinalQuoteReturnBps.ensure(series_id, 0);
+    OutperfSeriesSettlementReady[series_id] = OutperfSeriesSettlementReady.ensure(series_id, 0);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn sync_series_c2c(series_id: int,
+                             expiry_slot: int,
+                             collateral_multiplier_bps: int) -> int {
+    sync_series(series_id, expiry_slot, collateral_multiplier_bps);
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn register_position(position_id: int,
+                               series_id: int,
+                               owner: AccountId,
+                               notional: int,
+                               collateral_multiplier_bps: int) {
+    assert_initialized();
+    assert_owner_or_controller();
+    assert(OutperfWithdrawalOnly == 0, "withdrawal only");
+    assert(!OutperfPositionOwner.contains(position_id), "position exists");
+    assert(notional > 0, "invalid notional");
+    OutperfPositionOwner[position_id] = owner;
+    OutperfPositionSeriesId[position_id] = series_id;
+    OutperfPositionNotional[position_id] = notional;
+    OutperfPositionCollateralMultiplierBps[position_id] = collateral_multiplier_bps;
+    OutperfPositionBaseReturnBps[position_id] = 0;
+    OutperfPositionQuoteReturnBps[position_id] = 0;
+    OutperfPositionPayout[position_id] = 0;
+    OutperfPositionSettlementReady[position_id] = 0;
+    OutperfPositionStatus[position_id] = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn register_position_c2c(position_id: int,
+                                   series_id: int,
+                                   owner: AccountId,
+                                   notional: int,
+                                   collateral_multiplier_bps: int) -> int {
+    register_position(position_id, series_id, owner, notional, collateral_multiplier_bps);
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_series(series_id: int,
+                           base_return_bps: int,
+                           quote_return_bps: int,
+                           settlement_slot: int) {
+    assert_owner_or_controller();
+    assert(OutperfSeriesExpirySlot.contains(series_id), "series missing");
+    OutperfSeriesFinalBaseReturnBps[series_id] = base_return_bps;
+    OutperfSeriesFinalQuoteReturnBps[series_id] = quote_return_bps;
+    OutperfSeriesSettlementReady[series_id] = 1;
+    OutperfSeriesStatus[series_id] = 2;
+    OutperfSeriesExpirySlot[series_id] = max_int(OutperfSeriesExpirySlot.get_or(series_id, 0), settlement_slot);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_series_c2c(series_id: int,
+                               base_return_bps: int,
+                               quote_return_bps: int,
+                               settlement_slot: int) -> int {
+    settle_series(series_id, base_return_bps, quote_return_bps, settlement_slot);
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn exercise_position(position_id: int) -> int {
+    assert_initialized();
+    assert_position_operator(position_id);
+    assert(OutperfPositionStatus.get_or(position_id, 0) == 1, "position inactive");
+    let series_id = OutperfPositionSeriesId[position_id];
+    assert(OutperfSeriesSettlementReady.get_or(series_id, 0) == 1, "settlement not ready");
+    let outperformance_bps = max_int(
+      OutperfSeriesFinalBaseReturnBps.get_or(series_id, 0) - OutperfSeriesFinalQuoteReturnBps.get_or(series_id, 0),
+      0
+    );
+    let payout = (OutperfPositionNotional.get_or(position_id, 0) *
+      outperformance_bps *
+      OutperfPositionCollateralMultiplierBps.get_or(position_id, 0)) / 10_000 / 10_000;
+    OutperfPositionBaseReturnBps[position_id] = OutperfSeriesFinalBaseReturnBps.get_or(series_id, 0);
+    OutperfPositionQuoteReturnBps[position_id] = OutperfSeriesFinalQuoteReturnBps.get_or(series_id, 0);
+    OutperfPositionPayout[position_id] = payout;
+    OutperfPositionSettlementReady[position_id] = 1;
+    OutperfPositionStatus[position_id] = 2;
+    return payout;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn expire_series(series_id: int, current_slot: int) {
+    assert_owner_or_controller();
+    assert(OutperfSeriesExpirySlot.contains(series_id), "series missing");
+    assert(current_slot >= OutperfSeriesExpirySlot[series_id], "series live");
+    OutperfSeriesStatus[series_id] = 3;
+  }
+
+  view fn series_state(series_id: int) -> (int, int, int, int) {
+    let registered = 0;
+    if OutperfSeriesExpirySlot.contains(series_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      OutperfSeriesExpirySlot.get_or(series_id, 0),
+      OutperfSeriesCollateralMultiplierBps.get_or(series_id, 0),
+      OutperfSeriesStatus.get_or(series_id, 0)
+    );
+  }
+
+  view fn position_state(position_id: int) -> (int, int, int, int, int, int, int, int) {
+    return (
+      position_registered(position_id),
+      OutperfPositionSeriesId.get_or(position_id, 0),
+      OutperfPositionNotional.get_or(position_id, 0),
+      OutperfPositionCollateralMultiplierBps.get_or(position_id, 0),
+      OutperfPositionBaseReturnBps.get_or(position_id, 0),
+      OutperfPositionQuoteReturnBps.get_or(position_id, 0),
+      OutperfPositionPayout.get_or(position_id, 0),
+      OutperfPositionStatus.get_or(position_id, 0)
+    );
+  }
+}

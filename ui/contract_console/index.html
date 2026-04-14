@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SoraSwap Contract Console</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">SoraSwap</p>
+          <h1>Bridge Operator Console</h1>
+          <p class="hero-copy">
+            Browse deployed contracts from checked-in deployment evidence, route signed calls through the local proxy,
+            track transaction lifecycle state, and operate the SCCP bridge without falling back to raw Torii JSON.
+          </p>
+        </div>
+        <button id="refresh-catalog" class="secondary-button" type="button">Refresh Catalog</button>
+      </header>
+
+      <main class="layout">
+        <section class="panel stack">
+          <div class="panel-heading">
+            <h2>Target</h2>
+            <p>Choose a deployment environment and contract from repo-backed deployment records.</p>
+          </div>
+
+          <label class="field">
+            <span>Environment</span>
+            <select id="environment-select"></select>
+          </label>
+
+          <div id="environment-summary" class="banner muted"></div>
+
+          <label class="field">
+            <span>Contract Search</span>
+            <input id="contract-filter" type="search" placeholder="bridge, dlmm, n3x, referral">
+          </label>
+
+          <label class="field">
+            <span>Contract</span>
+            <select id="contract-select" size="10"></select>
+          </label>
+
+          <div class="meta-card">
+            <div class="meta-grid">
+              <div>
+                <span class="meta-label">Address</span>
+                <code id="contract-address-display">-</code>
+              </div>
+              <div>
+                <span class="meta-label">Dataspace</span>
+                <code id="contract-dataspace-display">-</code>
+              </div>
+              <div>
+                <span class="meta-label">Deploy Nonce</span>
+                <code id="contract-deploy-nonce-display">-</code>
+              </div>
+              <div>
+                <span class="meta-label">Verification</span>
+                <code id="contract-verification-display">-</code>
+              </div>
+              <div>
+                <span class="meta-label">Source</span>
+                <code id="contract-source-display">-</code>
+              </div>
+              <div>
+                <span class="meta-label">Manifest</span>
+                <code id="contract-manifest-display">-</code>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel stack">
+          <div class="panel-heading">
+            <h2>Invocation</h2>
+            <p>Pick an entrypoint, fill payload JSON, and send the request through the local console proxy.</p>
+          </div>
+
+          <label class="field">
+            <span>Entrypoint</span>
+            <select id="entrypoint-select" size="12"></select>
+          </label>
+
+          <div id="entrypoint-summary" class="banner muted"></div>
+
+          <div class="two-up">
+            <label class="field">
+              <span>Mode</span>
+              <input id="mode-display" type="text" readonly>
+            </label>
+            <label class="field">
+              <span>Gas Limit</span>
+              <input id="gas-limit-input" type="number" min="1" step="1" value="100000">
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Authority</span>
+            <input id="authority-input" type="text" placeholder="i105...">
+          </label>
+
+          <label class="field">
+            <span>Contract Address</span>
+            <input id="contract-address-input" type="text" placeholder="tairac1...">
+          </label>
+
+          <div class="field">
+            <div class="field-row">
+              <span>Payload JSON</span>
+              <div class="button-row">
+                <button id="template-payload" class="secondary-button" type="button">Fill Template</button>
+                <button id="clear-payload" class="secondary-button" type="button">Clear</button>
+              </div>
+            </div>
+            <textarea id="payload-input" rows="16" spellcheck="false"></textarea>
+          </div>
+
+          <div class="button-row">
+            <button id="run-request" class="primary-button" type="button">Run Request</button>
+          </div>
+        </section>
+      </main>
+
+      <section class="panel stack">
+        <div class="panel-heading">
+          <h2>Transaction Tracker</h2>
+          <p>Browser-local signed action history with live pipeline polling and best-effort public-node history probes.</p>
+        </div>
+
+        <div id="transaction-summary" class="banner muted"></div>
+
+        <div class="button-row">
+          <button id="refresh-transaction-history" class="secondary-button" type="button">Refresh Remote History</button>
+          <button id="clear-local-history" class="secondary-button" type="button">Clear Local History</button>
+        </div>
+
+        <div class="output-grid">
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Recent Signed Actions</h3>
+            </div>
+            <div id="transaction-history-list" class="record-list"></div>
+          </div>
+
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Remote Transaction History</h3>
+            </div>
+            <pre id="remote-transaction-history-preview">{}</pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <div class="panel-heading">
+          <h2>Bridge Workspace</h2>
+          <p>Operate against the deployed <code>bridge.sccp_bridge</code> contract with validated operator fields, bookmarks, and snapshot lookups.</p>
+        </div>
+
+        <div id="bridge-summary" class="banner muted"></div>
+
+        <div class="bridge-input-grid">
+          <label class="field">
+            <span>Asset Key</span>
+            <input id="bridge-asset-key-input" type="text" placeholder="xor">
+          </label>
+          <label class="field">
+            <span>Route</span>
+            <input id="bridge-route-input" type="text" placeholder="ton_testnet">
+          </label>
+          <label class="field">
+            <span>Transfer Id</span>
+            <input id="bridge-transfer-input" type="text" placeholder="xor_ton_0001">
+          </label>
+          <label class="field">
+            <span>Inbound Message Id</span>
+            <input id="bridge-message-id-input" type="text" placeholder="msg_0001">
+          </label>
+        </div>
+
+        <div class="button-row">
+          <button id="bookmark-current-bridge" class="secondary-button" type="button">Bookmark Current IDs</button>
+          <button id="clear-bridge-bookmarks" class="secondary-button" type="button">Clear Bookmarks</button>
+        </div>
+
+        <div class="bookmark-grid">
+          <label class="field">
+            <span>Saved Asset Keys</span>
+            <select id="bookmark-asset-key-select"></select>
+          </label>
+          <label class="field">
+            <span>Saved Routes</span>
+            <select id="bookmark-route-select"></select>
+          </label>
+          <label class="field">
+            <span>Saved Transfer Ids</span>
+            <select id="bookmark-transfer-select"></select>
+          </label>
+          <label class="field">
+            <span>Saved Message Ids</span>
+            <select id="bookmark-message-id-select"></select>
+          </label>
+        </div>
+
+        <div class="button-row">
+          <button id="select-bridge-contract" class="secondary-button" type="button">Select Bridge Contract</button>
+          <button id="refresh-bridge-snapshot" class="primary-button" type="button">Refresh Bridge Snapshot</button>
+        </div>
+
+        <div class="panel-subsection">
+          <div class="panel-heading compact">
+            <h3>Bridge Action Builder</h3>
+            <p>Assemble the common bridge mutations from labeled fields, validate them against live SCCP discovery, and load the result into the generic invocation form.</p>
+          </div>
+
+          <div class="bridge-input-grid">
+            <label class="field">
+              <span>Action</span>
+              <select id="bridge-action-select">
+                <option value="register_asset">register_asset</option>
+                <option value="activate_route">activate_route</option>
+                <option value="pause_route">pause_route</option>
+                <option value="resume_route">resume_route</option>
+                <option value="lock_to_remote">lock_to_remote</option>
+                <option value="finalize_inbound">finalize_inbound</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Asset Definition</span>
+              <input id="bridge-asset-definition-input" type="text" placeholder="xor#universal">
+            </label>
+            <label class="field">
+              <span>Local Asset</span>
+              <input id="bridge-local-asset-input" type="text" placeholder="xor#universal">
+            </label>
+            <label class="field">
+              <span>Vault Account</span>
+              <input id="bridge-vault-account-input" type="text" placeholder="i105...">
+            </label>
+            <label class="field">
+              <span>Registrant</span>
+              <input id="bridge-registrant-input" type="text" placeholder="i105...">
+            </label>
+            <label class="field">
+              <span>Recipient</span>
+              <input id="bridge-recipient-input" type="text" placeholder="remote-recipient-or-account">
+            </label>
+            <label class="field">
+              <span>Home Domain</span>
+              <input id="bridge-home-domain-input" type="number" step="1" value="0">
+            </label>
+            <label class="field">
+              <span>Remote Domain</span>
+              <input id="bridge-remote-domain-input" type="number" step="1" value="0">
+            </label>
+            <label class="field">
+              <span>Decimals</span>
+              <input id="bridge-decimals-input" type="number" step="1" value="18">
+            </label>
+            <label class="field">
+              <span>Amount</span>
+              <input id="bridge-amount-input" type="number" step="1" value="0">
+            </label>
+          </div>
+
+          <div id="bridge-action-summary" class="banner muted"></div>
+          <div id="bridge-validation-summary" class="banner muted"></div>
+
+          <div class="button-row">
+            <button id="build-bridge-request" class="primary-button" type="button">Build Bridge Request</button>
+          </div>
+        </div>
+
+        <div class="quick-grid">
+          <button data-bridge-template="register_asset" class="secondary-button" type="button">Prefill register_asset</button>
+          <button data-bridge-template="activate_route" class="secondary-button" type="button">Prefill activate_route</button>
+          <button data-bridge-template="pause_route" class="secondary-button" type="button">Prefill pause_route</button>
+          <button data-bridge-template="resume_route" class="secondary-button" type="button">Prefill resume_route</button>
+          <button data-bridge-template="lock_to_remote" class="secondary-button" type="button">Prefill lock_to_remote</button>
+          <button data-bridge-template="finalize_inbound" class="secondary-button" type="button">Prefill finalize_inbound</button>
+        </div>
+
+        <div class="output-pane">
+          <div class="output-header">
+            <h3>Bridge Snapshot</h3>
+            <button id="copy-bridge-snapshot" class="secondary-button" type="button">Copy</button>
+          </div>
+          <pre id="bridge-snapshot-preview">{}</pre>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <div class="panel-heading">
+          <h2>Proof And Status</h2>
+          <p>Inspect live SCCP discovery, verifier manifests, raw bundles, typed artifacts, and normalized proof jobs for the selected environment.</p>
+        </div>
+
+        <div id="proof-status-summary" class="banner muted"></div>
+
+        <div class="button-row">
+          <button id="refresh-sccp-discovery" class="primary-button" type="button">Refresh SCCP Discovery</button>
+        </div>
+
+        <div id="sccp-counterparty-list" class="insight-grid"></div>
+
+        <div class="output-grid">
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Capabilities</h3>
+            </div>
+            <pre id="sccp-capabilities-preview">{}</pre>
+          </div>
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Manifests</h3>
+            </div>
+            <pre id="sccp-manifests-preview">{}</pre>
+          </div>
+        </div>
+
+        <div class="panel-subsection">
+          <div class="panel-heading compact">
+            <h3>Proof Lookup</h3>
+            <p>Look up a message id and inspect the raw bundle, typed artifact, normalized proof job, and submission-package metadata.</p>
+          </div>
+
+          <div class="lookup-grid">
+            <label class="field">
+              <span>Message Id</span>
+              <input id="proof-lookup-message-id-input" type="text" placeholder="hex message id">
+            </label>
+            <label class="field">
+              <span>Recent Proof Lookups</span>
+              <select id="recent-proof-lookup-select"></select>
+            </label>
+          </div>
+
+          <div class="button-row">
+            <button id="lookup-sccp-all" class="primary-button" type="button">Lookup Bundle, Artifact, And Job</button>
+            <button id="lookup-sccp-bundle" class="secondary-button" type="button">Bundle</button>
+            <button id="lookup-sccp-artifact" class="secondary-button" type="button">Artifact</button>
+            <button id="lookup-sccp-job" class="secondary-button" type="button">Job</button>
+          </div>
+
+          <div id="proof-lookup-summary" class="banner muted"></div>
+        </div>
+
+        <div class="triple-output-grid">
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Raw Message Bundle</h3>
+            </div>
+            <pre id="sccp-bundle-preview">{}</pre>
+          </div>
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Typed Artifact</h3>
+            </div>
+            <pre id="sccp-artifact-preview">{}</pre>
+          </div>
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Normalized Proof Job</h3>
+            </div>
+            <pre id="sccp-job-preview">{}</pre>
+          </div>
+        </div>
+
+        <div class="output-pane">
+          <div class="output-header">
+            <h3>Submission Package Metadata</h3>
+          </div>
+          <pre id="proof-submission-package-preview">{}</pre>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <div class="panel-heading">
+          <h2>Proof And Message Submission</h2>
+          <p>Use guided builders for SCCP message bundles and inbound bridge message settlement requests, then submit the advanced JSON body through the local proxy.</p>
+        </div>
+
+        <div id="submission-summary" class="banner muted"></div>
+
+        <div class="submission-builder-grid">
+          <label class="field">
+            <span>Message Payload Kind</span>
+            <select id="sccp-message-kind-select">
+              <option value="transfer">transfer</option>
+              <option value="asset_register">asset_register</option>
+              <option value="route_activate">route_activate</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Source Domain</span>
+            <input id="sccp-source-domain-input" type="number" step="1" value="0">
+          </label>
+          <label class="field">
+            <span>Destination Domain</span>
+            <input id="sccp-dest-domain-input" type="number" step="1" value="4">
+          </label>
+          <label class="field">
+            <span>Nonce</span>
+            <input id="sccp-nonce-input" type="number" step="1" value="1">
+          </label>
+          <label class="field">
+            <span>Message Sender</span>
+            <input id="sccp-message-sender-input" type="text" placeholder="nexus:soraswap">
+          </label>
+          <label class="field">
+            <span>Finality Height</span>
+            <input id="sccp-finality-height-input" type="number" step="1" value="0">
+          </label>
+        </div>
+
+        <div class="button-row wrap-row">
+          <button id="load-looked-up-bundle" class="secondary-button" type="button">Load Looked-up Bundle</button>
+          <button id="build-proof-submit-template" class="secondary-button" type="button">Build Proof Submit Template</button>
+          <button id="build-bridge-message-template" class="secondary-button" type="button">Build Bridge Message Template</button>
+          <button id="insert-settlement-helper" class="secondary-button" type="button">Insert Settlement Helper</button>
+        </div>
+
+        <div class="output-grid">
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Bridge Proof Submit JSON</h3>
+              <button id="submit-bridge-proof" class="primary-button" type="button">Submit Proof</button>
+            </div>
+            <textarea id="proof-submit-input" rows="18" spellcheck="false"></textarea>
+          </div>
+
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Bridge Message Submit JSON</h3>
+              <button id="submit-bridge-message" class="primary-button" type="button">Submit Message</button>
+            </div>
+            <textarea id="bridge-message-submit-input" rows="18" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <div class="panel-heading">
+          <h2>Wire Data</h2>
+          <p>The exact proxied request and response body for the last action.</p>
+        </div>
+
+        <div id="request-status" class="banner muted">No request sent yet.</div>
+
+        <div class="output-grid">
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Request</h3>
+              <button id="copy-request" class="secondary-button" type="button">Copy</button>
+            </div>
+            <pre id="request-preview">{}</pre>
+          </div>
+          <div class="output-pane">
+            <div class="output-header">
+              <h3>Response</h3>
+              <button id="copy-response" class="secondary-button" type="button">Copy</button>
+            </div>
+            <pre id="response-preview">{}</pre>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

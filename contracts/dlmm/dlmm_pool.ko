@@ -126,6 +126,11 @@ seiyaku DlmmPool {
     assert(PoolInitialized == 1, "pool not initialized");
   }
 
+  fn assert_vault_operator() {
+    assert_pool_initialized();
+    assert(VaultAccount == authority(), "vault operator mismatch");
+  }
+
   fn assert_valid_fee(fee_pips: int) {
     assert(fee_pips >= 0, "negative fee_pips");
     assert(fee_pips < ppm_scale(), "fee_pips too large");
@@ -345,7 +350,7 @@ seiyaku DlmmPool {
   }
 
   #[access(read="*", write="*")]
-  kotoage fn warm_write() permission(Admin) {
+  kotoage fn warm_write() {
   }
 
   #[access(read="*", write="*")]
@@ -354,8 +359,21 @@ seiyaku DlmmPool {
                        vault_account: AccountId,
                        fee_pips: int,
                        bin_step: int,
-                       active_bin: int) permission(Admin) {
+                       active_bin: int,
+                       impact_cap_bps: int,
+                       min_reserve_base: int,
+                       min_reserve_quote: int,
+                       max_bins_per_swap: int,
+                       bin_liquidity_cap: int) {
+    assert(PoolInitialized == 0, "pool initialized");
     init_pool_impl(base_asset, quote_asset, vault_account, fee_pips, bin_step, active_bin);
+    apply_risk_config(
+      impact_cap_bps,
+      min_reserve_base,
+      min_reserve_quote,
+      max_bins_per_swap,
+      bin_liquidity_cap
+    );
   }
 
   fn init_pool_impl(base_asset: AssetDefinitionId,
@@ -382,26 +400,11 @@ seiyaku DlmmPool {
     BinLiquidityCap = 0;
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn set_risk_params(impact_cap_bps: int,
-                             min_reserve_base: int,
-                             min_reserve_quote: int,
-                             max_bins_per_swap: int,
-                             bin_liquidity_cap: int) permission(Admin) {
-    set_risk_params_impl(
-      impact_cap_bps,
-      min_reserve_base,
-      min_reserve_quote,
-      max_bins_per_swap,
-      bin_liquidity_cap
-    );
-  }
-
-  fn set_risk_params_impl(impact_cap_bps: int,
-                          min_reserve_base: int,
-                          min_reserve_quote: int,
-                          max_bins_per_swap: int,
-                          bin_liquidity_cap: int) {
+  fn apply_risk_config(impact_cap_bps: int,
+                       min_reserve_base: int,
+                       min_reserve_quote: int,
+                       max_bins_per_swap: int,
+                       bin_liquidity_cap: int) {
     assert_pool_initialized();
     assert(impact_cap_bps >= 0, "negative impact cap");
     assert(min_reserve_base >= 0, "negative min_reserve_base");
@@ -421,31 +424,35 @@ seiyaku DlmmPool {
   }
 
   #[access(read="*", write="*")]
-  kotoage fn seed_bin_with_assets(provider: AccountId,
-                                  vault: AccountId,
-                                  base_asset: AssetDefinitionId,
-                                  quote_asset: AssetDefinitionId,
-                                  bin_id: int,
-                                  base_amount: int,
-                                  quote_amount: int) permission(Admin) {
-    seed_bin_with_assets_impl(
-      provider,
-      vault,
-      base_asset,
-      quote_asset,
+  kotoage fn seed_bin(bin_id: int,
+                      base_amount: int,
+                      quote_amount: int) permission(AssetOps) {
+    seed_bin_impl(
+      authority(),
+      VaultAccount,
+      BaseAsset,
+      QuoteAsset,
       bin_id,
       base_amount,
       quote_amount
     );
   }
 
-  fn seed_bin_with_assets_impl(provider: AccountId,
-                               vault: AccountId,
-                               base_asset: AssetDefinitionId,
-                               quote_asset: AssetDefinitionId,
-                               bin_id: int,
-                               base_amount: int,
-                               quote_amount: int) {
+  #[access(read="*", write="*")]
+  kotoage fn seed_bin_c2c(bin_id: int,
+                          base_amount: int,
+                          quote_amount: int) -> int permission(AssetOps) {
+    seed_bin(bin_id, base_amount, quote_amount);
+    return 1;
+  }
+
+  fn seed_bin_impl(provider: AccountId,
+                   vault: AccountId,
+                   base_asset: AssetDefinitionId,
+                   quote_asset: AssetDefinitionId,
+                   bin_id: int,
+                   base_amount: int,
+                   quote_amount: int) {
     let reserve_base = bin_reserve_base_value(bin_id);
     let reserve_quote = bin_reserve_quote_value(bin_id);
     let minted_shares = 0;
@@ -474,21 +481,17 @@ seiyaku DlmmPool {
   }
 
   #[access(read="*", write="*")]
-  kotoage fn add_position_liquidity_with_assets(position_id: Name,
-                                                provider: AccountId,
-                                                vault: AccountId,
-                                                base_asset: AssetDefinitionId,
-                                                quote_asset: AssetDefinitionId,
-                                                bin_id: int,
-                                                base_amount: int,
-                                                quote_amount: int,
-                                                min_shares_out: int) -> int permission(Admin) {
-    return add_position_liquidity_with_assets_impl(
+  kotoage fn add_position_liquidity(position_id: Name,
+                                    bin_id: int,
+                                    base_amount: int,
+                                    quote_amount: int,
+                                    min_shares_out: int) -> int permission(AssetOps) {
+    return add_position_liquidity_impl(
       position_id,
-      provider,
-      vault,
-      base_asset,
-      quote_asset,
+      authority(),
+      VaultAccount,
+      BaseAsset,
+      QuoteAsset,
       bin_id,
       base_amount,
       quote_amount,
@@ -496,15 +499,15 @@ seiyaku DlmmPool {
     );
   }
 
-  fn add_position_liquidity_with_assets_impl(position_id: Name,
-                                             provider: AccountId,
-                                             vault: AccountId,
-                                             base_asset: AssetDefinitionId,
-                                             quote_asset: AssetDefinitionId,
-                                             bin_id: int,
-                                             base_amount: int,
-                                             quote_amount: int,
-                                             min_shares_out: int) -> int {
+  fn add_position_liquidity_impl(position_id: Name,
+                                 provider: AccountId,
+                                 vault: AccountId,
+                                 base_asset: AssetDefinitionId,
+                                 quote_asset: AssetDefinitionId,
+                                 bin_id: int,
+                                 base_amount: int,
+                                 quote_amount: int,
+                                 min_shares_out: int) -> int {
     let reserve_base = bin_reserve_base_value(bin_id);
     let reserve_quote = bin_reserve_quote_value(bin_id);
     let share_supply = bin_share_supply_value(bin_id);
@@ -557,28 +560,24 @@ seiyaku DlmmPool {
   }
 
   #[access(read="*", write="*")]
-  kotoage fn remove_position_liquidity_with_assets(position_id: Name,
-                                                   recipient: AccountId,
-                                                   vault: AccountId,
-                                                   base_asset: AssetDefinitionId,
-                                                   quote_asset: AssetDefinitionId,
-                                                   shares: int) -> int permission(Admin) {
-    return remove_position_liquidity_with_assets_impl(
+  kotoage fn remove_position_liquidity(position_id: Name,
+                                       shares: int) -> int permission(AssetOps) {
+    return remove_position_liquidity_impl(
       position_id,
-      recipient,
-      vault,
-      base_asset,
-      quote_asset,
+      authority(),
+      VaultAccount,
+      BaseAsset,
+      QuoteAsset,
       shares
     );
   }
 
-  fn remove_position_liquidity_with_assets_impl(position_id: Name,
-                                                recipient: AccountId,
-                                                vault: AccountId,
-                                                base_asset: AssetDefinitionId,
-                                                quote_asset: AssetDefinitionId,
-                                                shares: int) -> int {
+  fn remove_position_liquidity_impl(position_id: Name,
+                                    recipient: AccountId,
+                                    vault: AccountId,
+                                    base_asset: AssetDefinitionId,
+                                    quote_asset: AssetDefinitionId,
+                                    shares: int) -> int {
     assert_pool_initialized();
     assert_position_exists(position_id);
     assert(recipient == PositionOwner[position_id], "unexpected recipient");
@@ -612,25 +611,21 @@ seiyaku DlmmPool {
   }
 
   #[access(read="*", write="*")]
-  kotoage fn collect_position_fees_with_assets(position_id: Name,
-                                               recipient: AccountId,
-                                               vault: AccountId,
-                                               base_asset: AssetDefinitionId,
-                                               quote_asset: AssetDefinitionId) -> int permission(Admin) {
-    return collect_position_fees_with_assets_impl(
+  kotoage fn collect_position_fees(position_id: Name) -> int permission(AssetOps) {
+    return collect_position_fees_impl(
       position_id,
-      recipient,
-      vault,
-      base_asset,
-      quote_asset
+      authority(),
+      VaultAccount,
+      BaseAsset,
+      QuoteAsset
     );
   }
 
-  fn collect_position_fees_with_assets_impl(position_id: Name,
-                                            recipient: AccountId,
-                                            vault: AccountId,
-                                            base_asset: AssetDefinitionId,
-                                            quote_asset: AssetDefinitionId) -> int {
+  fn collect_position_fees_impl(position_id: Name,
+                                recipient: AccountId,
+                                vault: AccountId,
+                                base_asset: AssetDefinitionId,
+                                quote_asset: AssetDefinitionId) -> int {
     assert_pool_initialized();
     assert_position_exists(position_id);
     assert(recipient == PositionOwner[position_id], "unexpected recipient");
@@ -690,6 +685,30 @@ seiyaku DlmmPool {
     return (BaseAsset, QuoteAsset, VaultAccount, FeePips, BinStep, ActiveBin);
   }
 
+  #[access(read="*", write="*")]
+  kotoage fn bind_custody_account(vault_account: AccountId) {
+    assert_vault_operator();
+    VaultAccount = vault_account;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn repair_active_bin(active_bin: int) {
+    assert_vault_operator();
+    assert_valid_bin_id(active_bin);
+    assert(
+      bin_reserve_base_value(active_bin) > 0
+      || bin_reserve_quote_value(active_bin) > 0
+      || bin_share_supply_value(active_bin) > 0,
+      "target bin empty"
+    );
+    ActiveBin = active_bin;
+  }
+
+  view fn custody_account() -> AccountId {
+    assert_pool_initialized();
+    return VaultAccount;
+  }
+
   view fn risk_config() -> (int, int, int, int, int) {
     assert_pool_initialized();
     return (
@@ -721,13 +740,35 @@ seiyaku DlmmPool {
     }
     return (
       position_registered,
-      PositionBinId.get_or(position_id, 0),
-      position_shares_value(position_id),
+      PositionBinId.get_or(position_id, 0), position_shares_value(position_id),
       position_fee_debt_base_value(position_id),
       position_fee_debt_quote_value(position_id),
       position_credit_base_value(position_id),
       position_credit_quote_value(position_id)
     );
+  }
+
+  view fn quote_position_fees(position_id: Name) -> (int, int) {
+    assert_pool_initialized();
+    assert_position_exists(position_id);
+
+    let pending_base = position_credit_base_value(position_id);
+    let pending_quote = position_credit_quote_value(position_id);
+    let shares = position_shares_value(position_id);
+    let bin_id = PositionBinId[position_id];
+
+    if shares > 0 {
+      let delta_base = bin_fee_growth_base_value(bin_id) - position_fee_debt_base_value(position_id);
+      let delta_quote = bin_fee_growth_quote_value(bin_id) - position_fee_debt_quote_value(position_id);
+      if delta_base > 0 {
+        pending_base = pending_base + ((shares * delta_base) / fee_growth_scale());
+      }
+      if delta_quote > 0 {
+        pending_quote = pending_quote + ((shares * delta_quote) / fee_growth_scale());
+      }
+    }
+
+    return (pending_base, pending_quote);
   }
 
   // Keep spot helpers adjacent to the swap entrypoints so the hot path avoids
@@ -798,6 +839,150 @@ seiyaku DlmmPool {
       return BinFeeGrowthQuote[bin_id];
     }
     return 0;
+  }
+
+  fn spot_bin_has_quote_liquidity(bin_id: int) -> int {
+    if spot_bin_reserve_quote_value(bin_id) > MinReserveQuote {
+      return 1;
+    }
+    return 0;
+  }
+
+  fn spot_bin_has_base_liquidity(bin_id: int) -> int {
+    if spot_bin_reserve_base_value(bin_id) > MinReserveBase {
+      return 1;
+    }
+    return 0;
+  }
+
+  fn spot_realign_active_bin_base_side() -> int {
+    let step = BinStep;
+    let current_bin = ActiveBin;
+    let probe = current_bin;
+    let candidate = current_bin;
+    let found = 0;
+    let stop = 0;
+
+    if spot_bin_has_quote_liquidity(current_bin) == 1 {
+      candidate = current_bin;
+      found = 1;
+    }
+
+    while found == 0 && stop == 0 {
+      let next_probe = probe - step;
+      if spot_abs_int(next_probe) > 200_000 {
+        stop = 1;
+      } else {
+        probe = next_probe;
+        if spot_bin_has_quote_liquidity(probe) == 1 {
+          candidate = probe;
+          found = 1;
+        }
+      }
+    }
+
+    probe = current_bin;
+    stop = 0;
+    while found == 0 && stop == 0 {
+      let next_probe = probe + step;
+      if spot_abs_int(next_probe) > 200_000 {
+        stop = 1;
+      } else {
+        probe = next_probe;
+        if spot_bin_has_quote_liquidity(probe) == 1 {
+          candidate = probe;
+          found = 1;
+        }
+      }
+    }
+
+    if found == 0 {
+      return current_bin;
+    }
+
+    probe = candidate;
+    stop = 0;
+    while stop == 0 {
+      let next_probe = probe - step;
+      if spot_abs_int(next_probe) > 200_000 {
+        stop = 1;
+      } else {
+        if spot_bin_has_quote_liquidity(next_probe) == 1 {
+          candidate = next_probe;
+          probe = next_probe;
+        } else {
+          stop = 1;
+        }
+      }
+    }
+
+    ActiveBin = candidate;
+    return candidate;
+  }
+
+  fn spot_realign_active_bin_quote_side() -> int {
+    let step = BinStep;
+    let current_bin = ActiveBin;
+    let probe = current_bin;
+    let candidate = current_bin;
+    let found = 0;
+    let stop = 0;
+
+    if spot_bin_has_base_liquidity(current_bin) == 1 {
+      candidate = current_bin;
+      found = 1;
+    }
+
+    while found == 0 && stop == 0 {
+      let next_probe = probe - step;
+      if spot_abs_int(next_probe) > 200_000 {
+        stop = 1;
+      } else {
+        probe = next_probe;
+        if spot_bin_has_base_liquidity(probe) == 1 {
+          candidate = probe;
+          found = 1;
+        }
+      }
+    }
+
+    probe = current_bin;
+    stop = 0;
+    while found == 0 && stop == 0 {
+      let next_probe = probe + step;
+      if spot_abs_int(next_probe) > 200_000 {
+        stop = 1;
+      } else {
+        probe = next_probe;
+        if spot_bin_has_base_liquidity(probe) == 1 {
+          candidate = probe;
+          found = 1;
+        }
+      }
+    }
+
+    if found == 0 {
+      return current_bin;
+    }
+
+    probe = candidate;
+    stop = 0;
+    while stop == 0 {
+      let next_probe = probe + step;
+      if spot_abs_int(next_probe) > 200_000 {
+        stop = 1;
+      } else {
+        if spot_bin_has_base_liquidity(next_probe) == 1 {
+          candidate = next_probe;
+          probe = next_probe;
+        } else {
+          stop = 1;
+        }
+      }
+    }
+
+    ActiveBin = candidate;
+    return candidate;
   }
 
   fn spot_move_asset_if_needed(from: AccountId,
@@ -884,7 +1069,8 @@ seiyaku DlmmPool {
     return (spot_abs_int(current_price - start_price) * 10_000) / start_price;
   }
 
-  fn try_swap_exact_in_base_side_single_bin(trader: AccountId,
+  fn try_swap_exact_in_base_side_single_bin(funding_account: AccountId,
+                                            recipient: AccountId,
                                             vault: AccountId,
                                             base_asset: AssetDefinitionId,
                                             quote_asset: AssetDefinitionId,
@@ -894,7 +1080,7 @@ seiyaku DlmmPool {
       return 0;
     }
 
-    let current_bin = ActiveBin;
+    let current_bin = spot_realign_active_bin_base_side();
     let reserve_quote = spot_bin_reserve_quote_value(current_bin);
     let available_quote = reserve_quote - MinReserveQuote;
 
@@ -913,12 +1099,13 @@ seiyaku DlmmPool {
     let fee_paid = spot_fee_paid_amount(amount_in, FeePips);
     spot_credit_bin_fee_growth_base(current_bin, fee_paid);
     assert(output >= min_out, "slippage");
-    spot_move_asset_if_needed(trader, vault, base_asset, amount_in);
-    spot_move_asset_if_needed(vault, trader, quote_asset, output);
+    spot_move_asset_if_needed(funding_account, vault, base_asset, amount_in);
+    spot_move_asset_if_needed(vault, recipient, quote_asset, output);
     return output;
   }
 
-  fn swap_exact_in_base_side_multi_bin(trader: AccountId,
+  fn swap_exact_in_base_side_multi_bin(funding_account: AccountId,
+                                       recipient: AccountId,
                                        vault: AccountId,
                                        base_asset: AssetDefinitionId,
                                        quote_asset: AssetDefinitionId,
@@ -926,7 +1113,7 @@ seiyaku DlmmPool {
                                        min_out: int) -> int {
     let fee_pips = FeePips;
     let bin_step = BinStep;
-    let start_bin = ActiveBin;
+    let start_bin = spot_realign_active_bin_base_side();
     let start_price = spot_bin_price_ppm(start_bin, bin_step);
     let impact_cap = ImpactCapBps;
     let min_quote = MinReserveQuote;
@@ -946,10 +1133,8 @@ seiyaku DlmmPool {
       let available_quote = reserve_quote - min_quote;
       let price = spot_bin_price_ppm(current_bin, bin_step);
 
-      if impact_cap > 0 {
-        if spot_price_impact_bps(start_price, price) > impact_cap {
-          stop = 1;
-        }
+      if impact_cap > 0 && spot_price_impact_bps(start_price, price) > impact_cap {
+        stop = 1;
       } else {
         if available_quote <= 0 {
           current_bin = current_bin + bin_step;
@@ -1022,12 +1207,13 @@ seiyaku DlmmPool {
 
     assert(amount_used > 0, "insufficient input used");
     assert(amount_out >= min_out, "slippage");
-    spot_move_asset_if_needed(trader, vault, base_asset, amount_used);
-    spot_move_asset_if_needed(vault, trader, quote_asset, amount_out);
+    spot_move_asset_if_needed(funding_account, vault, base_asset, amount_used);
+    spot_move_asset_if_needed(vault, recipient, quote_asset, amount_out);
     return amount_out;
   }
 
-  fn swap_exact_in_quote_side_multi_bin(trader: AccountId,
+  fn swap_exact_in_quote_side_multi_bin(funding_account: AccountId,
+                                        recipient: AccountId,
                                         vault: AccountId,
                                         base_asset: AssetDefinitionId,
                                         quote_asset: AssetDefinitionId,
@@ -1035,7 +1221,7 @@ seiyaku DlmmPool {
                                         min_out: int) -> int {
     let fee_pips = FeePips;
     let bin_step = BinStep;
-    let start_bin = ActiveBin;
+    let start_bin = spot_realign_active_bin_quote_side();
     let start_price = spot_bin_price_ppm(start_bin, bin_step);
     let impact_cap = ImpactCapBps;
     let min_base = MinReserveBase;
@@ -1055,10 +1241,8 @@ seiyaku DlmmPool {
       let available_base = reserve_base - min_base;
       let price = spot_bin_price_ppm(current_bin, bin_step);
 
-      if impact_cap > 0 {
-        if spot_price_impact_bps(start_price, price) > impact_cap {
-          stop = 1;
-        }
+      if impact_cap > 0 && spot_price_impact_bps(start_price, price) > impact_cap {
+        stop = 1;
       } else {
         if available_base <= 0 {
           current_bin = current_bin - bin_step;
@@ -1131,37 +1315,97 @@ seiyaku DlmmPool {
 
     assert(amount_used > 0, "insufficient input used");
     assert(amount_out >= min_out, "slippage");
-    spot_move_asset_if_needed(trader, vault, quote_asset, amount_used);
-    spot_move_asset_if_needed(vault, trader, base_asset, amount_out);
+    spot_move_asset_if_needed(funding_account, vault, quote_asset, amount_used);
+    spot_move_asset_if_needed(vault, recipient, base_asset, amount_out);
     return amount_out;
   }
 
   #[access(read="*", write="*")]
-  kotoage fn swap_exact_in_with_assets(trader: AccountId,
-                                       input_asset: AssetDefinitionId,
-                                       vault: AccountId,
-                                       base_asset: AssetDefinitionId,
-                                       quote_asset: AssetDefinitionId,
-                                       amount_in: int,
-                                       min_out: int) -> int permission(Admin) {
-    return swap_exact_in_with_assets_impl(
-      trader,
+  kotoage fn swap_exact_in(input_asset: AssetDefinitionId,
+                           amount_in: int,
+                           min_out: int) -> int permission(AssetOps) {
+    return swap_exact_in_impl(
+      authority(),
+      authority(),
       input_asset,
-      vault,
-      base_asset,
-      quote_asset,
+      VaultAccount,
+      BaseAsset,
+      QuoteAsset,
       amount_in,
       min_out
     );
   }
 
-  fn swap_exact_in_with_assets_impl(trader: AccountId,
-                                    input_asset: AssetDefinitionId,
-                                    vault: AccountId,
-                                    base_asset: AssetDefinitionId,
-                                    quote_asset: AssetDefinitionId,
+  #[access(read="*", write="*")]
+  kotoage fn swap_exact_in_base(amount_in: int,
+                                min_out: int) -> int permission(AssetOps) {
+    return swap_exact_in_impl(
+      authority(),
+      authority(),
+      BaseAsset,
+      VaultAccount,
+      BaseAsset,
+      QuoteAsset,
+      amount_in,
+      min_out
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn swap_exact_in_quote(amount_in: int,
+                                 min_out: int) -> int permission(AssetOps) {
+    return swap_exact_in_impl(
+      authority(),
+      authority(),
+      QuoteAsset,
+      VaultAccount,
+      BaseAsset,
+      QuoteAsset,
+      amount_in,
+      min_out
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn swap_exact_in_base_for(recipient: AccountId,
                                     amount_in: int,
-                                    min_out: int) -> int {
+                                    min_out: int) -> int permission(AssetOps) {
+    return swap_exact_in_impl(
+      authority(),
+      recipient,
+      BaseAsset,
+      VaultAccount,
+      BaseAsset,
+      QuoteAsset,
+      amount_in,
+      min_out
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn swap_exact_in_quote_for(recipient: AccountId,
+                                     amount_in: int,
+                                     min_out: int) -> int permission(AssetOps) {
+    return swap_exact_in_impl(
+      authority(),
+      recipient,
+      QuoteAsset,
+      VaultAccount,
+      BaseAsset,
+      QuoteAsset,
+      amount_in,
+      min_out
+    );
+  }
+
+  fn swap_exact_in_impl(trader: AccountId,
+                        recipient: AccountId,
+                        input_asset: AssetDefinitionId,
+                        vault: AccountId,
+                        base_asset: AssetDefinitionId,
+                        quote_asset: AssetDefinitionId,
+                        amount_in: int,
+                        min_out: int) -> int {
     spot_assert_pool_initialized();
     if amount_in <= 0 {
       return 0;
@@ -1170,6 +1414,7 @@ seiyaku DlmmPool {
     if input_asset == base_asset {
       let fast_out = try_swap_exact_in_base_side_single_bin(
         trader,
+        recipient,
         vault,
         base_asset,
         quote_asset,
@@ -1181,6 +1426,7 @@ seiyaku DlmmPool {
       }
       return swap_exact_in_base_side_multi_bin(
         trader,
+        recipient,
         vault,
         base_asset,
         quote_asset,
@@ -1192,6 +1438,7 @@ seiyaku DlmmPool {
     assert(input_asset == quote_asset, "asset not in pool");
     return swap_exact_in_quote_side_multi_bin(
       trader,
+      recipient,
       vault,
       base_asset,
       quote_asset,

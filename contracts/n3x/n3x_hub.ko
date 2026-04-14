@@ -4,6 +4,7 @@
 
 seiyaku N3xHub {
   state int HubInitialized;
+  state AccountId HubOwner;
   state AssetDefinitionId UsdtAsset;
   state AssetDefinitionId UsdcAsset;
   state AssetDefinitionId KusdAsset;
@@ -37,54 +38,40 @@ seiyaku N3xHub {
     return (amount * fee_bps) / 10_000;
   }
 
-  fn usdt_asset_name() -> Name {
-    let usdt_asset = name!("usdt_asset");
-    return usdt_asset;
+  fn assert_initialized_impl() {
+    assert(HubInitialized == 1, "hub not initialized");
   }
 
-  fn usdc_asset_name() -> Name {
-    let usdc_asset = name!("usdc_asset");
-    return usdc_asset;
+  fn assert_owner() {
+    assert(HubOwner == authority(), "hub owner mismatch");
   }
 
-  fn kusd_asset_name() -> Name {
-    let kusd_asset = name!("kusd_asset");
-    return kusd_asset;
+  fn init_owner() -> AccountId {
+    return authority();
   }
 
-  fn n3x_asset_name() -> Name {
-    let n3x_asset = name!("n3x_asset");
-    return n3x_asset;
+  fn quote_mint_impl(usdt_in: int, usdc_in: int, kusd_in: int) -> int {
+    assert(usdt_in >= 0, "negative usdt_in");
+    assert(usdc_in >= 0, "negative usdc_in");
+    assert(kusd_in >= 0, "negative kusd_in");
+    let gross = usdt_in + usdc_in + kusd_in;
+    let fee = fee_amount(gross, MintFeeBps);
+    return gross - fee;
   }
 
-  fn vault_account_name() -> Name {
-    let vault_account = name!("vault_account");
-    return vault_account;
-  }
-
-  fn user_name() -> Name {
-    let user = name!("user");
-    return user;
-  }
-
-  fn usdt_in_name() -> Name {
-    let usdt_in = name!("usdt_in");
-    return usdt_in;
-  }
-
-  fn usdc_in_name() -> Name {
-    let usdc_in = name!("usdc_in");
-    return usdc_in;
-  }
-
-  fn kusd_in_name() -> Name {
-    let kusd_in = name!("kusd_in");
-    return kusd_in;
-  }
-
-  fn n3x_amount_name() -> Name {
-    let n3x_amount = name!("n3x_amount");
-    return n3x_amount;
+  fn quote_redeem_impl(n3x_amount: int) -> int {
+    assert_initialized_impl();
+    let total = TotalN3x;
+    assert(total > 0, "empty hub");
+    assert(n3x_amount > 0, "invalid n3x_amount");
+    assert(n3x_amount <= total, "insufficient supply");
+    let gross_usdt = (BasketUsdt * n3x_amount) / total;
+    let gross_usdc = (BasketUsdc * n3x_amount) / total;
+    let gross_kusd = (BasketKusd * n3x_amount) / total;
+    let usdt_out = gross_usdt - fee_amount(gross_usdt, RedeemFeeBps);
+    let usdc_out = gross_usdc - fee_amount(gross_usdc, RedeemFeeBps);
+    let kusd_out = gross_kusd - fee_amount(gross_kusd, RedeemFeeBps);
+    return usdt_out + usdc_out + kusd_out;
   }
 
   #[access(read="*", write="*")]
@@ -100,7 +87,18 @@ seiyaku N3xHub {
                       usdc_asset: AssetDefinitionId,
                       kusd_asset: AssetDefinitionId,
                       n3x_asset: AssetDefinitionId,
-                      vault_account: AccountId) permission(Admin) {
+                      vault_account: AccountId,
+                      target_usdt_bps: int,
+                      target_usdc_bps: int,
+                      target_kusd_bps: int,
+                      mint_fee_bps: int,
+                      redeem_fee_bps: int) {
+    assert(HubInitialized == 0, "hub initialized");
+    validate_targets(target_usdt_bps, target_usdc_bps, target_kusd_bps);
+    validate_fee_bps(mint_fee_bps);
+    validate_fee_bps(redeem_fee_bps);
+
+    HubOwner = init_owner();
     UsdtAsset = usdt_asset;
     UsdcAsset = usdc_asset;
     KusdAsset = kusd_asset;
@@ -110,72 +108,31 @@ seiyaku N3xHub {
     BasketUsdc = 0;
     BasketKusd = 0;
     TotalN3x = 0;
-    MintFeeBps = 0;
-    RedeemFeeBps = 0;
+    MintFeeBps = mint_fee_bps;
+    RedeemFeeBps = redeem_fee_bps;
     MintFeesAccrued = 0;
     RedeemFeesAccrued = 0;
-    TargetUsdtBps = 3334;
-    TargetUsdcBps = 3333;
-    TargetKusdBps = 3333;
-    HubInitialized = 1;
-  }
-
-  #[access(read="*", write="*")]
-  kotoage fn configure_hub(target_usdt_bps: int,
-                           target_usdc_bps: int,
-                           target_kusd_bps: int,
-                           mint_fee_bps: int,
-                           redeem_fee_bps: int) permission(Admin) {
-    assert(HubInitialized == 1, "hub not initialized");
-    validate_targets(target_usdt_bps, target_usdc_bps, target_kusd_bps);
-    validate_fee_bps(mint_fee_bps);
-    validate_fee_bps(redeem_fee_bps);
     TargetUsdtBps = target_usdt_bps;
     TargetUsdcBps = target_usdc_bps;
     TargetKusdBps = target_kusd_bps;
-    MintFeeBps = mint_fee_bps;
-    RedeemFeeBps = redeem_fee_bps;
+    HubInitialized = 1;
   }
 
   view fn quote_mint(usdt_in: int, usdc_in: int, kusd_in: int) -> int {
     return quote_mint_impl(usdt_in, usdc_in, kusd_in);
   }
 
-  fn quote_mint_impl(usdt_in: int, usdc_in: int, kusd_in: int) -> int {
-    assert(usdt_in >= 0, "negative usdt_in");
-    assert(usdc_in >= 0, "negative usdc_in");
-    assert(kusd_in >= 0, "negative kusd_in");
-    let gross = usdt_in + usdc_in + kusd_in;
-    let fee = fee_amount(gross, MintFeeBps);
-    return gross - fee;
-  }
-
   view fn quote_redeem(n3x_amount: int) -> int {
     return quote_redeem_impl(n3x_amount);
   }
 
-  fn quote_redeem_impl(n3x_amount: int) -> int {
-    assert(HubInitialized == 1, "hub not initialized");
-    let total = TotalN3x;
-    assert(total > 0, "empty hub");
-    assert(n3x_amount > 0, "invalid n3x_amount");
-    assert(n3x_amount <= total, "insufficient supply");
-    let gross_usdt = (BasketUsdt * n3x_amount) / total;
-    let gross_usdc = (BasketUsdc * n3x_amount) / total;
-    let gross_kusd = (BasketKusd * n3x_amount) / total;
-    let usdt_out = gross_usdt - fee_amount(gross_usdt, RedeemFeeBps);
-    let usdc_out = gross_usdc - fee_amount(gross_usdc, RedeemFeeBps);
-    let kusd_out = gross_kusd - fee_amount(gross_kusd, RedeemFeeBps);
-    return usdt_out + usdc_out + kusd_out;
-  }
-
   view fn assert_initialized() -> int {
-    assert(HubInitialized == 1, "hub not initialized");
+    assert_initialized_impl();
     return TotalN3x;
   }
 
   view fn hub_config() -> (AssetDefinitionId, AssetDefinitionId, AssetDefinitionId, AssetDefinitionId, AccountId, int, int, int, int, int) {
-    assert(HubInitialized == 1, "hub not initialized");
+    assert_initialized_impl();
     return (
       UsdtAsset,
       UsdcAsset,
@@ -190,8 +147,28 @@ seiyaku N3xHub {
     );
   }
 
+  #[access(read="*", write="*")]
+  kotoage fn bind_vault_account(vault_account: AccountId) {
+    assert_initialized_impl();
+    assert_owner();
+    VaultAccount = vault_account;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn repair_zero_supply_state(vault_account: AccountId) {
+    assert_initialized_impl();
+    assert_owner();
+    assert(TotalN3x == 0, "hub still has live supply");
+    VaultAccount = vault_account;
+    BasketUsdt = 0;
+    BasketUsdc = 0;
+    BasketKusd = 0;
+    MintFeesAccrued = 0;
+    RedeemFeesAccrued = 0;
+  }
+
   view fn mirror_state() -> (int, int, int, int, int, int, int, int, int, int, int, int) {
-    assert(HubInitialized == 1, "hub not initialized");
+    assert_initialized_impl();
     return (
       HubInitialized,
       BasketUsdt,
@@ -209,11 +186,11 @@ seiyaku N3xHub {
   }
 
   #[access(read="*", write="*")]
-  kotoage fn deposit_and_mint(user: AccountId,
-                              usdt_in: int,
+  kotoage fn deposit_and_mint(usdt_in: int,
                               usdc_in: int,
-                              kusd_in: int) -> int permission(Admin) {
-    assert(HubInitialized == 1, "hub not initialized");
+                              kusd_in: int) -> int permission(AssetOps) {
+    assert_initialized_impl();
+    let user = authority();
     let gross = usdt_in + usdc_in + kusd_in;
     let minted = quote_mint_impl(usdt_in, usdc_in, kusd_in);
     let fee = gross - minted;
@@ -245,49 +222,9 @@ seiyaku N3xHub {
   }
 
   #[access(read="*", write="*")]
-  kotoage fn deposit_and_mint_with_assets(user: AccountId,
-                                          vault: AccountId,
-                                          usdt_asset: AssetDefinitionId,
-                                          usdc_asset: AssetDefinitionId,
-                                          kusd_asset: AssetDefinitionId,
-                                          n3x_asset: AssetDefinitionId,
-                                          usdt_in: int,
-                                          usdc_in: int,
-                                          kusd_in: int) -> int permission(Admin) {
-    assert(HubInitialized == 1, "hub not initialized");
-    let gross = usdt_in + usdc_in + kusd_in;
-    let minted = quote_mint_impl(usdt_in, usdc_in, kusd_in);
-    let fee = gross - minted;
-    assert(minted > 0, "zero mint");
-
-    if usdt_in > 0 {
-      if user != vault {
-        transfer_asset(user, vault, usdt_asset, usdt_in);
-      }
-    }
-    if usdc_in > 0 {
-      if user != vault {
-        transfer_asset(user, vault, usdc_asset, usdc_in);
-      }
-    }
-    if kusd_in > 0 {
-      if user != vault {
-        transfer_asset(user, vault, kusd_asset, kusd_in);
-      }
-    }
-    mint_asset(user, n3x_asset, minted);
-
-    BasketUsdt = BasketUsdt + usdt_in;
-    BasketUsdc = BasketUsdc + usdc_in;
-    BasketKusd = BasketKusd + kusd_in;
-    TotalN3x = TotalN3x + minted;
-    MintFeesAccrued = MintFeesAccrued + fee;
-    return minted;
-  }
-
-  #[access(read="*", write="*")]
-  kotoage fn burn_and_redeem(user: AccountId, n3x_amount: int) -> int permission(Admin) {
-    assert(HubInitialized == 1, "hub not initialized");
+  kotoage fn burn_and_redeem(n3x_amount: int) -> int permission(AssetOps) {
+    assert_initialized_impl();
+    let user = authority();
     let total = TotalN3x;
     assert(total > 0, "empty hub");
     assert(n3x_amount > 0, "invalid n3x_amount");
@@ -319,57 +256,6 @@ seiyaku N3xHub {
     if kusd_out > 0 {
       if VaultAccount != user {
         transfer_asset(VaultAccount, user, KusdAsset, kusd_out);
-      }
-    }
-
-    BasketUsdt = BasketUsdt - usdt_out;
-    BasketUsdc = BasketUsdc - usdc_out;
-    BasketKusd = BasketKusd - kusd_out;
-    RedeemFeesAccrued = RedeemFeesAccrued + usdt_fee + usdc_fee + kusd_fee;
-    TotalN3x = total - n3x_amount;
-    return redeemed;
-  }
-
-  #[access(read="*", write="*")]
-  kotoage fn burn_and_redeem_with_assets(user: AccountId,
-                                         vault: AccountId,
-                                         usdt_asset: AssetDefinitionId,
-                                         usdc_asset: AssetDefinitionId,
-                                         kusd_asset: AssetDefinitionId,
-                                         n3x_asset: AssetDefinitionId,
-                                         n3x_amount: int) -> int permission(Admin) {
-    assert(HubInitialized == 1, "hub not initialized");
-    let total = TotalN3x;
-    assert(total > 0, "empty hub");
-    assert(n3x_amount > 0, "invalid n3x_amount");
-    assert(n3x_amount <= total, "insufficient supply");
-
-    let gross_usdt = (BasketUsdt * n3x_amount) / total;
-    let gross_usdc = (BasketUsdc * n3x_amount) / total;
-    let gross_kusd = (BasketKusd * n3x_amount) / total;
-    let usdt_fee = fee_amount(gross_usdt, RedeemFeeBps);
-    let usdc_fee = fee_amount(gross_usdc, RedeemFeeBps);
-    let kusd_fee = fee_amount(gross_kusd, RedeemFeeBps);
-    let usdt_out = gross_usdt - usdt_fee;
-    let usdc_out = gross_usdc - usdc_fee;
-    let kusd_out = gross_kusd - kusd_fee;
-    let redeemed = usdt_out + usdc_out + kusd_out;
-    assert(redeemed > 0, "zero redemption");
-
-    burn_asset(user, n3x_asset, n3x_amount);
-    if usdt_out > 0 {
-      if vault != user {
-        transfer_asset(vault, user, usdt_asset, usdt_out);
-      }
-    }
-    if usdc_out > 0 {
-      if vault != user {
-        transfer_asset(vault, user, usdc_asset, usdc_out);
-      }
-    }
-    if kusd_out > 0 {
-      if vault != user {
-        transfer_asset(vault, user, kusd_asset, kusd_out);
       }
     }
 

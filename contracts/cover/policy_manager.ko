@@ -1,20 +1,68 @@
 seiyaku PolicyManager {
-  state SettlementAsset: Map<Name, AssetDefinitionId>;
-  state VaultAccount: Map<Name, AccountId>;
-  state DurationSlots: Map<Name, int>;
-  state PayoutBps: Map<Name, int>;
-  state Premium: Map<Name, int>;
-  state PolicyOwner: Map<Name, AccountId>;
-  state PolicyNotional: Map<Name, int>;
-  state PremiumPaid: Map<Name, int>;
-  state BreachElapsed: Map<Name, int>;
-  state Active: Map<Name, int>;
-  state ClaimPayout: Map<Name, int>;
-  state Expired: Map<Name, int>;
-  state ClaimCount: Map<Name, int>;
+  state int CoverInitialized;
+  state AccountId CoverOwner;
+  state AssetDefinitionId CoverSettlementAsset;
+  state bytes CoverRiskVaultContract;
+  state int CoverContractBound;
+  state AccountId CoverContractId;
+  state int CoverWithdrawalOnly;
+  state int CoverDefaultRequiredObservations;
+  state int CoverOracleStaleSlots;
 
-  fn assert_policy_exists(policy: Name) {
-    assert(contains(SettlementAsset, policy), "policy missing");
+  state AccountId CoverAutomationExecutor;
+  state int CoverObservationJobId;
+  state int CoverAutomationCadence;
+  state int CoverAutomationBacklogCap;
+  state int CoverAutomationBacklog;
+  state int CoverAutomationSafeMode;
+
+  state int CoverNextPolicyId;
+
+  state CoverPolicyOwner: Map<int, AccountId>;
+  state CoverPolicyLowerBound: Map<int, int>;
+  state CoverPolicyUpperBound: Map<int, int>;
+  state CoverPolicyPayoutAmount: Map<int, int>;
+  state CoverPolicyMonitoringWindowSlots: Map<int, int>;
+  state CoverPolicyRequiredObservations: Map<int, int>;
+  state CoverPolicyCoveredNotional: Map<int, int>;
+  state CoverPolicyPremiumPaid: Map<int, int>;
+  state CoverPolicyStatus: Map<int, int>;
+  state CoverPolicyRegistrationSlot: Map<int, int>;
+  state CoverPolicyBreachStartSlot: Map<int, int>;
+  state CoverPolicyBreachElapsedSlots: Map<int, int>;
+  state CoverPolicyObservationCount: Map<int, int>;
+  state CoverPolicyLastObservationSlot: Map<int, int>;
+  state CoverPolicyLastObservedPrice: Map<int, int>;
+  state CoverPolicyClaimPayout: Map<int, int>;
+  state CoverPolicyClaimCount: Map<int, int>;
+
+  fn assert_initialized() {
+    assert(CoverInitialized == 1, "cover manager not initialized");
+  }
+
+  fn assert_owner() {
+    assert_initialized();
+    assert(CoverOwner == authority(), "cover manager owner mismatch");
+  }
+
+  fn assert_contract_bound() {
+    assert(CoverContractBound == 1, "cover contract unbound");
+  }
+
+  fn assert_policy_exists(policy_id: int) {
+    assert(CoverPolicyOwner.contains(policy_id), "policy missing");
+  }
+
+  fn assert_policy_owner(policy_id: int) {
+    assert_policy_exists(policy_id);
+    assert(CoverPolicyOwner[policy_id] == authority(), "policy owner mismatch");
+  }
+
+  fn reset_breach(policy_id: int) {
+    CoverPolicyStatus[policy_id] = 1;
+    CoverPolicyBreachStartSlot[policy_id] = 0;
+    CoverPolicyBreachElapsedSlots[policy_id] = 0;
+    CoverPolicyObservationCount[policy_id] = 0;
   }
 
   fn move_asset_if_needed(from: AccountId,
@@ -28,372 +76,310 @@ seiyaku PolicyManager {
     }
   }
 
-  fn policy_name() -> Name {
-    let policy = name!("policy");
-    return policy;
+  fn risk_vault_lock_liability(policy_id: int,
+                               covered_notional: int,
+                               payout_amount: int) -> int {
+    let payload = json_object();
+    let payload = json_set_int(payload, name("bucket_id"), 3);
+    let payload = json_set_int(payload, name("exposure_id"), policy_id);
+    let payload = json_set_int(payload, name("notional"), covered_notional);
+    let payload = json_set_int(payload, name("collateral_locked"), payout_amount);
+    let payload = json_set_int(payload, name("backlog"), CoverAutomationBacklog);
+    let result = call_contract(CoverRiskVaultContract, "lock_liability", payload);
+    return decode_int(result);
   }
 
-  fn settlement_asset_name() -> Name {
-    let settlement_asset = name!("settlement_asset");
-    return settlement_asset;
+  fn risk_vault_deposit(amount: int) -> int {
+    let payload = json_object();
+    let payload = json_set_int(payload, name("bucket_id"), 3);
+    let payload = json_set_int(payload, name("amount"), amount);
+    let result = call_contract(CoverRiskVaultContract, "deposit", payload);
+    return decode_int(result);
   }
 
-  fn vault_account_name() -> Name {
-    let vault_account = name!("vault_account");
-    return vault_account;
+  fn risk_vault_release_liability(policy_id: int) -> int {
+    let payload = json_object();
+    let payload = json_set_int(payload, name("bucket_id"), 3);
+    let payload = json_set_int(payload, name("exposure_id"), policy_id);
+    let payload = json_set_int(payload, name("backlog"), CoverAutomationBacklog);
+    let result = call_contract(CoverRiskVaultContract, "release_liability", payload);
+    return decode_int(result);
   }
 
-  fn duration_slots_name() -> Name {
-    let duration_slots = name!("duration_slots");
-    return duration_slots;
+  fn risk_vault_settle_payout(policy_id: int, recipient: AccountId, amount: int) -> int {
+    let payload = json_object();
+    let payload = json_set_int(payload, name("bucket_id"), 3);
+    let payload = json_set_int(payload, name("exposure_id"), policy_id);
+    let payload = json_set_account_id(payload, name("recipient"), recipient);
+    let payload = json_set_int(payload, name("amount"), amount);
+    let result = call_contract(CoverRiskVaultContract, "settle_payout", payload);
+    return decode_int(result);
   }
 
-  fn payout_bps_name() -> Name {
-    let payout_bps = name!("payout_bps");
-    return payout_bps;
-  }
-
-  fn premium_name() -> Name {
-    let premium = name!("premium");
-    return premium;
-  }
-
-  fn buyer_name() -> Name {
-    let buyer = name!("buyer");
-    return buyer;
-  }
-
-  fn covered_notional_name() -> Name {
-    let covered_notional = name!("covered_notional");
-    return covered_notional;
-  }
-
-  fn elapsed_slots_name() -> Name {
-    let elapsed_slots = name!("elapsed_slots");
-    return elapsed_slots;
-  }
-
-  fn claimant_name() -> Name {
-    let claimant = name!("claimant");
-    return claimant;
-  }
-
-  fn refund_bps_name() -> Name {
-    let refund_bps = name!("refund_bps");
-    return refund_bps;
+  fn risk_vault_report_bucket() {
+    let payload = json_object();
+    let payload = json_set_int(payload, name("bucket_id"), 3);
+    let payload = json_set_int(payload, name("backlog"), CoverAutomationBacklog);
+    let payload = json_set_int(payload, name("safe_mode"), CoverAutomationSafeMode);
+    let result = call_contract(CoverRiskVaultContract, "report_bucket_c2c", payload);
+    assert(decode_int(result) == 1, "risk bucket report failed");
   }
 
   #[access(read="*", write="*")]
   kotoage fn main() -> int {
-    return 1;
+    return CoverInitialized;
   }
 
   #[access(read="*", write="*")]
-  kotoage fn init_policy(policy: Name,
-                         settlement_asset: AssetDefinitionId,
-                         vault_account: AccountId,
-                         duration_slots: int,
-                         payout_bps: int,
-                         premium: int) permission(Admin) {
-    init_policy_impl(
-      policy,
-      settlement_asset,
-      vault_account,
-      duration_slots,
-      payout_bps,
-      premium
-    );
-  }
-
-  fn init_policy_impl(policy: Name,
-                      settlement_asset: AssetDefinitionId,
-                      vault_account: AccountId,
-                      duration_slots: int,
-                      payout_bps: int,
-                      premium: int) {
-    SettlementAsset[policy] = settlement_asset;
-    VaultAccount[policy] = vault_account;
-    DurationSlots[policy] = duration_slots;
-    PayoutBps[policy] = payout_bps;
-    Premium[policy] = premium;
-    BreachElapsed[policy] = 0;
-    Active[policy] = 0;
-    PolicyNotional[policy] = 0;
-    PremiumPaid[policy] = 0;
-    ClaimPayout[policy] = 0;
-    Expired[policy] = 0;
-    ClaimCount[policy] = 0;
+  kotoage fn init_manager(settlement_asset: AssetDefinitionId,
+                          risk_vault_contract: bytes,
+                          required_observations: int,
+                          oracle_stale_slots: int) {
+    assert(CoverInitialized == 0, "cover manager initialized");
+    assert(required_observations > 0, "invalid required observations");
+    assert(oracle_stale_slots >= 0, "invalid stale slots");
+    CoverInitialized = 1;
+    CoverOwner = authority();
+    CoverSettlementAsset = settlement_asset;
+    CoverRiskVaultContract = risk_vault_contract;
+    CoverContractBound = 0;
+    CoverContractId = authority();
+    CoverWithdrawalOnly = 1;
+    CoverDefaultRequiredObservations = required_observations;
+    CoverOracleStaleSlots = oracle_stale_slots;
+    CoverObservationJobId = 0;
+    CoverAutomationCadence = 0;
+    CoverAutomationBacklogCap = 0;
+    CoverAutomationBacklog = 0;
+    CoverAutomationSafeMode = 0;
+    CoverNextPolicyId = 1;
   }
 
   #[access(read="*", write="*")]
-  kotoage fn configure_policy(policy: Name,
-                              duration_slots: int,
-                              payout_bps: int,
-                              premium: int) permission(Admin) {
-    configure_policy_impl(
-      policy,
-      duration_slots,
-      payout_bps,
-      premium
-    );
-  }
-
-  fn configure_policy_impl(policy: Name,
-                           duration_slots: int,
-                           payout_bps: int,
-                           premium: int) {
-    assert_policy_exists(policy);
-    assert(duration_slots > 0, "invalid duration");
-    assert(payout_bps > 0, "invalid payout bps");
-    assert(premium > 0, "invalid premium");
-    DurationSlots[policy] = duration_slots;
-    PayoutBps[policy] = payout_bps;
-    Premium[policy] = premium;
+  kotoage fn sync_automation(executor: AccountId,
+                             job_id: int,
+                             cadence_slots: int,
+                             backlog_cap: int,
+                             safe_mode: int) permission(Admin) {
+    assert_owner();
+    assert(job_id >= 0, "invalid job id");
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(backlog_cap >= 0, "invalid backlog cap");
+    CoverAutomationExecutor = executor;
+    CoverObservationJobId = job_id;
+    CoverAutomationCadence = cadence_slots;
+    CoverAutomationBacklogCap = backlog_cap;
+    CoverAutomationSafeMode = safe_mode;
   }
 
   #[access(read="*", write="*")]
-  kotoage fn buy_policy(buyer: AccountId, policy: Name) permission(Admin) {
-    buy_policy_impl(buyer, policy);
-  }
-
-  fn buy_policy_impl(buyer: AccountId, policy: Name) {
-    assert_policy_exists(policy);
-    buy_policy_with_assets_impl(
-      buyer,
-      policy,
-      VaultAccount[policy],
-      SettlementAsset[policy],
-      Premium[policy]
-    );
+  kotoage fn heartbeat(current_backlog: int,
+                       safe_mode: int) permission(Admin) {
+    assert_owner();
+    assert(current_backlog >= 0, "invalid backlog");
+    CoverAutomationBacklog = current_backlog;
+    CoverAutomationSafeMode = safe_mode;
+    risk_vault_report_bucket();
   }
 
   #[access(read="*", write="*")]
-  kotoage fn buy_policy_with_assets(buyer: AccountId,
-                                    policy: Name,
-                                    vault_account: AccountId,
-                                    settlement_asset: AssetDefinitionId,
-                                    premium: int) permission(Admin) {
-    buy_policy_with_assets_impl(
-      buyer,
-      policy,
-      vault_account,
-      settlement_asset,
-      premium
-    );
-  }
-
-  fn buy_policy_with_assets_impl(buyer: AccountId,
-                                 policy: Name,
-                                 vault_account: AccountId,
-                                 settlement_asset: AssetDefinitionId,
-                                 premium: int) {
-    buy_policy_sized_with_assets_impl(
-      buyer,
-      policy,
-      vault_account,
-      settlement_asset,
-      premium,
-      premium
-    );
+  kotoage fn bind_contract(contract_id: AccountId) {
+    assert_owner();
+    CoverContractId = contract_id;
+    CoverContractBound = 1;
   }
 
   #[access(read="*", write="*")]
-  kotoage fn buy_policy_sized(buyer: AccountId,
-                              policy: Name,
-                              covered_notional: int) permission(Admin) {
-    buy_policy_sized_impl(buyer, policy, covered_notional);
-  }
-
-  fn buy_policy_sized_impl(buyer: AccountId, policy: Name, covered_notional: int) {
-    assert_policy_exists(policy);
-    buy_policy_sized_with_assets_impl(
-      buyer,
-      policy,
-      VaultAccount[policy],
-      SettlementAsset[policy],
-      Premium[policy],
-      covered_notional
-    );
+  kotoage fn bind_risk_vault(risk_vault_contract: bytes) {
+    assert_owner();
+    CoverRiskVaultContract = risk_vault_contract;
   }
 
   #[access(read="*", write="*")]
-  kotoage fn buy_policy_sized_with_assets(buyer: AccountId,
-                                          policy: Name,
-                                          vault_account: AccountId,
-                                          settlement_asset: AssetDefinitionId,
-                                          premium: int,
-                                          covered_notional: int) permission(Admin) {
-    buy_policy_sized_with_assets_impl(
-      buyer,
-      policy,
-      vault_account,
-      settlement_asset,
-      premium,
-      covered_notional
-    );
+  kotoage fn enter_withdrawal_only() {
+    assert_owner();
+    CoverWithdrawalOnly = 1;
   }
 
-  fn buy_policy_sized_with_assets_impl(buyer: AccountId,
-                                       policy: Name,
-                                       vault_account: AccountId,
-                                       settlement_asset: AssetDefinitionId,
-                                       premium: int,
-                                       covered_notional: int) {
-    assert_policy_exists(policy);
-    assert(get_or_insert_default(Active, policy, 0) == 0, "policy active");
+  #[access(read="*", write="*")]
+  kotoage fn exit_withdrawal_only() {
+    assert_owner();
+    CoverWithdrawalOnly = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn register_policy(lower_bound: int,
+                             upper_bound: int,
+                             payout_amount: int,
+                             monitoring_window_slots: int,
+                             required_observations: int,
+                             covered_notional: int,
+                             premium_paid: int,
+                             registration_slot: int) -> int permission(AssetOps) {
+    assert_initialized();
+    assert(CoverWithdrawalOnly == 0, "withdrawal only");
+    assert(CoverAutomationSafeMode == 0, "automation safe mode");
+    assert(lower_bound < upper_bound, "invalid bounds");
+    assert(payout_amount > 0, "invalid payout");
+    assert(monitoring_window_slots > 0, "invalid monitoring window");
     assert(covered_notional > 0, "invalid covered notional");
-    move_asset_if_needed(buyer, vault_account, settlement_asset, premium);
-    PolicyOwner[policy] = buyer;
-    PolicyNotional[policy] = covered_notional;
-    PremiumPaid[policy] = premium;
-    Active[policy] = 1;
-    BreachElapsed[policy] = 0;
-    ClaimPayout[policy] = 0;
-    Expired[policy] = 0;
-  }
-
-  #[access(read="*", write="*")]
-  kotoage fn record_breach(policy: Name, elapsed_slots: int) permission(Admin) {
-    record_breach_impl(policy, elapsed_slots);
-  }
-
-  fn record_breach_impl(policy: Name, elapsed_slots: int) {
-    assert_policy_exists(policy);
-    assert(get_or_insert_default(Active, policy, 0) == 1, "inactive policy");
-    BreachElapsed[policy] = elapsed_slots;
-  }
-
-  #[access(read="*", write="*")]
-  kotoage fn settle_claim(claimant: AccountId,
-                          policy: Name,
-                          covered_notional: int) permission(Admin) {
-    settle_claim_impl(claimant, policy, covered_notional);
-  }
-
-  fn settle_claim_impl(claimant: AccountId, policy: Name, covered_notional: int) {
-    assert_policy_exists(policy);
-    settle_claim_with_assets_impl(
-      claimant,
-      policy,
-      VaultAccount[policy],
-      SettlementAsset[policy],
-      covered_notional
-    );
-  }
-
-  #[access(read="*", write="*")]
-  kotoage fn settle_claim_with_assets(claimant: AccountId,
-                                      policy: Name,
-                                      vault_account: AccountId,
-                                      settlement_asset: AssetDefinitionId,
-                                      covered_notional: int) permission(Admin) {
-    settle_claim_with_assets_impl(
-      claimant,
-      policy,
-      vault_account,
-      settlement_asset,
-      covered_notional
-    );
-  }
-
-  fn settle_claim_with_assets_impl(claimant: AccountId,
-                                   policy: Name,
-                                   vault_account: AccountId,
-                                   settlement_asset: AssetDefinitionId,
-                                   covered_notional: int) {
-    assert_policy_exists(policy);
-    assert(get_or_insert_default(Active, policy, 0) == 1, "inactive policy");
-    assert(PolicyOwner[policy] == claimant, "claimant mismatch");
-    assert(get_or_insert_default(BreachElapsed, policy, 0) >= DurationSlots[policy], "breach window incomplete");
-    assert(covered_notional > 0, "invalid covered notional");
-    let notional_limit = get_or_insert_default(PolicyNotional, policy, 0);
-    let effective_notional = covered_notional;
-    if effective_notional > notional_limit {
-      effective_notional = notional_limit;
+    assert(registration_slot >= 0, "invalid registration slot");
+    let policy_id = CoverNextPolicyId;
+    CoverNextPolicyId = policy_id + 1;
+    if premium_paid > 0 {
+      assert_contract_bound();
+      move_asset_if_needed(authority(), CoverContractId, CoverSettlementAsset, premium_paid);
+      risk_vault_deposit(premium_paid);
     }
-    let payout = (effective_notional * PayoutBps[policy]) / 10_000;
-    move_asset_if_needed(vault_account, claimant, settlement_asset, payout);
-    Active[policy] = 0;
-    ClaimPayout[policy] = payout;
-    ClaimCount[policy] = get_or_insert_default(ClaimCount, policy, 0) + 1;
+    risk_vault_lock_liability(policy_id, covered_notional, payout_amount);
+    CoverPolicyOwner[policy_id] = authority();
+    CoverPolicyLowerBound[policy_id] = lower_bound;
+    CoverPolicyUpperBound[policy_id] = upper_bound;
+    CoverPolicyPayoutAmount[policy_id] = payout_amount;
+    CoverPolicyMonitoringWindowSlots[policy_id] = monitoring_window_slots;
+    if required_observations > 0 {
+      CoverPolicyRequiredObservations[policy_id] = required_observations;
+    } else {
+      CoverPolicyRequiredObservations[policy_id] = CoverDefaultRequiredObservations;
+    }
+    CoverPolicyCoveredNotional[policy_id] = covered_notional;
+    CoverPolicyPremiumPaid[policy_id] = premium_paid;
+    CoverPolicyStatus[policy_id] = 1;
+    CoverPolicyRegistrationSlot[policy_id] = registration_slot;
+    CoverPolicyBreachStartSlot[policy_id] = 0;
+    CoverPolicyBreachElapsedSlots[policy_id] = 0;
+    CoverPolicyObservationCount[policy_id] = 0;
+    CoverPolicyLastObservationSlot[policy_id] = 0;
+    CoverPolicyLastObservedPrice[policy_id] = 0;
+    CoverPolicyClaimPayout[policy_id] = 0;
+    CoverPolicyClaimCount[policy_id] = 0;
+    return policy_id;
   }
 
   #[access(read="*", write="*")]
-  kotoage fn cancel_policy(buyer: AccountId,
-                           policy: Name,
-                           refund_bps: int) permission(Admin) {
-    cancel_policy_with_assets_impl(
-      buyer,
-      policy,
-      VaultAccount[policy],
-      SettlementAsset[policy],
-      refund_bps
-    );
+  kotoage fn record_observation(policy_id: int,
+                                observed_price: int,
+                                oracle_slot: int,
+                                current_slot: int,
+                                status_flags: int,
+                                attestation_hash: int) {
+    assert_initialized();
+    assert_policy_exists(policy_id);
+    assert(observed_price >= 0, "invalid observed price");
+    assert(current_slot >= oracle_slot, "invalid oracle slot");
+    assert(attestation_hash > 0, "missing attestation");
+    assert(CoverPolicyStatus.get_or(policy_id, 0) != 4, "policy already claimed");
+
+    let prior_slot = CoverPolicyLastObservationSlot.get_or(policy_id, 0);
+    CoverPolicyLastObservationSlot[policy_id] = current_slot;
+    CoverPolicyLastObservedPrice[policy_id] = observed_price;
+
+    if status_flags != 0 || CoverAutomationSafeMode != 0 || current_slot - oracle_slot > CoverOracleStaleSlots {
+      reset_breach(policy_id);
+      return;
+    }
+
+    let lower_bound = CoverPolicyLowerBound[policy_id];
+    let upper_bound = CoverPolicyUpperBound[policy_id];
+    if observed_price < lower_bound || observed_price > upper_bound {
+      let delta_slots = 1;
+      if prior_slot > 0 && current_slot > prior_slot {
+        delta_slots = current_slot - prior_slot;
+      }
+      if CoverPolicyStatus.get_or(policy_id, 0) != 2 && CoverPolicyStatus.get_or(policy_id, 0) != 3 {
+        CoverPolicyStatus[policy_id] = 2;
+        CoverPolicyBreachStartSlot[policy_id] = current_slot;
+        CoverPolicyBreachElapsedSlots[policy_id] = 0;
+        CoverPolicyObservationCount[policy_id] = 1;
+      } else {
+        CoverPolicyObservationCount[policy_id] = CoverPolicyObservationCount.get_or(policy_id, 0) + 1;
+        CoverPolicyBreachElapsedSlots[policy_id] = CoverPolicyBreachElapsedSlots.get_or(policy_id, 0) + delta_slots;
+      }
+      if CoverPolicyBreachElapsedSlots.get_or(policy_id, 0) >= CoverPolicyMonitoringWindowSlots.get_or(policy_id, 0) &&
+        CoverPolicyObservationCount.get_or(policy_id, 0) >= CoverPolicyRequiredObservations.get_or(policy_id, 0) {
+        CoverPolicyStatus[policy_id] = 3;
+      }
+      return;
+    }
+
+    reset_breach(policy_id);
   }
 
   #[access(read="*", write="*")]
-  kotoage fn cancel_policy_with_assets(buyer: AccountId,
-                                       policy: Name,
-                                       vault_account: AccountId,
-                                       settlement_asset: AssetDefinitionId,
-                                       refund_bps: int) permission(Admin) {
-    cancel_policy_with_assets_impl(
-      buyer,
-      policy,
-      vault_account,
-      settlement_asset,
-      refund_bps
-    );
-  }
-
-  fn cancel_policy_with_assets_impl(buyer: AccountId,
-                                    policy: Name,
-                                    vault_account: AccountId,
-                                    settlement_asset: AssetDefinitionId,
-                                    refund_bps: int) {
-    assert_policy_exists(policy);
-    assert(get_or_insert_default(Active, policy, 0) == 1, "inactive policy");
-    assert(PolicyOwner[policy] == buyer, "buyer mismatch");
-    assert(get_or_insert_default(BreachElapsed, policy, 0) == 0, "breach recorded");
-    let refund = (get_or_insert_default(PremiumPaid, policy, 0) * refund_bps) / 10_000;
-    move_asset_if_needed(vault_account, buyer, settlement_asset, refund);
-    Active[policy] = 0;
-    Expired[policy] = 1;
+  kotoage fn route_claim(policy_id: int) -> int permission(AssetOps) {
+    assert_initialized();
+    assert_policy_owner(policy_id);
+    assert(CoverPolicyStatus.get_or(policy_id, 0) == 3, "policy not claimable");
+    let payout = CoverPolicyPayoutAmount.get_or(policy_id, 0);
+    let settled_payout = risk_vault_settle_payout(policy_id, authority(), payout);
+    risk_vault_release_liability(policy_id);
+    CoverPolicyStatus[policy_id] = 4;
+    CoverPolicyClaimPayout[policy_id] = settled_payout;
+    CoverPolicyClaimCount[policy_id] = CoverPolicyClaimCount.get_or(policy_id, 0) + 1;
+    return settled_payout;
   }
 
   #[access(read="*", write="*")]
-  kotoage fn expire_policy(policy: Name, elapsed_slots: int) permission(Admin) {
-    assert_policy_exists(policy);
-    assert(get_or_insert_default(Active, policy, 0) == 1, "inactive policy");
-    assert(elapsed_slots >= DurationSlots[policy], "policy live");
-    assert(get_or_insert_default(BreachElapsed, policy, 0) < DurationSlots[policy], "claim pending");
-    Active[policy] = 0;
-    Expired[policy] = 1;
+  kotoage fn expire_policy(policy_id: int, current_slot: int) permission(Admin) {
+    assert_owner();
+    assert_policy_exists(policy_id);
+    assert(CoverPolicyStatus.get_or(policy_id, 0) == 1, "policy not active");
+    let expiry_slot = CoverPolicyRegistrationSlot.get_or(policy_id, 0) +
+      CoverPolicyMonitoringWindowSlots.get_or(policy_id, 0);
+    assert(current_slot >= expiry_slot, "policy live");
+    risk_vault_release_liability(policy_id);
+    CoverPolicyStatus[policy_id] = 5;
   }
 
-  view fn policy_config(policy: Name) -> (AssetDefinitionId, AccountId, int, int, int) {
-    assert_policy_exists(policy);
+  view fn manager_config() -> (AssetDefinitionId, bytes, int, int, int, int, int, int, int) {
+    assert_initialized();
     return (
-      SettlementAsset[policy],
-      VaultAccount[policy],
-      get_or(DurationSlots, policy, 0),
-      get_or(PayoutBps, policy, 0),
-      get_or(Premium, policy, 0)
+      CoverSettlementAsset,
+      CoverRiskVaultContract,
+      CoverWithdrawalOnly,
+      CoverDefaultRequiredObservations,
+      CoverOracleStaleSlots,
+      CoverObservationJobId,
+      CoverAutomationCadence,
+      CoverAutomationBacklogCap,
+      CoverAutomationSafeMode
     );
   }
 
-  view fn mirror_policy(policy: Name) -> (int, int, int, int, int, int, int, int, int) {
-    assert_policy_exists(policy);
+  view fn policy_state(policy_id: int) -> (int, int, int, int, int, int, int, int, int, int, int, int) {
+    let registered = 0;
+    if CoverPolicyOwner.contains(policy_id) {
+      registered = 1;
+    }
     return (
-      get_or(Active, policy, 0),
-      get_or(DurationSlots, policy, 0),
-      get_or(PayoutBps, policy, 0),
-      get_or(PremiumPaid, policy, 0),
-      get_or(PolicyNotional, policy, 0),
-      get_or(BreachElapsed, policy, 0),
-      get_or(ClaimPayout, policy, 0),
-      get_or(Expired, policy, 0),
-      get_or(ClaimCount, policy, 0)
+      registered,
+      CoverPolicyStatus.get_or(policy_id, 0),
+      CoverPolicyLowerBound.get_or(policy_id, 0),
+      CoverPolicyUpperBound.get_or(policy_id, 0),
+      CoverPolicyPayoutAmount.get_or(policy_id, 0),
+      CoverPolicyMonitoringWindowSlots.get_or(policy_id, 0),
+      CoverPolicyRequiredObservations.get_or(policy_id, 0),
+      CoverPolicyCoveredNotional.get_or(policy_id, 0),
+      CoverPolicyBreachElapsedSlots.get_or(policy_id, 0),
+      CoverPolicyObservationCount.get_or(policy_id, 0),
+      CoverPolicyLastObservedPrice.get_or(policy_id, 0),
+      CoverPolicyClaimPayout.get_or(policy_id, 0)
+    );
+  }
+
+  view fn automation_state() -> (int, int, int, int, int, int, int) {
+    let executor_bound = 0;
+    if CoverObservationJobId > 0 {
+      executor_bound = 1;
+    }
+    return (
+      executor_bound,
+      CoverObservationJobId,
+      CoverAutomationCadence,
+      CoverAutomationBacklogCap,
+      CoverAutomationBacklog,
+      CoverAutomationSafeMode,
+      CoverWithdrawalOnly
     );
   }
 }

@@ -17,7 +17,7 @@ while IFS= read -r contract; do
 
   deduped="$(printf '%s\n' "$output" | awk '!seen[$0]++')"
   echo "$deduped"
-  unexpected="$(printf '%s\n' "$deduped" | rg -v 'duplicate-pointer-literal|nonliteral-state-map-key|access-hint:' || true)"
+  unexpected="$(printf '%s\n' "$deduped" | rg -v 'duplicate-pointer-literal|nonliteral-state-map-key|access-hint:|^koto tool: (reusing existing|building|rebuilding) koto_lint binary' || true)"
   if [[ -n "${unexpected//[$'\r\n\t ']}" ]]; then
     exit_code=1
   fi

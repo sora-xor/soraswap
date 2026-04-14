@@ -1,0 +1,317 @@
+seiyaku OptionsManager {
+  state int OptMgrInitialized;
+  state AccountId OptMgrOwner;
+  state AccountId OptMgrController;
+  state AccountId OptMgrGuardian;
+  state AssetDefinitionId OptMgrSettlementAsset;
+  state int OptMgrWithdrawalOnly;
+
+  state AccountId OptMgrAutomationExecutor;
+  state int OptMgrExpiryJobId;
+  state int OptMgrSettlementJobId;
+  state int OptMgrAutomationCadence;
+  state int OptMgrAutomationBacklogCap;
+  state int OptMgrAutomationBacklog;
+  state int OptMgrAutomationSafeMode;
+
+  state int OptMgrNextTemplateId;
+  state int OptMgrNextSeriesId;
+
+  state OptMgrTemplateKind: Map<int, int>;
+  state OptMgrTemplateUnderlyingAsset: Map<int, AssetDefinitionId>;
+  state OptMgrTemplateQuoteAsset: Map<int, AssetDefinitionId>;
+  state OptMgrTemplateTenorSlots: Map<int, int>;
+  state OptMgrTemplateStrikeBps: Map<int, int>;
+  state OptMgrTemplateCollateralMultiplierBps: Map<int, int>;
+  state OptMgrTemplateBasePremiumBps: Map<int, int>;
+  state OptMgrTemplateActive: Map<int, int>;
+
+  state OptMgrSeriesTemplateId: Map<int, int>;
+  state OptMgrSeriesKind: Map<int, int>;
+  state OptMgrSeriesUnderlyingAsset: Map<int, AssetDefinitionId>;
+  state OptMgrSeriesQuoteAsset: Map<int, AssetDefinitionId>;
+  state OptMgrSeriesExpirySlot: Map<int, int>;
+  state OptMgrSeriesMaxNotional: Map<int, int>;
+  state OptMgrSeriesPremiumBps: Map<int, int>;
+  state OptMgrSeriesStrikeBps: Map<int, int>;
+  state OptMgrSeriesCollateralMultiplierBps: Map<int, int>;
+  state OptMgrSeriesStatus: Map<int, int>;
+  state OptMgrSeriesSettlementSlot: Map<int, int>;
+  state OptMgrSeriesFinalMark: Map<int, int>;
+  state OptMgrSeriesFinalQuoteMark: Map<int, int>;
+
+  fn assert_initialized() {
+    assert(OptMgrInitialized == 1, "manager not initialized");
+  }
+
+  fn assert_owner() {
+    assert_initialized();
+    assert(OptMgrOwner == authority(), "manager owner mismatch");
+  }
+
+  fn assert_owner_or_controller() {
+    assert_initialized();
+    if OptMgrOwner == authority() {
+      return;
+    }
+    assert(OptMgrController == authority(), "manager controller mismatch");
+  }
+
+  fn assert_series_exists(series_id: int) {
+    assert(OptMgrSeriesTemplateId.contains(series_id), "series missing");
+  }
+
+  fn template_registered(template_id: int) -> int {
+    if OptMgrTemplateKind.contains(template_id) {
+      return 1;
+    }
+    return 0;
+  }
+
+  fn series_registered(series_id: int) -> int {
+    if OptMgrSeriesTemplateId.contains(series_id) {
+      return 1;
+    }
+    return 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return OptMgrInitialized;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_manager(settlement_asset: AssetDefinitionId, guardian: AccountId) {
+    assert(OptMgrInitialized == 0, "manager initialized");
+    OptMgrInitialized = 1;
+    OptMgrOwner = authority();
+    OptMgrController = authority();
+    OptMgrGuardian = guardian;
+    OptMgrSettlementAsset = settlement_asset;
+    OptMgrWithdrawalOnly = 1;
+    OptMgrExpiryJobId = 0;
+    OptMgrSettlementJobId = 0;
+    OptMgrAutomationCadence = 0;
+    OptMgrAutomationBacklogCap = 0;
+    OptMgrAutomationBacklog = 0;
+    OptMgrAutomationSafeMode = 0;
+    OptMgrNextTemplateId = 1;
+    OptMgrNextSeriesId = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn sync_automation(executor: AccountId,
+                             expiry_job_id: int,
+                             settlement_job_id: int,
+                             cadence_slots: int,
+                             backlog_cap: int,
+                             safe_mode: int) {
+    assert_owner();
+    assert(expiry_job_id >= 0, "invalid expiry job id");
+    assert(settlement_job_id >= 0, "invalid settlement job id");
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(backlog_cap >= 0, "invalid backlog cap");
+    OptMgrAutomationExecutor = executor;
+    OptMgrExpiryJobId = expiry_job_id;
+    OptMgrSettlementJobId = settlement_job_id;
+    OptMgrAutomationCadence = cadence_slots;
+    OptMgrAutomationBacklogCap = backlog_cap;
+    OptMgrAutomationSafeMode = safe_mode;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn enter_withdrawal_only() {
+    assert_owner();
+    OptMgrWithdrawalOnly = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn exit_withdrawal_only() {
+    assert_owner();
+    OptMgrWithdrawalOnly = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn bind_controller(controller: AccountId) {
+    assert_owner();
+    OptMgrController = controller;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn register_template(option_kind: int,
+                               underlying_asset: AssetDefinitionId,
+                               quote_asset: AssetDefinitionId,
+                               tenor_slots: int,
+                               strike_bps: int,
+                               collateral_multiplier_bps: int,
+                               base_premium_bps: int) -> int {
+    assert_owner();
+    assert(option_kind == 1 || option_kind == 2, "unsupported option kind");
+    assert(tenor_slots > 0, "invalid tenor");
+    assert(strike_bps > 0, "invalid strike");
+    assert(collateral_multiplier_bps > 0, "invalid collateral multiplier");
+    assert(base_premium_bps > 0, "invalid base premium");
+    let template_id = OptMgrNextTemplateId;
+    OptMgrNextTemplateId = template_id + 1;
+    OptMgrTemplateKind[template_id] = option_kind;
+    OptMgrTemplateUnderlyingAsset[template_id] = underlying_asset;
+    OptMgrTemplateQuoteAsset[template_id] = quote_asset;
+    OptMgrTemplateTenorSlots[template_id] = tenor_slots;
+    OptMgrTemplateStrikeBps[template_id] = strike_bps;
+    OptMgrTemplateCollateralMultiplierBps[template_id] = collateral_multiplier_bps;
+    OptMgrTemplateBasePremiumBps[template_id] = base_premium_bps;
+    OptMgrTemplateActive[template_id] = 1;
+    return template_id;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn update_template(template_id: int,
+                             strike_bps: int,
+                             collateral_multiplier_bps: int,
+                             base_premium_bps: int,
+                             active: int) {
+    assert_owner();
+    assert(template_registered(template_id) == 1, "template missing");
+    assert(strike_bps > 0, "invalid strike");
+    assert(collateral_multiplier_bps > 0, "invalid collateral multiplier");
+    assert(base_premium_bps > 0, "invalid base premium");
+    OptMgrTemplateStrikeBps[template_id] = strike_bps;
+    OptMgrTemplateCollateralMultiplierBps[template_id] = collateral_multiplier_bps;
+    OptMgrTemplateBasePremiumBps[template_id] = base_premium_bps;
+    OptMgrTemplateActive[template_id] = active;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn create_series(template_id: int,
+                           expiry_slot: int,
+                           max_notional: int,
+                           premium_bps: int) -> int {
+    assert_owner();
+    assert(template_registered(template_id) == 1, "template missing");
+    assert(OptMgrTemplateActive.get_or(template_id, 0) == 1, "template inactive");
+    assert(expiry_slot >= 0, "invalid expiry");
+    assert(max_notional > 0, "invalid max notional");
+    assert(premium_bps > 0, "invalid premium");
+    let series_id = OptMgrNextSeriesId;
+    OptMgrNextSeriesId = series_id + 1;
+    OptMgrSeriesTemplateId[series_id] = template_id;
+    OptMgrSeriesKind[series_id] = OptMgrTemplateKind[template_id];
+    OptMgrSeriesUnderlyingAsset[series_id] = OptMgrTemplateUnderlyingAsset[template_id];
+    OptMgrSeriesQuoteAsset[series_id] = OptMgrTemplateQuoteAsset[template_id];
+    OptMgrSeriesExpirySlot[series_id] = expiry_slot;
+    OptMgrSeriesMaxNotional[series_id] = max_notional;
+    OptMgrSeriesPremiumBps[series_id] = premium_bps;
+    OptMgrSeriesStrikeBps[series_id] = OptMgrTemplateStrikeBps[template_id];
+    OptMgrSeriesCollateralMultiplierBps[series_id] = OptMgrTemplateCollateralMultiplierBps[template_id];
+    OptMgrSeriesStatus[series_id] = 1;
+    OptMgrSeriesSettlementSlot[series_id] = 0;
+    OptMgrSeriesFinalMark[series_id] = 0;
+    OptMgrSeriesFinalQuoteMark[series_id] = 0;
+    return series_id;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn close_series(series_id: int, settlement_slot: int) {
+    assert_owner();
+    assert_series_exists(series_id);
+    assert(OptMgrSeriesStatus.get_or(series_id, 0) == 1, "series not active");
+    OptMgrSeriesStatus[series_id] = 2;
+    OptMgrSeriesSettlementSlot[series_id] = settlement_slot;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_series(series_id: int,
+                           final_mark: int,
+                           final_quote_mark: int,
+                           settlement_slot: int,
+                           oracle_slot: int,
+                           current_slot: int,
+                           status_flags: int,
+                           attestation_hash: int) {
+    assert_owner_or_controller();
+    assert_series_exists(series_id);
+    assert(final_mark >= 0, "invalid final mark");
+    assert(final_quote_mark >= 0, "invalid final quote mark");
+    assert(attestation_hash > 0, "missing attestation");
+    assert(current_slot >= oracle_slot, "invalid oracle slot");
+    assert(current_slot >= OptMgrSeriesExpirySlot.get_or(series_id, 0), "series live");
+    assert(status_flags == 0, "oracle degraded");
+    OptMgrSeriesStatus[series_id] = 3;
+    OptMgrSeriesSettlementSlot[series_id] = settlement_slot;
+    OptMgrSeriesFinalMark[series_id] = final_mark;
+    OptMgrSeriesFinalQuoteMark[series_id] = final_quote_mark;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_series_c2c(series_id: int,
+                               final_mark: int,
+                               final_quote_mark: int,
+                               settlement_slot: int,
+                               oracle_slot: int,
+                               current_slot: int,
+                               status_flags: int,
+                               attestation_hash: int) -> int {
+    settle_series(series_id, final_mark, final_quote_mark, settlement_slot, oracle_slot, current_slot, status_flags, attestation_hash);
+    return 1;
+  }
+
+  view fn manager_config() -> (AssetDefinitionId, int, int, int, int, int, int, int, int) {
+    assert_initialized();
+    return (
+      OptMgrSettlementAsset,
+      OptMgrWithdrawalOnly,
+      OptMgrNextTemplateId,
+      OptMgrNextSeriesId,
+      OptMgrExpiryJobId,
+      OptMgrSettlementJobId,
+      OptMgrAutomationCadence,
+      OptMgrAutomationBacklogCap,
+      OptMgrAutomationSafeMode
+    );
+  }
+
+  view fn template_state(template_id: int) -> (int, int, int, int, int, int, int, int) {
+    return (
+      template_registered(template_id),
+      OptMgrTemplateKind.get_or(template_id, 0),
+      OptMgrTemplateTenorSlots.get_or(template_id, 0),
+      OptMgrTemplateStrikeBps.get_or(template_id, 0),
+      OptMgrTemplateCollateralMultiplierBps.get_or(template_id, 0),
+      OptMgrTemplateBasePremiumBps.get_or(template_id, 0),
+      OptMgrTemplateActive.get_or(template_id, 0),
+      OptMgrWithdrawalOnly
+    );
+  }
+
+  view fn series_state(series_id: int) -> (int, int, int, int, int, int, int, int, int, int, int) {
+    return (
+      series_registered(series_id),
+      OptMgrSeriesKind.get_or(series_id, 0),
+      OptMgrSeriesTemplateId.get_or(series_id, 0),
+      OptMgrSeriesExpirySlot.get_or(series_id, 0),
+      OptMgrSeriesMaxNotional.get_or(series_id, 0),
+      OptMgrSeriesPremiumBps.get_or(series_id, 0),
+      OptMgrSeriesStrikeBps.get_or(series_id, 0),
+      OptMgrSeriesCollateralMultiplierBps.get_or(series_id, 0),
+      OptMgrSeriesStatus.get_or(series_id, 0),
+      OptMgrSeriesFinalMark.get_or(series_id, 0),
+      OptMgrSeriesFinalQuoteMark.get_or(series_id, 0)
+    );
+  }
+
+  view fn automation_state() -> (int, int, int, int, int, int, int) {
+    let executor_bound = 0;
+    if OptMgrExpiryJobId > 0 || OptMgrSettlementJobId > 0 {
+      executor_bound = 1;
+    }
+    return (
+      executor_bound,
+      OptMgrExpiryJobId,
+      OptMgrSettlementJobId,
+      OptMgrAutomationCadence,
+      OptMgrAutomationBacklogCap,
+      OptMgrAutomationBacklog,
+      OptMgrAutomationSafeMode
+    );
+  }
+}

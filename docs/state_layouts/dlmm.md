@@ -32,8 +32,14 @@ Position-indexed maps:
 
 Router scalar state:
 - `RouterInitialized`
+- `RouterOwner`
 - `BaseAsset`
+- `QuoteAsset`
 - `DefaultFeePips`
+- `RouterContractId`
+- `RouterContractBound`
+- `BoundPoolContract`
+- `PoolBound`
 
 View tuple fields returned by `mirror_state()`:
 - `soraswap_dlmm_pool_initialized`
@@ -52,6 +58,12 @@ View tuple fields returned by `mirror_state()`:
 - `soraswap_dlmm_router_initialized`
 - `soraswap_dlmm_router_default_fee_pips`
 
+View fields returned by `contract_binding()`:
+- `soraswap_dlmm_router_contract_bound`
+
+View fields returned by `execution_binding()`:
+- `soraswap_dlmm_router_pool_bound`
+
 View tuple fields returned by `pool_config()`:
 - `soraswap_dlmm_pool_base_asset`
 - `soraswap_dlmm_pool_quote_asset`
@@ -59,6 +71,9 @@ View tuple fields returned by `pool_config()`:
 - `soraswap_dlmm_pool_config_fee_pips`
 - `soraswap_dlmm_pool_config_bin_step`
 - `soraswap_dlmm_pool_config_active_bin`
+
+View field returned by `custody_account()`:
+- `soraswap_dlmm_pool_custody_account`
 
 View tuple fields returned by `risk_config()`:
 - `soraswap_dlmm_pool_risk_impact_cap_bps`
@@ -83,8 +98,14 @@ View tuple fields returned by `mirror_position(position_id)`:
 - `soraswap_dlmm_position_credit_base`
 - `soraswap_dlmm_position_credit_quote`
 
+View tuple fields returned by `quote_position_fees(position_id)`:
+- `soraswap_dlmm_position_pending_fee_base`
+- `soraswap_dlmm_position_pending_fee_quote`
+
 Notes:
 - The pool layout models a single deployed DLMM instance with fixed-price bin traversal and guard rails stored directly on the contract.
-- Seeded helper liquidity contributes directly to per-bin reserves and share supply, while owner-facing LP records live under explicit `position_id` names that checkpoint per-bin fee growth and accumulate withdrawable credits.
-- Multi-pool registry/factory parity is still pending, and the current owner-facing position surface is a single-contract scaffold rather than the final helper/NFT layout.
-- `scripts/smoke_testnet.sh` reads those fields through `/v1/contracts/view` and records both raw view tuples and decoded integer values in the smoke report.
+- The active `VaultAccount` can now be rotated only by the current vault authority through `bind_custody_account(...)`; bootstrap uses that once to migrate legacy treasury-backed pools onto pool-subject custody.
+- The signed testnet bootstrap now materializes the pool contract subject as the custody account so router c2c swaps settle under the pool runtime subject instead of an external treasury signer.
+- The router layout now stores both its own contract subject account and the bound pool contract address because production execution uses same-transaction router-to-pool `call_contract(...)` dispatch, not quote-only inspection.
+- `make smoke-local` and the signed `make smoke-testnet` lane both record the router contract binding, router execution binding, and the post-swap decoded state snapshots.
+- `quote_position_fees(...)` reports pending claimable fees after applying the current bin fee-growth deltas to the position's stored debt. `mirror_position(...)` remains a raw stored-state snapshot.

@@ -2,24 +2,34 @@
 
 Contract: `contracts/cover/policy_manager.ko`
 
-Public entrypoints:
+Lifecycle and control entrypoints:
 - `main() -> int`
-- `init_policy(policy, settlement_asset, vault_account, duration_slots, payout_bps, premium)`
-- `configure_policy(policy, duration_slots, payout_bps, premium)`
-- `buy_policy(buyer, policy)`
-- `buy_policy_with_assets(buyer, policy, vault_account, settlement_asset, premium)`
-- `buy_policy_sized(buyer, policy, covered_notional)`
-- `buy_policy_sized_with_assets(buyer, policy, vault_account, settlement_asset, premium, covered_notional)`
-- `record_breach(policy, elapsed_slots)`
-- `settle_claim(claimant, policy, covered_notional)`
-- `settle_claim_with_assets(claimant, policy, vault_account, settlement_asset, covered_notional)`
-- `cancel_policy(buyer, policy, refund_bps)`
-- `cancel_policy_with_assets(buyer, policy, vault_account, settlement_asset, refund_bps)`
-- `expire_policy(policy, elapsed_slots)`
-- `policy_config(policy) -> (AssetDefinitionId, AccountId, int, int, int)`
-- `mirror_policy(policy) -> (int, int, int, int, int, int, int, int, int)`
+- `init_manager(settlement_asset, risk_vault_contract, required_observations, oracle_stale_slots)`
+- `sync_automation(executor, job_id, cadence_slots, backlog_cap, safe_mode)`
+- `heartbeat(current_backlog, safe_mode)`
+- `bind_risk_vault(risk_vault_contract)`
+- `bind_contract(contract_id)`
+- `enter_withdrawal_only()`
+- `exit_withdrawal_only()`
+
+Policy entrypoints:
+- `register_policy(lower_bound, upper_bound, payout_amount, monitoring_window_slots, required_observations, covered_notional, premium_paid, registration_slot) -> int`
+- `record_observation(policy_id, observed_price, oracle_slot, current_slot, status_flags, attestation_hash)`
+- `route_claim(policy_id) -> int`
+- `expire_policy(policy_id, current_slot)`
+
+Views:
+- `manager_config() -> (AssetDefinitionId, bytes, int, int, int, int, int, int)`
+- `policy_state(policy_id) -> (int, int, int, int, int, int, int, int, int, int, int, int)`
+- `automation_state() -> (int, int, int, int, int, int, int)`
 
 Notes:
-- Policies now record owner, covered notional, premium paid, claim payout, and an explicit expired flag.
-- `buy_policy*` remains for compatibility and falls back to premium-sized notional, while `buy_policy_sized*` is the explicit smoke/deploy path.
-- `policy_config` and `mirror_policy` are `view fn` entrypoints consumed through `/v1/contracts/view`.
+- Policy ids are contract-assigned integers with on-chain ownership records; raw caller-chosen policy names were removed.
+- Bucket `3` in `risk_vault` is the canonical cover liability ledger, with `exposure_id = policy_id`, `notional = covered_notional`, and `collateral_locked = payout_amount`.
+- `register_policy` routes premium into shared risk funding, locks the liability in bucket `3`, and records policy ownership/state in the manager.
+- `sync_automation(...)` binds the observation job; live backlog/safe-mode reporting flows through `heartbeat(...)`, which forwards bucket `3` telemetry into `risk_vault.report_bucket(...)`.
+- Breach tracking is observation-driven and Parisian-style: degraded payloads, automation safe mode, or `current_slot - oracle_slot > oracle_stale_slots` reset breach progress instead of advancing claims.
+- `route_claim(policy_id)` settles through bucket `3` and then releases the liability; `expire_policy(policy_id, current_slot)` releases the liability without payout.
+- The stored `risk_vault_contract` is the deployed `risk_vault` contract address literal carried as a UTF-8 `bytes` field for ABI v1 `call_contract(...)` routing. View surfaces expose that field as hex-encoded bytes.
+- Raw `record_breach(policy, elapsed_slots)` and `settle_claim(policy, covered_notional)` helpers were removed in favor of `record_observation(...)` plus `route_claim(policy_id)`.
+- `main()` is a write entrypoint, not a `view fn`.

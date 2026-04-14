@@ -2,8 +2,14 @@
 
 seiyaku DlmmRouter {
   state int RouterInitialized;
+  state AccountId RouterOwner;
   state AssetDefinitionId BaseAsset;
+  state AssetDefinitionId QuoteAsset;
   state int DefaultFeePips;
+  state AccountId RouterContractId;
+  state int RouterContractBound;
+  state bytes BoundPoolContract;
+  state int PoolBound;
 
   fn ppm_scale() -> int {
     return 1_000_000;
@@ -26,24 +32,16 @@ seiyaku DlmmRouter {
     return value;
   }
 
-  fn base_asset_name() -> Name {
-    let base_asset = name!("base_asset");
-    return base_asset;
+  fn assert_owner() {
+    assert(RouterOwner == authority(), "router owner mismatch");
   }
 
-  fn default_fee_pips_name() -> Name {
-    let default_fee_pips = name!("default_fee_pips");
-    return default_fee_pips;
+  fn assert_pool_bound() {
+    assert(PoolBound == 1, "pool not bound");
   }
 
-  fn amount_in_name() -> Name {
-    let amount_in = name!("amount_in");
-    return amount_in;
-  }
-
-  fn fee_pips_name() -> Name {
-    let fee_pips = name!("fee_pips");
-    return fee_pips;
+  fn assert_contract_bound() {
+    assert(RouterContractBound == 1, "router contract unbound");
   }
 
   #[access(read="*", write="*")]
@@ -55,16 +53,36 @@ seiyaku DlmmRouter {
   }
 
   #[access(read="*", write="*")]
-  kotoage fn init_router(base_asset: AssetDefinitionId, default_fee_pips: int) permission(Admin) {
-    init_router_impl(base_asset, default_fee_pips);
-  }
-
-  fn init_router_impl(base_asset: AssetDefinitionId, default_fee_pips: int) {
+  kotoage fn init_router(base_asset: AssetDefinitionId, default_fee_pips: int) {
+    assert(RouterInitialized == 0, "router initialized");
     assert_valid_fee(default_fee_pips);
     RouterInitialized = 1;
+    RouterOwner = authority();
     BaseAsset = base_asset;
+    QuoteAsset = base_asset;
     DefaultFeePips = default_fee_pips;
+    RouterContractId = authority();
+    RouterContractBound = 0;
+    BoundPoolContract = blob("");
+    PoolBound = 0;
     info("dlmm_router_initialized");
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn bind_contract(contract_id: AccountId) {
+    assert(RouterInitialized == 1, "router not initialized");
+    assert_owner();
+    RouterContractId = contract_id;
+    RouterContractBound = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn bind_pool(pool_contract: bytes, quote_asset: AssetDefinitionId) {
+    assert(RouterInitialized == 1, "router not initialized");
+    assert_owner();
+    BoundPoolContract = pool_contract;
+    QuoteAsset = quote_asset;
+    PoolBound = 1;
   }
 
   view fn assert_router_config(default_fee_pips: int) -> int {
@@ -81,6 +99,16 @@ seiyaku DlmmRouter {
   view fn mirror_state() -> (int, int) {
     assert(RouterInitialized == 1, "router not initialized");
     return (RouterInitialized, DefaultFeePips);
+  }
+
+  view fn execution_binding() -> int {
+    assert(RouterInitialized == 1, "router not initialized");
+    return PoolBound;
+  }
+
+  view fn contract_binding() -> int {
+    assert(RouterInitialized == 1, "router not initialized");
+    return RouterContractBound;
   }
 
   view fn quote_direct(reserve_in: int,
@@ -186,5 +214,30 @@ seiyaku DlmmRouter {
       return direct_out;
     }
     return via_base_out;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn route_swap(amount_in: int,
+                        input_is_base: int,
+                        min_out: int) -> int permission(AssetOps) {
+    let trader = authority();
+    let payload = json_object();
+    let payload = json_set_int(payload, name("amount_in"), amount_in);
+    let payload = json_set_int(payload, name("min_out"), min_out);
+    let payload = json_set_account_id(payload, name("recipient"), trader);
+    assert(RouterInitialized == 1, "router not initialized");
+    assert_contract_bound();
+    assert_pool_bound();
+    assert(amount_in > 0, "invalid amount");
+    assert(min_out >= 0, "invalid min_out");
+
+    if input_is_base == 1 {
+      transfer_asset(trader, RouterContractId, BaseAsset, amount_in);
+      return decode_int(call_contract(BoundPoolContract, "swap_exact_in_base_for", payload));
+    }
+
+    assert(input_is_base == 0, "invalid direction");
+    transfer_asset(trader, RouterContractId, QuoteAsset, amount_in);
+    return decode_int(call_contract(BoundPoolContract, "swap_exact_in_quote_for", payload));
   }
 }

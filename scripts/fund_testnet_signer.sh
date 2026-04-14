@@ -10,5 +10,7 @@ prepare_env_chain_state testnet "$config"
 
 ensure_public_testnet_signer_ready "$config" "$SORASWAP_AUTHORITY" autofund
 
-balance="$(asset_value_for_account "$config" "$SORASWAP_FEE_ASSET_ALIAS" "$SORASWAP_AUTHORITY")"
-echo "funded testnet signer: $SORASWAP_AUTHORITY -> $balance $SORASWAP_FEE_ASSET_ALIAS"
+fee_asset_id="$(fee_asset_definition_id_for_config "$config")"
+fee_asset_label="$(fee_asset_label_for_config "$config")"
+balance="$(asset_value_for_account_id "$config" "$fee_asset_id" "$SORASWAP_AUTHORITY")"
+echo "funded testnet signer: $SORASWAP_AUTHORITY -> $balance $fee_asset_label ($fee_asset_id)"

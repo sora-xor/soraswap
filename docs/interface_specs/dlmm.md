@@ -6,35 +6,46 @@ Contracts:
 
 `dlmm_pool.ko` public entrypoints:
 - `main() -> int`
-- `init_pool(base_asset, quote_asset, vault_account, fee_pips, bin_step, active_bin)`
-- `set_risk_params(impact_cap_bps, min_reserve_base, min_reserve_quote, max_bins_per_swap, bin_liquidity_cap)`
-- `seed_bin_with_assets(provider, vault_account, base_asset, quote_asset, bin_id, base_amount, quote_amount)`
-- `add_position_liquidity_with_assets(position_id, provider, vault_account, base_asset, quote_asset, bin_id, base_amount, quote_amount, min_shares_out) -> int`
-- `remove_position_liquidity_with_assets(position_id, recipient, vault_account, base_asset, quote_asset, shares) -> int`
-- `collect_position_fees_with_assets(position_id, recipient, vault_account, base_asset, quote_asset) -> int`
+- `warm_write()`
+- `init_pool(base_asset, quote_asset, vault_account, fee_pips, bin_step, active_bin, impact_cap_bps, min_reserve_base, min_reserve_quote, max_bins_per_swap, bin_liquidity_cap)`
+- `seed_bin(bin_id, base_amount, quote_amount)`
+- `add_position_liquidity(position_id, bin_id, base_amount, quote_amount, min_shares_out) -> int`
+- `remove_position_liquidity(position_id, shares) -> int`
+- `collect_position_fees(position_id) -> int`
 - `mirror_state() -> (int, int, int, int, int, int, int, int, int, int, int, int, int)`
 - `pool_config() -> (AssetDefinitionId, AssetDefinitionId, AccountId, int, int, int)`
+- `bind_custody_account(vault_account)`
+- `custody_account() -> AccountId`
 - `risk_config() -> (int, int, int, int, int)`
 - `mirror_bin(bin_id) -> (int, int, int, int, int)`
 - `mirror_position(position_id) -> (int, int, int, int, int, int, int)`
-- `swap_exact_in_with_assets(trader, input_asset, vault_account, base_asset, quote_asset, amount_in, min_out) -> int`
+- `quote_position_fees(position_id) -> (int, int)`
+- `swap_exact_in(input_asset, amount_in, min_out) -> int`
+- `swap_exact_in_base(amount_in, min_out) -> int`
+- `swap_exact_in_quote(amount_in, min_out) -> int`
+- `swap_exact_in_base_for(recipient, amount_in, min_out) -> int`
+- `swap_exact_in_quote_for(recipient, amount_in, min_out) -> int`
 
 `dlmm_router.ko` public entrypoints:
 - `main() -> int`
 - `init_router(base_asset, default_fee_pips)`
+- `bind_contract(contract_id)`
+- `bind_pool(pool_contract, quote_asset)`
 - `assert_router_config(default_fee_pips)`
 - `router_config() -> (AssetDefinitionId, int)`
 - `mirror_state() -> (int, int)`
+- `contract_binding() -> int`
+- `execution_binding() -> int`
 - `quote_direct(reserve_in, reserve_out, amount_in, fee_pips) -> int`
 - `quote_bin(reserve_base, reserve_quote, amount_in, fee_pips, bin_id, bin_step, input_is_base, min_reserve_base, min_reserve_quote) -> int`
 - `select_best_quote(direct_out, via_base_out) -> int`
+- `route_swap(amount_in, input_is_base, min_out) -> int`
 
 Notes:
-- The pool now executes a deterministic multi-bin walk: swaps consume the active bin first, then advance by `bin_step` while output-side liquidity remains available and guard limits are not exceeded.
-- `swap_exact_in*` only transfers the portion of input that is actually consumed by the walk. If guards or empty bins stop traversal early, unused input remains with the trader.
-- `seed_bin_with_assets` seeds anonymous helper liquidity directly into a bin. Owner-facing LP accounting lives in explicit `position_id` records, with fee claims accruing per bin and collected without burning shares.
-- `remove_position_liquidity*` currently requires the position’s credited fees to be collected first so share burns do not double-count reserve-embedded fees in this single-contract scaffold.
-- The router surface remains quote-oriented because Kotodama cross-contract routing is not yet modeled in this repo.
-- `xor#universal` is the intended quote/base anchor for deployable pools.
-- `seed_bin_with_assets`, the position entrypoints, and `swap_exact_in_with_assets` exist so live-node flows do not depend on state-loaded pointer comparisons for asset and vault ids.
-- The pool keeps its quote walk internal to stay within current IVM payload limits. External quote smoke stays on `dlmm_router.ko`, while `pool_config`, `risk_config`, `mirror_bin`, `mirror_position`, and `mirror_state()` provide bootstrap and post-swap readback.
+- Pool risk config is immutable after `init_pool`; `set_risk_params` was removed.
+- Liquidity and swap entrypoints bind the trader/provider to `authority()` and use stored pool assets plus vault only.
+- `bind_custody_account(...)` is a vault-authorized migration hook for rotating an already-initialized pool from legacy treasury custody into subject-backed custody.
+- The production bootstrap now binds the DLMM pool vault to the pool contract subject so direct pool flows and router-to-pool nested swaps share the same custody authority model on public Taira.
+- The release path is no longer quote-only. `dlmm_router.ko` binds both its own contract subject account and a deployed pool, then executes same-transaction contract-to-contract swaps through `route_swap(...)`.
+- `route_swap(...)` now escrows the caller input into the router contract subject before the c2c pool call, and the pool pays the output directly to the signer through the recipient-aware `swap_exact_in_*_for(...)` entrypoints.
+- `mirror_position(...)` exposes stored fee debt and stored credits only. Use `quote_position_fees(...)` to read the fees that would become claimable after an accrual pass, especially before `remove_position_liquidity(...)`.

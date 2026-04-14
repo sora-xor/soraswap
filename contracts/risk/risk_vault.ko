@@ -1,0 +1,462 @@
+seiyaku RiskVault {
+  state int RiskVaultInitialized;
+  state AccountId RiskVaultOwner;
+  state AssetDefinitionId RiskVaultCollateralAsset;
+  state AccountId RiskVaultAccount;
+  state int RiskVaultWithdrawalOnly;
+
+  state RiskVaultBucketController: Map<int, AccountId>;
+  state RiskVaultBucketPayoutCapBps: Map<int, int>;
+  state RiskVaultBucketUtilisationCapBps: Map<int, int>;
+  state RiskVaultBucketCollateralMultiplierBps: Map<int, int>;
+  state RiskVaultBucketDeposits: Map<int, int>;
+  state RiskVaultBucketOutstandingNotional: Map<int, int>;
+  state RiskVaultBucketReservedCollateral: Map<int, int>;
+  state RiskVaultBucketSettledPayouts: Map<int, int>;
+
+  state RiskVaultBucketAutomationExecutor: Map<int, AccountId>;
+  state RiskVaultBucketAutomationJobId: Map<int, int>;
+  state RiskVaultBucketAutomationCadence: Map<int, int>;
+  state RiskVaultBucketAutomationBacklogCap: Map<int, int>;
+  state RiskVaultBucketAutomationBacklog: Map<int, int>;
+  state RiskVaultBucketAutomationSafeMode: Map<int, int>;
+
+  state RiskVaultLiabilityStatus: Map<int, int>;
+  state RiskVaultLiabilityNotional: Map<int, int>;
+  state RiskVaultLiabilityCollateral: Map<int, int>;
+  state RiskVaultLiabilitySettledPayout: Map<int, int>;
+
+  fn assert_initialized() {
+    assert(RiskVaultInitialized == 1, "vault not initialized");
+  }
+
+  fn assert_bucket_id(bucket_id: int) {
+    assert(bucket_id >= 1, "bucket id low");
+    assert(bucket_id <= 3, "bucket id high");
+  }
+
+  fn assert_owner() {
+    assert_initialized();
+    assert(RiskVaultOwner == authority(), "vault owner mismatch");
+  }
+
+  fn assert_owner_or_controller(bucket_id: int) {
+    assert_initialized();
+    assert_bucket_id(bucket_id);
+    if RiskVaultOwner == authority() {
+      return;
+    }
+    assert(RiskVaultBucketController.contains(bucket_id), "bucket controller missing");
+    assert(RiskVaultBucketController[bucket_id] == authority(), "bucket controller mismatch");
+  }
+
+  fn assert_bucket_configured(bucket_id: int) {
+    assert_bucket_id(bucket_id);
+    assert(RiskVaultBucketController.contains(bucket_id), "bucket not configured");
+  }
+
+  fn assert_risk_on() {
+    assert(RiskVaultWithdrawalOnly == 0, "withdrawal only");
+  }
+
+  fn max_int(a: int, b: int) -> int {
+    if a >= b {
+      return a;
+    }
+    return b;
+  }
+
+  fn min_int(a: int, b: int) -> int {
+    if a <= b {
+      return a;
+    }
+    return b;
+  }
+
+  fn bucket_deposits_value(bucket_id: int) -> int {
+    return RiskVaultBucketDeposits.get_or(bucket_id, 0);
+  }
+
+  fn bucket_outstanding_notional_value(bucket_id: int) -> int {
+    return RiskVaultBucketOutstandingNotional.get_or(bucket_id, 0);
+  }
+
+  fn bucket_reserved_collateral_value(bucket_id: int) -> int {
+    return RiskVaultBucketReservedCollateral.get_or(bucket_id, 0);
+  }
+
+  fn bucket_settled_payouts_value(bucket_id: int) -> int {
+    return RiskVaultBucketSettledPayouts.get_or(bucket_id, 0);
+  }
+
+  fn bucket_custody_account(bucket_id: int) -> AccountId {
+    if RiskVaultBucketController.contains(bucket_id) {
+      return RiskVaultBucketController[bucket_id];
+    }
+    return RiskVaultAccount;
+  }
+
+  fn bucket_required_collateral(bucket_id: int, outstanding_notional: int, reserved_collateral: int) -> int {
+    let multiplied = (outstanding_notional * RiskVaultBucketCollateralMultiplierBps.get_or(bucket_id, 0)) / 10_000;
+    return max_int(multiplied, reserved_collateral);
+  }
+
+  fn bucket_utilisation_bps(bucket_id: int, deposits: int, outstanding_notional: int, reserved_collateral: int) -> int {
+    let required = bucket_required_collateral(bucket_id, outstanding_notional, reserved_collateral);
+    if required <= 0 {
+      return 0;
+    }
+    if deposits <= 0 {
+      return 10_000;
+    }
+    return (required * 10_000 + deposits - 1) / deposits;
+  }
+
+  fn bucket_surplus_value(bucket_id: int) -> int {
+    let deposits = bucket_deposits_value(bucket_id);
+    let outstanding = bucket_outstanding_notional_value(bucket_id);
+    let reserved = bucket_reserved_collateral_value(bucket_id);
+    return deposits - bucket_required_collateral(bucket_id, outstanding, reserved);
+  }
+
+  fn liability_key(bucket_id: int, exposure_id: int) -> int {
+    assert(exposure_id >= 0, "exposure id negative");
+    assert(exposure_id < 1_000_000_000, "exposure id too large");
+    return bucket_id * 1_000_000_000 + exposure_id;
+  }
+
+  fn move_asset_if_needed(from: AccountId,
+                          to: AccountId,
+                          asset: AssetDefinitionId,
+                          amount: int) {
+    if amount > 0 {
+      if from != to {
+        transfer_asset(from, to, asset, amount);
+      }
+    }
+  }
+
+  fn assert_bucket_capacity(bucket_id: int,
+                            deposits: int,
+                            outstanding_notional: int,
+                            reserved_collateral: int) {
+    let required = bucket_required_collateral(bucket_id, outstanding_notional, reserved_collateral);
+    assert(deposits >= required, "bucket undercollateralized");
+    let utilisation_cap_bps = RiskVaultBucketUtilisationCapBps.get_or(bucket_id, 0);
+    if utilisation_cap_bps > 0 {
+      let utilisation = bucket_utilisation_bps(
+        bucket_id,
+        deposits,
+        outstanding_notional,
+        reserved_collateral
+      );
+      assert(utilisation <= utilisation_cap_bps, "bucket utilisation");
+    }
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return RiskVaultInitialized;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_vault(collateral_asset: AssetDefinitionId,
+                        vault_account: AccountId) {
+    assert(RiskVaultInitialized == 0, "vault initialized");
+    RiskVaultInitialized = 1;
+    RiskVaultOwner = authority();
+    RiskVaultCollateralAsset = collateral_asset;
+    RiskVaultAccount = vault_account;
+    RiskVaultWithdrawalOnly = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn configure_bucket(bucket_id: int,
+                              controller: AccountId,
+                              payout_cap_bps: int,
+                              utilisation_cap_bps: int,
+                              collateral_multiplier_bps: int) {
+    assert_owner();
+    assert_bucket_id(bucket_id);
+    assert(payout_cap_bps >= 0, "invalid payout cap");
+    assert(payout_cap_bps <= 10_000, "invalid payout cap");
+    assert(utilisation_cap_bps >= 0, "invalid utilisation cap");
+    assert(utilisation_cap_bps <= 10_000, "invalid utilisation cap");
+    assert(collateral_multiplier_bps >= 0, "invalid collateral multiplier");
+    RiskVaultBucketController[bucket_id] = controller;
+    RiskVaultBucketPayoutCapBps[bucket_id] = payout_cap_bps;
+    RiskVaultBucketUtilisationCapBps[bucket_id] = utilisation_cap_bps;
+    RiskVaultBucketCollateralMultiplierBps[bucket_id] = collateral_multiplier_bps;
+    RiskVaultBucketDeposits[bucket_id] = RiskVaultBucketDeposits.ensure(bucket_id, 0);
+    RiskVaultBucketOutstandingNotional[bucket_id] = RiskVaultBucketOutstandingNotional.ensure(bucket_id, 0);
+    RiskVaultBucketReservedCollateral[bucket_id] = RiskVaultBucketReservedCollateral.ensure(bucket_id, 0);
+    RiskVaultBucketSettledPayouts[bucket_id] = RiskVaultBucketSettledPayouts.ensure(bucket_id, 0);
+    RiskVaultBucketAutomationJobId[bucket_id] = RiskVaultBucketAutomationJobId.ensure(bucket_id, 0);
+    RiskVaultBucketAutomationCadence[bucket_id] = RiskVaultBucketAutomationCadence.ensure(bucket_id, 0);
+    RiskVaultBucketAutomationBacklogCap[bucket_id] = RiskVaultBucketAutomationBacklogCap.ensure(bucket_id, 0);
+    RiskVaultBucketAutomationBacklog[bucket_id] = RiskVaultBucketAutomationBacklog.ensure(bucket_id, 0);
+    RiskVaultBucketAutomationSafeMode[bucket_id] = RiskVaultBucketAutomationSafeMode.ensure(bucket_id, 0);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn sync_automation(bucket_id: int,
+                             executor: AccountId,
+                             job_id: int,
+                             cadence_slots: int,
+                             backlog_cap: int,
+                             safe_mode: int) {
+    assert_owner_or_controller(bucket_id);
+    assert(job_id >= 0, "invalid job id");
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(backlog_cap >= 0, "invalid backlog cap");
+    RiskVaultBucketAutomationExecutor[bucket_id] = executor;
+    RiskVaultBucketAutomationJobId[bucket_id] = job_id;
+    RiskVaultBucketAutomationCadence[bucket_id] = cadence_slots;
+    RiskVaultBucketAutomationBacklogCap[bucket_id] = backlog_cap;
+    RiskVaultBucketAutomationSafeMode[bucket_id] = safe_mode;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn report_bucket(bucket_id: int, backlog: int, safe_mode: int) {
+    assert_owner_or_controller(bucket_id);
+    assert(backlog >= 0, "invalid backlog");
+    RiskVaultBucketAutomationBacklog[bucket_id] = backlog;
+    RiskVaultBucketAutomationSafeMode[bucket_id] = safe_mode;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn report_bucket_c2c(bucket_id: int, backlog: int, safe_mode: int) -> int {
+    report_bucket(bucket_id, backlog, safe_mode);
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn enter_withdrawal_only() {
+    assert_owner();
+    RiskVaultWithdrawalOnly = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn exit_withdrawal_only() {
+    assert_owner();
+    RiskVaultWithdrawalOnly = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn deposit(bucket_id: int, amount: int) -> int permission(AssetOps) {
+    assert_owner_or_controller(bucket_id);
+    assert_bucket_configured(bucket_id);
+    assert_risk_on();
+    assert(amount > 0, "invalid amount");
+    let payer = authority();
+    move_asset_if_needed(payer, bucket_custody_account(bucket_id), RiskVaultCollateralAsset, amount);
+    RiskVaultBucketDeposits[bucket_id] = bucket_deposits_value(bucket_id) + amount;
+    return RiskVaultBucketDeposits[bucket_id];
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn withdraw_surplus(bucket_id: int, amount: int) permission(AssetOps) {
+    assert_owner_or_controller(bucket_id);
+    assert_bucket_configured(bucket_id);
+    assert(amount > 0, "invalid amount");
+    let surplus = bucket_surplus_value(bucket_id);
+    assert(surplus >= amount, "insufficient surplus");
+    assert(bucket_custody_account(bucket_id) == authority(), "bucket custody owner mismatch");
+    move_asset_if_needed(bucket_custody_account(bucket_id), authority(), RiskVaultCollateralAsset, amount);
+    RiskVaultBucketDeposits[bucket_id] = bucket_deposits_value(bucket_id) - amount;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn lock_liability(bucket_id: int,
+                            exposure_id: int,
+                            notional: int,
+                            collateral_locked: int,
+                            backlog: int) -> int {
+    assert_owner_or_controller(bucket_id);
+    assert_bucket_configured(bucket_id);
+    assert_risk_on();
+    assert(notional >= 0, "invalid notional");
+    assert(collateral_locked >= 0, "invalid collateral");
+    assert(backlog >= 0, "invalid backlog");
+    let key = liability_key(bucket_id, exposure_id);
+    let prior_status = RiskVaultLiabilityStatus.get_or(key, 0);
+    assert(prior_status != 2, "liability already released");
+
+    let prior_notional = RiskVaultLiabilityNotional.get_or(key, 0);
+    let prior_collateral = RiskVaultLiabilityCollateral.get_or(key, 0);
+    let next_outstanding = bucket_outstanding_notional_value(bucket_id) - prior_notional + notional;
+    let next_reserved = bucket_reserved_collateral_value(bucket_id) - prior_collateral + collateral_locked;
+    let deposits = bucket_deposits_value(bucket_id);
+    assert_bucket_capacity(bucket_id, deposits, next_outstanding, next_reserved);
+
+    RiskVaultBucketOutstandingNotional[bucket_id] = next_outstanding;
+    RiskVaultBucketReservedCollateral[bucket_id] = next_reserved;
+    RiskVaultBucketAutomationBacklog[bucket_id] = backlog;
+    RiskVaultLiabilityStatus[key] = 1;
+    RiskVaultLiabilityNotional[key] = notional;
+    RiskVaultLiabilityCollateral[key] = collateral_locked;
+    RiskVaultLiabilitySettledPayout[key] = RiskVaultLiabilitySettledPayout.ensure(key, 0);
+    return bucket_utilisation_bps(bucket_id, deposits, next_outstanding, next_reserved);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn release_liability(bucket_id: int,
+                               exposure_id: int,
+                               backlog: int) -> int {
+    assert_owner_or_controller(bucket_id);
+    assert_bucket_configured(bucket_id);
+    assert(backlog >= 0, "invalid backlog");
+    let key = liability_key(bucket_id, exposure_id);
+    let prior_status = RiskVaultLiabilityStatus.get_or(key, 0);
+    if prior_status == 0 || prior_status == 2 {
+      RiskVaultBucketAutomationBacklog[bucket_id] = backlog;
+      return bucket_utilisation_bps(
+        bucket_id,
+        bucket_deposits_value(bucket_id),
+        bucket_outstanding_notional_value(bucket_id),
+        bucket_reserved_collateral_value(bucket_id)
+      );
+    }
+
+    let prior_notional = RiskVaultLiabilityNotional.get_or(key, 0);
+    let prior_collateral = RiskVaultLiabilityCollateral.get_or(key, 0);
+    RiskVaultBucketOutstandingNotional[bucket_id] = bucket_outstanding_notional_value(bucket_id) - prior_notional;
+    RiskVaultBucketReservedCollateral[bucket_id] = bucket_reserved_collateral_value(bucket_id) - prior_collateral;
+    RiskVaultBucketAutomationBacklog[bucket_id] = backlog;
+    RiskVaultLiabilityStatus[key] = 2;
+    RiskVaultLiabilityNotional[key] = 0;
+    RiskVaultLiabilityCollateral[key] = 0;
+    return bucket_utilisation_bps(
+      bucket_id,
+      bucket_deposits_value(bucket_id),
+      bucket_outstanding_notional_value(bucket_id),
+      bucket_reserved_collateral_value(bucket_id)
+    );
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_payout(bucket_id: int,
+                           exposure_id: int,
+                           recipient: AccountId,
+                           amount: int) -> int permission(AssetOps) {
+    assert_owner_or_controller(bucket_id);
+    assert_bucket_configured(bucket_id);
+    assert(amount >= 0, "invalid amount");
+    let key = liability_key(bucket_id, exposure_id);
+    let status = RiskVaultLiabilityStatus.get_or(key, 0);
+    assert(status != 0, "liability missing");
+
+    let exposure_notional = RiskVaultLiabilityNotional.get_or(key, 0);
+    let exposure_collateral = RiskVaultLiabilityCollateral.get_or(key, 0);
+    let payout_cap = (exposure_notional * RiskVaultBucketPayoutCapBps.get_or(bucket_id, 0)) / 10_000;
+    let capped = min_int(amount, payout_cap);
+    let final_amount = min_int(capped, bucket_deposits_value(bucket_id));
+    if final_amount > 0 {
+      assert(bucket_custody_account(bucket_id) == authority(), "bucket custody owner mismatch");
+      move_asset_if_needed(bucket_custody_account(bucket_id), recipient, RiskVaultCollateralAsset, final_amount);
+      RiskVaultBucketDeposits[bucket_id] = bucket_deposits_value(bucket_id) - final_amount;
+      RiskVaultBucketSettledPayouts[bucket_id] = bucket_settled_payouts_value(bucket_id) + final_amount;
+      RiskVaultLiabilitySettledPayout[key] = RiskVaultLiabilitySettledPayout.get_or(key, 0) + final_amount;
+      if exposure_collateral >= final_amount {
+        RiskVaultLiabilityCollateral[key] = exposure_collateral - final_amount;
+        RiskVaultBucketReservedCollateral[bucket_id] = bucket_reserved_collateral_value(bucket_id) - final_amount;
+      } else {
+        RiskVaultBucketReservedCollateral[bucket_id] = bucket_reserved_collateral_value(bucket_id) - exposure_collateral;
+        RiskVaultLiabilityCollateral[key] = 0;
+      }
+    }
+    return final_amount;
+  }
+
+  view fn bucket_state(bucket_id: int) -> (int, int, int, int, int, int, int, int, int, int, int, int) {
+    let configured = 0;
+    if RiskVaultBucketController.contains(bucket_id) {
+      configured = 1;
+    }
+    let deposits = bucket_deposits_value(bucket_id);
+    let outstanding = bucket_outstanding_notional_value(bucket_id);
+    let reserved = bucket_reserved_collateral_value(bucket_id);
+    let utilisation = bucket_utilisation_bps(bucket_id, deposits, outstanding, reserved);
+    let non_negative_surplus = bucket_surplus_value(bucket_id);
+    if non_negative_surplus < 0 {
+      non_negative_surplus = 0;
+    }
+    return (
+      configured,
+      deposits,
+      outstanding,
+      reserved,
+      RiskVaultBucketPayoutCapBps.get_or(bucket_id, 0),
+      RiskVaultBucketUtilisationCapBps.get_or(bucket_id, 0),
+      RiskVaultBucketCollateralMultiplierBps.get_or(bucket_id, 0),
+      bucket_settled_payouts_value(bucket_id),
+      utilisation,
+      non_negative_surplus,
+      RiskVaultBucketAutomationBacklog.get_or(bucket_id, 0),
+      RiskVaultBucketAutomationSafeMode.get_or(bucket_id, 0)
+    );
+  }
+
+  view fn risk_state() -> (int, int, int, int, int, int, int, int) {
+    let total_deposits = bucket_deposits_value(1) + bucket_deposits_value(2) + bucket_deposits_value(3);
+    let total_outstanding = bucket_outstanding_notional_value(1) +
+      bucket_outstanding_notional_value(2) +
+      bucket_outstanding_notional_value(3);
+    let total_reserved = bucket_reserved_collateral_value(1) +
+      bucket_reserved_collateral_value(2) +
+      bucket_reserved_collateral_value(3);
+    let total_payouts = bucket_settled_payouts_value(1) +
+      bucket_settled_payouts_value(2) +
+      bucket_settled_payouts_value(3);
+    let util_1 = bucket_utilisation_bps(1, bucket_deposits_value(1), bucket_outstanding_notional_value(1), bucket_reserved_collateral_value(1));
+    let util_2 = bucket_utilisation_bps(2, bucket_deposits_value(2), bucket_outstanding_notional_value(2), bucket_reserved_collateral_value(2));
+    let util_3 = bucket_utilisation_bps(3, bucket_deposits_value(3), bucket_outstanding_notional_value(3), bucket_reserved_collateral_value(3));
+    let max_util = max_int(util_1, max_int(util_2, util_3));
+    let unsafe_buckets = 0;
+    if RiskVaultBucketAutomationSafeMode.get_or(1, 0) != 0 {
+      unsafe_buckets = unsafe_buckets + 1;
+    }
+    if RiskVaultBucketAutomationSafeMode.get_or(2, 0) != 0 {
+      unsafe_buckets = unsafe_buckets + 1;
+    }
+    if RiskVaultBucketAutomationSafeMode.get_or(3, 0) != 0 {
+      unsafe_buckets = unsafe_buckets + 1;
+    }
+    return (
+      total_deposits,
+      total_outstanding,
+      total_reserved,
+      total_payouts,
+      max_util,
+      unsafe_buckets,
+      RiskVaultWithdrawalOnly,
+      3
+    );
+  }
+
+  view fn automation_state(bucket_id: int) -> (int, int, int, int, int, int, int) {
+    let executor_bound = 0;
+    if RiskVaultBucketAutomationExecutor.contains(bucket_id) {
+      executor_bound = 1;
+    }
+    return (
+      executor_bound,
+      RiskVaultBucketAutomationJobId.get_or(bucket_id, 0),
+      RiskVaultBucketAutomationCadence.get_or(bucket_id, 0),
+      RiskVaultBucketAutomationBacklogCap.get_or(bucket_id, 0),
+      RiskVaultBucketAutomationBacklog.get_or(bucket_id, 0),
+      RiskVaultBucketAutomationSafeMode.get_or(bucket_id, 0),
+      RiskVaultWithdrawalOnly
+    );
+  }
+
+  view fn liability_state(bucket_id: int, exposure_id: int) -> (int, int, int, int) {
+    let key = liability_key(bucket_id, exposure_id);
+    return (
+      RiskVaultLiabilityStatus.get_or(key, 0),
+      RiskVaultLiabilityNotional.get_or(key, 0),
+      RiskVaultLiabilityCollateral.get_or(key, 0),
+      RiskVaultLiabilitySettledPayout.get_or(key, 0)
+    );
+  }
+}

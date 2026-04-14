@@ -1,0 +1,197 @@
+seiyaku OptionsVault {
+  state int OptVaultInitialized;
+  state AccountId OptVaultOwner;
+  state AssetDefinitionId OptVaultSettlementAsset;
+  state AccountId OptVaultController;
+  state bytes OptVaultRiskVaultContract;
+  state int OptVaultWithdrawalOnly;
+
+  state OptVaultSeriesCollateralLocked: Map<int, int>;
+  state OptVaultSeriesPremiumAccrued: Map<int, int>;
+  state OptVaultSeriesPayoutPaid: Map<int, int>;
+
+  state OptVaultPositionOwner: Map<int, AccountId>;
+  state OptVaultPositionSeriesId: Map<int, int>;
+  state OptVaultPositionCollateralLocked: Map<int, int>;
+  state OptVaultPositionPremiumPaid: Map<int, int>;
+  state OptVaultPositionPayoutPaid: Map<int, int>;
+  state OptVaultPositionStatus: Map<int, int>;
+
+  fn assert_initialized() {
+    assert(OptVaultInitialized == 1, "vault not initialized");
+  }
+
+  fn assert_owner() {
+    assert_initialized();
+    assert(OptVaultOwner == authority(), "vault owner mismatch");
+  }
+
+  fn assert_owner_or_controller() {
+    assert_initialized();
+    if OptVaultOwner == authority() {
+      return;
+    }
+    assert(OptVaultController == authority(), "vault controller mismatch");
+  }
+
+  fn assert_position_exists(position_id: int) {
+    assert(OptVaultPositionOwner.contains(position_id), "position missing");
+  }
+
+  fn assert_position_operator(position_id: int) {
+    assert_position_exists(position_id);
+    if OptVaultOwner == authority() {
+      return;
+    }
+    assert(OptVaultPositionOwner[position_id] == authority(), "position owner mismatch");
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn main() -> int {
+    return OptVaultInitialized;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn init_vault(settlement_asset: AssetDefinitionId,
+                        risk_vault_contract: bytes) {
+    assert(OptVaultInitialized == 0, "vault initialized");
+    OptVaultInitialized = 1;
+    OptVaultOwner = authority();
+    OptVaultController = authority();
+    OptVaultSettlementAsset = settlement_asset;
+    OptVaultRiskVaultContract = risk_vault_contract;
+    OptVaultWithdrawalOnly = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn bind_controller(controller: AccountId) {
+    assert_owner();
+    OptVaultController = controller;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn enter_withdrawal_only() {
+    assert_owner();
+    OptVaultWithdrawalOnly = 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn exit_withdrawal_only() {
+    assert_owner();
+    OptVaultWithdrawalOnly = 0;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn sync_series(series_id: int) {
+    assert_owner_or_controller();
+    OptVaultSeriesCollateralLocked[series_id] = OptVaultSeriesCollateralLocked.ensure(series_id, 0);
+    OptVaultSeriesPremiumAccrued[series_id] = OptVaultSeriesPremiumAccrued.ensure(series_id, 0);
+    OptVaultSeriesPayoutPaid[series_id] = OptVaultSeriesPayoutPaid.ensure(series_id, 0);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn sync_series_c2c(series_id: int) -> int {
+    sync_series(series_id);
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn record_position(position_id: int,
+                             series_id: int,
+                             owner: AccountId,
+                             collateral_locked: int,
+                             premium_paid: int) {
+    assert_initialized();
+    assert_owner_or_controller();
+    assert(OptVaultWithdrawalOnly == 0, "withdrawal only");
+    assert(collateral_locked >= 0, "invalid collateral");
+    assert(premium_paid >= 0, "invalid premium");
+    assert(!OptVaultPositionOwner.contains(position_id), "position exists");
+    OptVaultPositionOwner[position_id] = owner;
+    OptVaultPositionSeriesId[position_id] = series_id;
+    OptVaultPositionCollateralLocked[position_id] = collateral_locked;
+    OptVaultPositionPremiumPaid[position_id] = premium_paid;
+    OptVaultPositionPayoutPaid[position_id] = 0;
+    OptVaultPositionStatus[position_id] = 1;
+    OptVaultSeriesCollateralLocked[series_id] = OptVaultSeriesCollateralLocked.ensure(series_id, 0) + collateral_locked;
+    OptVaultSeriesPremiumAccrued[series_id] = OptVaultSeriesPremiumAccrued.ensure(series_id, 0) + premium_paid;
+    OptVaultSeriesPayoutPaid[series_id] = OptVaultSeriesPayoutPaid.ensure(series_id, 0);
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn record_position_c2c(position_id: int,
+                                 series_id: int,
+                                 owner: AccountId,
+                                 collateral_locked: int,
+                                 premium_paid: int) -> int {
+    record_position(position_id, series_id, owner, collateral_locked, premium_paid);
+    return 1;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn release_position(position_id: int, collateral_release: int) {
+    assert_owner_or_controller();
+    assert_position_exists(position_id);
+    assert(collateral_release >= 0, "invalid collateral release");
+    let series_id = OptVaultPositionSeriesId[position_id];
+    let locked = OptVaultPositionCollateralLocked.get_or(position_id, 0);
+    assert(locked >= collateral_release, "release exceeds collateral");
+    OptVaultPositionCollateralLocked[position_id] = locked - collateral_release;
+    OptVaultSeriesCollateralLocked[series_id] = OptVaultSeriesCollateralLocked.get_or(series_id, 0) - collateral_release;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_position(position_id: int,
+                             payout: int,
+                             premium_burn: int) {
+    assert_initialized();
+    assert_owner_or_controller();
+    assert(payout >= 0, "invalid payout");
+    assert(premium_burn >= 0, "invalid premium burn");
+    let series_id = OptVaultPositionSeriesId[position_id];
+    let locked = OptVaultPositionCollateralLocked.get_or(position_id, 0);
+    let premium = OptVaultPositionPremiumPaid.get_or(position_id, 0);
+    assert(locked >= payout, "payout exceeds collateral");
+    assert(premium >= premium_burn, "premium burn exceeds premium");
+    OptVaultPositionCollateralLocked[position_id] = locked - payout;
+    OptVaultPositionPremiumPaid[position_id] = premium - premium_burn;
+    OptVaultPositionPayoutPaid[position_id] = OptVaultPositionPayoutPaid.get_or(position_id, 0) + payout;
+    OptVaultPositionStatus[position_id] = 2;
+    OptVaultSeriesCollateralLocked[series_id] = OptVaultSeriesCollateralLocked.get_or(series_id, 0) - payout;
+    OptVaultSeriesPremiumAccrued[series_id] = OptVaultSeriesPremiumAccrued.get_or(series_id, 0) - premium_burn;
+    OptVaultSeriesPayoutPaid[series_id] = OptVaultSeriesPayoutPaid.get_or(series_id, 0) + payout;
+  }
+
+  #[access(read="*", write="*")]
+  kotoage fn settle_position_c2c(position_id: int,
+                                 payout: int,
+                                 premium_burn: int) -> int {
+    settle_position(position_id, payout, premium_burn);
+    return 1;
+  }
+
+  view fn vault_state(series_id: int) -> (int, int, int, int, int) {
+    return (
+      1,
+      OptVaultSeriesCollateralLocked.get_or(series_id, 0),
+      OptVaultSeriesPremiumAccrued.get_or(series_id, 0),
+      OptVaultSeriesPayoutPaid.get_or(series_id, 0),
+      OptVaultWithdrawalOnly
+    );
+  }
+
+  view fn position_accounting(position_id: int) -> (int, int, int, int, int, int) {
+    let registered = 0;
+    if OptVaultPositionOwner.contains(position_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      OptVaultPositionSeriesId.get_or(position_id, 0),
+      OptVaultPositionCollateralLocked.get_or(position_id, 0),
+      OptVaultPositionPremiumPaid.get_or(position_id, 0),
+      OptVaultPositionPayoutPaid.get_or(position_id, 0),
+      OptVaultPositionStatus.get_or(position_id, 0)
+    );
+  }
+}

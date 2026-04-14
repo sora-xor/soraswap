@@ -2,6 +2,7 @@
 
 Scalar state:
 - `HubInitialized`
+- `HubOwner`
 - `UsdtAsset`
 - `UsdcAsset`
 - `KusdAsset`
@@ -50,4 +51,7 @@ Notes:
 - Basket balances retain accrued redeem fees because only the net redeem output is transferred out.
 - `MintFeesAccrued` tracks aggregate mint-side fees in basket units, and `RedeemFeesAccrued` tracks the sum of per-asset redeem-side fees.
 - Target weights are configuration-only in this repo slice; they are returned for operator readback and smoke assertions, not yet enforced by a rebalancer.
+- Repo bootstrap targets the current `n3x_hub` contract subject for public `testnet|production` `VaultAccount` and migrates seeded balances forward from previous contract-subject custody after upgrades; `local` still defaults to the isolated `n3x_hub` contract subject unless `SORASWAP_N3X_VAULT_ACCOUNT` overrides it.
+- `VaultAccount` can now be repaired in-place through `bind_vault_account(...)` when live custody drifts but basket state remains valid.
+- `repair_zero_supply_state(...)` is a stricter owner-gated repair path that rebinds custody and zeroes basket/fee counters when `TotalN3x == 0`.
 - `scripts/smoke_testnet.sh` reads those fields through `/v1/contracts/view` and records both raw view tuples and decoded integer values in the smoke report.

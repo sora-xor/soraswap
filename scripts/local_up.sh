@@ -12,6 +12,7 @@ localnet_guest_stack_bytes="${SORASWAP_LOCALNET_GUEST_STACK_BYTES:-8388608}"
 localnet_gas_to_stack_multiplier="${SORASWAP_LOCALNET_GAS_TO_STACK_MULTIPLIER:-8}"
 localnet_memory_budget_profile="${SORASWAP_LOCALNET_MEMORY_BUDGET_PROFILE:-soraswap-dlmm}"
 localnet_max_stack_bytes="${SORASWAP_LOCALNET_MAX_STACK_BYTES:-$localnet_guest_stack_bytes}"
+localnet_commit_inflight_timeout_ms="${SORASWAP_LOCALNET_COMMIT_INFLIGHT_TIMEOUT_MS:-60000}"
 localnet_block_time_ms="${SORASWAP_LOCALNET_BLOCK_TIME_MS:-}"
 localnet_commit_time_ms="${SORASWAP_LOCALNET_COMMIT_TIME_MS:-}"
 
@@ -52,6 +53,7 @@ IROHA_LOCALNET_GUEST_STACK_BYTES="$localnet_guest_stack_bytes" \
 IROHA_LOCALNET_GAS_TO_STACK_MULTIPLIER="$localnet_gas_to_stack_multiplier" \
 IROHA_LOCALNET_MEMORY_BUDGET_PROFILE="$localnet_memory_budget_profile" \
 IROHA_LOCALNET_MAX_STACK_BYTES="$localnet_max_stack_bytes" \
+IROHA_LOCALNET_COMMIT_INFLIGHT_TIMEOUT_MS="$localnet_commit_inflight_timeout_ms" \
 NORITO_SKIP_BINDINGS_SYNC=1 SKIP_TOOL_BUILD=true \
   "$SORASWAP_IROHA_ROOT/scripts/deploy_localnet.sh" "${localnet_args[@]}"
 

@@ -16,7 +16,7 @@ torii_url = "https://taira.sora.org/"
 # If all of those are unavailable, the scripts will stop with the exact live
 # rejection reason.
 [account]
-domain = "change-me"
+domain = "change-me.universal"
 public_key = "ed0120CHANGE_ME"
 private_key = "802620CHANGE_ME"
 

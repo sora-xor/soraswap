@@ -27,5 +27,6 @@ View tuple fields returned by `mirror_job()`:
 - `soraswap_automation_run_count`
 
 Notes:
-- `JobExecutor` is optional; when absent, the legacy unbound scheduler entrypoints still work.
+- `JobOwner` is bound to `authority()` at enqueue time.
+- `JobExecutor` is optional; when absent, the job owner is also the permitted runner.
 - `JobCronIntervalSlots` drives recurring reschedule behavior through `complete_run()`.

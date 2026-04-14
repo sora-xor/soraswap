@@ -1,0 +1,18 @@
+chain = "change-me-production-chain-id"
+torii_url = "https://change-me-production-torii/"
+
+# Copy this file to `config/production/production.client.toml` or point
+# `SORASWAP_PRODUCTION_CLIENT_CONFIG` at an untracked equivalent before running
+# the parallel production deploy/smoke wrappers.
+#
+# Unlike public Taira, the production wrappers do not attempt faucet funding.
+# Fund the signer with the production fee asset before running deploy or smoke.
+[account]
+domain = "change-me.universal"
+public_key = "ed0120CHANGE_ME"
+private_key = "802620CHANGE_ME"
+
+# Uncomment if the target Torii deployment requires auth.
+#[basic_auth]
+#web_login = "change-me"
+#password = "change-me"

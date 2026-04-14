@@ -9,16 +9,17 @@ ensure_client "$config"
 ensure_authority "$config"
 treasury_account="$(treasury_account_for_mode "$mode")"
 treasury_seed_balance="${SORASWAP_TREASURY_SEED_BALANCE:-1000000}"
+domain_id="soraswap.universal"
 
 echo "bootstrap domain and helper assets via $config"
 
 ensure_domain_sns_lease "$config" soraswap
 
-if ! iroha_cli_json --config "$config" ledger domain get --id soraswap >/dev/null 2>&1; then
-  iroha_cli --machine --config "$config" ledger domain register --id soraswap
+if ! iroha_cli_json --config "$config" ledger domain get --id "$domain_id" >/dev/null 2>&1; then
+  iroha_cli --machine --config "$config" ledger domain register --id "$domain_id"
 fi
 
-ensure_account_registered "$config" "$treasury_account" soraswap
+ensure_account_registered "$config" "$treasury_account" "$domain_id"
 
 ensure_asset_definition_alias "$config" \
   "$SORASWAP_XOR_ASSET_DEFINITION_ID" \
@@ -26,22 +27,22 @@ ensure_asset_definition_alias "$config" \
   "$SORASWAP_BASE_ASSET_ALIAS" \
   0
 ensure_asset_definition_alias "$config" \
-  7Dsw1EgqCsPmv9HpEztf26xEL2qo \
+  "$SORASWAP_USDT_ASSET_DEFINITION_ID" \
   usdt \
   usdt#soraswap.universal \
   0
 ensure_asset_definition_alias "$config" \
-  4wicsaHQFueXc3GKLG7WoQaKMWWq \
+  "$SORASWAP_USDC_ASSET_DEFINITION_ID" \
   usdc \
   usdc#soraswap.universal \
   0
 ensure_asset_definition_alias "$config" \
-  6Fjwa298w3A7KDnGxjFncsfqj8qC \
+  "$SORASWAP_KUSD_ASSET_DEFINITION_ID" \
   kusd \
   kusd#soraswap.universal \
   0
 ensure_asset_definition_alias "$config" \
-  5N3DQmQr8sx9bKRU87WVkqQR6D2j \
+  "$SORASWAP_N3X_ASSET_DEFINITION_ID" \
   n3x \
   n3x#soraswap.universal \
   0

@@ -1,0 +1,104 @@
+bundle_name = "soraswap"
+default_dataspace = "universal"
+
+[[contracts]]
+name = "n3x.n3x_hub"
+alias = "n3x_hub::n3x.universal"
+source = "contracts/n3x/n3x_hub.ko"
+artifact = "artifacts/compiled/n3x/n3x_hub.to"
+
+[[contracts]]
+name = "dlmm.dlmm_pool"
+alias = "dlmm_pool::dlmm.universal"
+source = "contracts/dlmm/dlmm_pool.ko"
+artifact = "artifacts/compiled/dlmm/dlmm_pool.to"
+
+[[contracts]]
+name = "dlmm.dlmm_router"
+alias = "dlmm_router::dlmm.universal"
+source = "contracts/dlmm/dlmm_router.ko"
+artifact = "artifacts/compiled/dlmm/dlmm_router.to"
+
+[[contracts]]
+name = "launchpad.liquidity_executor"
+alias = "liquidity_executor::launchpad.universal"
+source = "contracts/launchpad/liquidity_executor.ko"
+artifact = "artifacts/compiled/launchpad/liquidity_executor.to"
+
+[[contracts]]
+name = "launchpad.sale_factory"
+alias = "sale_factory::launchpad.universal"
+source = "contracts/launchpad/sale_factory.ko"
+artifact = "artifacts/compiled/launchpad/sale_factory.to"
+
+[[contracts]]
+name = "referral.registry"
+alias = "registry::referral.universal"
+source = "contracts/referral/registry.ko"
+artifact = "artifacts/compiled/referral/registry.to"
+
+[[contracts]]
+name = "automation.job_queue"
+alias = "job_queue::automation.universal"
+source = "contracts/automation/job_queue.ko"
+artifact = "artifacts/compiled/automation/job_queue.to"
+
+[[contracts]]
+name = "farms.farm"
+alias = "farm::farms.universal"
+source = "contracts/farms/farm.ko"
+artifact = "artifacts/compiled/farms/farm.to"
+
+[[contracts]]
+name = "risk.risk_vault"
+alias = "risk_vault::risk.universal"
+source = "contracts/risk/risk_vault.ko"
+artifact = "artifacts/compiled/risk/risk_vault.to"
+
+[[contracts]]
+name = "perps.perps_engine"
+alias = "perps_engine::perps.universal"
+source = "contracts/perps/perps_engine.ko"
+artifact = "artifacts/compiled/perps/perps_engine.to"
+
+[[contracts]]
+name = "options.manager"
+alias = "manager::options.universal"
+source = "contracts/options/manager.ko"
+artifact = "artifacts/compiled/options/manager.to"
+
+[[contracts]]
+name = "options.factory"
+alias = "factory::options.universal"
+source = "contracts/options/factory.ko"
+artifact = "artifacts/compiled/options/factory.to"
+
+[[contracts]]
+name = "options.vault"
+alias = "vault::options.universal"
+source = "contracts/options/vault.ko"
+artifact = "artifacts/compiled/options/vault.to"
+
+[[contracts]]
+name = "options.shout_option"
+alias = "shout_option::options.universal"
+source = "contracts/options/shout_option.ko"
+artifact = "artifacts/compiled/options/shout_option.to"
+
+[[contracts]]
+name = "options.outperformance_option"
+alias = "outperformance_option::options.universal"
+source = "contracts/options/outperformance_option.ko"
+artifact = "artifacts/compiled/options/outperformance_option.to"
+
+[[contracts]]
+name = "cover.policy_manager"
+alias = "policy_manager::cover.universal"
+source = "contracts/cover/policy_manager.ko"
+artifact = "artifacts/compiled/cover/policy_manager.to"
+
+[[contracts]]
+name = "bridge.sccp_bridge"
+alias = "sccp_bridge::bridge.universal"
+source = "contracts/bridge/sccp_bridge.ko"
+artifact = "artifacts/compiled/bridge/sccp_bridge.to"

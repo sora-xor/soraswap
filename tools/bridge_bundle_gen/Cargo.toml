@@ -1,0 +1,9 @@
+[package]
+name = "bridge_bundle_gen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+iroha_sccp = { path = "../../../iroha/crates/iroha_sccp", features = ["serde", "std"] }
+norito = { path = "../../../iroha/crates/norito" }
+serde_json = "1.0"

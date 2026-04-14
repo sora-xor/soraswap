@@ -1,0 +1,22 @@
+{
+  "name": "soraswap-simulations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "simulate:smoke": "jest --config jest.config.cjs --runInBand simulations/tests/smoke.spec.ts",
+    "simulate:full": "jest --config jest.config.cjs --runInBand",
+    "test:contract-console-ui": "playwright test tests/contract_console_ui.spec.js",
+    "test:contract-console-integration": "playwright test tests/contract_console_integration.spec.js",
+    "test": "npm run simulate:full"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^22.13.10",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.7.3"
+  }
+}

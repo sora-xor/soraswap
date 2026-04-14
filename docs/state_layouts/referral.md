@@ -1,6 +1,6 @@
 # Referral State Layout
 
-Registry-slot maps:
+Singleton scalar state:
 - `RewardAsset`
 - `Treasury`
 - `ClaimThreshold`
@@ -8,7 +8,7 @@ Registry-slot maps:
 - `ParentShareBps`
 
 Per-member maps:
-- `Referrer`
+- `MemberOwner`
 - `ParentMember`
 - `Accrued`
 - `TotalAccrued`
@@ -39,5 +39,6 @@ View tuple fields returned by `registry_config()`:
 
 Notes:
 - `DirectShareBps` and `ParentShareBps` are singleton routing parameters keyed under the `registry` slot and must sum to `10000`.
-- `ParentMember` links a child member to an upstream member whose bound referrer account receives the routed parent-share accrual.
+- `MemberOwner` binds each named member to the caller that created it.
+- `ParentMember` links a child member to an upstream member whose owner receives the routed parent-share accrual.
 - `mirror_member()` reports the selected member plus its linked parent member, if present, through `/v1/contracts/view`.
