@@ -18,6 +18,9 @@ required_evidence=(
   "$testnet_dir/contracts.latest.json"
   "$testnet_dir/smoke.latest.json"
   "$testnet_dir/contract_console_smoke.latest.json"
+  "$testnet_dir/trader_readonly.latest.json"
+  "$testnet_dir/trader.latest.json"
+  "$testnet_dir/trader_api_bundle.latest.json"
 )
 
 local_acceptance_targets=(
@@ -87,13 +90,19 @@ contracts_json="$(cat "$testnet_dir/contracts.latest.json")"
 probe_json="$(cat "$testnet_dir/nested_call_probe.latest.json")"
 smoke_json="$(cat "$testnet_dir/smoke.latest.json")"
 console_json="$(cat "$testnet_dir/contract_console_smoke.latest.json")"
+trader_readonly_json="$(cat "$testnet_dir/trader_readonly.latest.json")"
+trader_json="$(cat "$testnet_dir/trader.latest.json")"
+trader_api_json="$(cat "$testnet_dir/trader_api_bundle.latest.json")"
 
 for evidence_path in \
   "$testnet_dir/deploy.latest.json" \
   "$testnet_dir/nested_call_probe.latest.json" \
   "$testnet_dir/contracts.latest.json" \
   "$testnet_dir/smoke.latest.json" \
-  "$testnet_dir/contract_console_smoke.latest.json"; do
+  "$testnet_dir/contract_console_smoke.latest.json" \
+  "$testnet_dir/trader_readonly.latest.json" \
+  "$testnet_dir/trader.latest.json" \
+  "$testnet_dir/trader_api_bundle.latest.json"; do
   if ! jq -e \
     --argjson chain "$chain_json" \
     '.chain_fingerprint != null
@@ -107,6 +116,36 @@ done
 
 if ! jq -e '.status == "completed"' <<<"$deploy_json" >/dev/null; then
   echo "release checklist failed: deployments/testnet/deploy.latest.json is not completed" >&2
+  exit 1
+fi
+
+if ! jq -e '.status == "completed"' <<<"$trader_readonly_json" >/dev/null; then
+  trader_readonly_reason="$(jq -r '.blocked_reason // empty' <<<"$trader_readonly_json" 2>/dev/null || true)"
+  if [[ -n "$trader_readonly_reason" ]]; then
+    echo "release checklist failed: trader_readonly.latest.json is not completed: $trader_readonly_reason" >&2
+  else
+    echo "release checklist failed: trader_readonly.latest.json is not completed" >&2
+  fi
+  exit 1
+fi
+
+if ! jq -e '.status == "completed"' <<<"$trader_json" >/dev/null; then
+  trader_reason="$(jq -r '.blocked_reason // empty' <<<"$trader_json" 2>/dev/null || true)"
+  if [[ -n "$trader_reason" ]]; then
+    echo "release checklist failed: trader.latest.json is not completed: $trader_reason" >&2
+  else
+    echo "release checklist failed: trader.latest.json is not completed" >&2
+  fi
+  exit 1
+fi
+
+if ! jq -e '
+  ((.content_cid // "") | test("^b[a-z2-7]+$"))
+  and ((.manifest_digest_hex // "") | test("^[0-9a-fA-F]{64}$"))
+  and ((.routes // []) | length >= 5)
+  and (.cid_probe.status // "") == "completed"
+' <<<"$trader_api_json" >/dev/null; then
+  echo "release checklist failed: trader_api_bundle.latest.json is missing CID, manifest digest, routes, or successful CID probe" >&2
   exit 1
 fi
 
@@ -158,8 +197,32 @@ if ! jq -e \
     (.contracts_snapshot.generated_at // null) == ($contracts.generated_at // null)
     and (.deploy_snapshot.generated_at // null) == ($deploy.generated_at // null)
     and (.deploy_snapshot.status // null) == ($deploy.status // null)
-  ' <<<"$console_json" >/dev/null; then
+' <<<"$console_json" >/dev/null; then
   echo "release checklist failed: contract_console_smoke.latest.json does not reference the current contracts/deploy snapshots" >&2
+  exit 1
+fi
+
+if ! jq -e \
+  --argjson contracts "$contracts_json" \
+  --argjson deploy "$deploy_json" \
+  '
+    (.contracts_snapshot.generated_at // null) == ($contracts.generated_at // null)
+    and (.deploy_snapshot.generated_at // null) == ($deploy.generated_at // null)
+    and (.deploy_snapshot.status // null) == ($deploy.status // null)
+  ' <<<"$trader_readonly_json" >/dev/null; then
+  echo "release checklist failed: trader_readonly.latest.json does not reference the current contracts/deploy snapshots" >&2
+  exit 1
+fi
+
+if ! jq -e \
+  --argjson contracts "$contracts_json" \
+  --argjson deploy "$deploy_json" \
+  '
+    (.contracts_snapshot.generated_at // null) == ($contracts.generated_at // null)
+    and (.deploy_snapshot.generated_at // null) == ($deploy.generated_at // null)
+    and (.deploy_snapshot.status // null) == ($deploy.status // null)
+  ' <<<"$trader_json" >/dev/null; then
+  echo "release checklist failed: trader.latest.json does not reference the current contracts/deploy snapshots" >&2
   exit 1
 fi
 
@@ -191,6 +254,16 @@ if ! jq -e --argjson contracts "$contracts_json" '(.generated_at // "") >= ($con
   exit 1
 fi
 
+if ! jq -e --argjson contracts "$contracts_json" '(.generated_at // "") >= ($contracts.generated_at // "")' <<<"$trader_readonly_json" >/dev/null; then
+  echo "release checklist failed: trader_readonly.latest.json is older than contracts.latest.json" >&2
+  exit 1
+fi
+
+if ! jq -e --argjson contracts "$contracts_json" '(.generated_at // "") >= ($contracts.generated_at // "")' <<<"$trader_json" >/dev/null; then
+  echo "release checklist failed: trader.latest.json is older than contracts.latest.json" >&2
+  exit 1
+fi
+
 if ! jq -e '
   if (.bridge.submission_expectation // "") == "apply" then
     ((.submissions.proof_status.status_kind // "") | test("Applied|Committed"))
@@ -205,6 +278,21 @@ if ! jq -e '
   end
 ' <<<"$console_json" >/dev/null; then
   echo "release checklist failed: contract_console_smoke.latest.json does not record a valid bridge submission outcome" >&2
+  exit 1
+fi
+
+if ! jq -e '(.route_probes.required_missing | length) == 0' <<<"$trader_readonly_json" >/dev/null; then
+  echo "release checklist failed: trader_readonly.latest.json reports missing trader routes on public Taira" >&2
+  exit 1
+fi
+
+if ! jq -e '
+  (.route_probes.required_missing | length) == 0
+  and ((.mutation.signer_ready.status // "") == "completed")
+  and ((.mutation.swap.status // "") == "completed")
+  and ((.mutation.swap.tx_hash // null) != null)
+' <<<"$trader_json" >/dev/null; then
+  echo "release checklist failed: trader.latest.json is missing a signed trader mutation or still reports missing trader routes" >&2
   exit 1
 fi
 

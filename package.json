@@ -9,6 +9,7 @@
     "simulate:full": "jest --config jest.config.cjs --runInBand",
     "test:contract-console-ui": "playwright test tests/contract_console_ui.spec.js",
     "test:contract-console-integration": "playwright test tests/contract_console_integration.spec.js",
+    "test:trader-ui": "playwright test tests/trader_ui.spec.js",
     "test": "npm run simulate:full"
   },
   "devDependencies": {

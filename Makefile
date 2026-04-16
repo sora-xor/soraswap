@@ -1,6 +1,6 @@
 SHELL := /bin/zsh
 
-.PHONY: lint compile simulate-smoke simulate-full local-up local-down deploy-local smoke-local deploy-testnet deploy-production smoke-testnet smoke-testnet-readonly smoke-production smoke-production-readonly public-nested-call-probe testnet-nested-call-probe production-nested-call-probe test-public-env-helpers test-local test-local-isolated test-local-foundation-isolated contract-console test-contract-console test-contract-console-ui test-contract-console-integration test-contract-console-live test-contract-console-testnet test-contract-console-production soak-contract-console release-checklist
+.PHONY: lint compile simulate-smoke simulate-full local-up local-down deploy-local smoke-local deploy-testnet deploy-production publish-trader-api smoke-testnet smoke-testnet-readonly smoke-testnet-trader smoke-testnet-trader-readonly smoke-production smoke-production-readonly public-nested-call-probe testnet-nested-call-probe production-nested-call-probe test-public-env-helpers test-local test-local-isolated test-local-foundation-isolated contract-console trader-ui test-contract-console test-contract-console-ui test-contract-console-integration test-trader-ui test-contract-console-live test-contract-console-testnet test-contract-console-production soak-contract-console release-checklist
 
 lint:
 	./scripts/lint_contracts.sh
@@ -32,11 +32,20 @@ deploy-testnet:
 deploy-production:
 	./scripts/deploy_production.sh
 
+publish-trader-api:
+	./scripts/publish_trader_api_bundle.sh
+
 smoke-testnet:
 	./scripts/smoke_testnet_mutating.sh
 
 smoke-testnet-readonly:
 	./scripts/smoke_testnet.sh
+
+smoke-testnet-trader:
+	./scripts/trader_testnet_mutating.sh
+
+smoke-testnet-trader-readonly:
+	./scripts/trader_testnet_readonly.sh
 
 smoke-production:
 	./scripts/smoke_production.sh
@@ -68,6 +77,9 @@ test-local-foundation-isolated:
 contract-console:
 	python3 ./scripts/serve_contract_console.py $(CONTRACT_CONSOLE_ARGS)
 
+trader-ui:
+	python3 ./scripts/serve_trader_ui.py $(TRADER_UI_ARGS)
+
 test-contract-console:
 	python3 -m unittest discover -s tests -p 'test_contract_console.py'
 
@@ -76,6 +88,9 @@ test-contract-console-ui:
 
 test-contract-console-integration:
 	npm run test:contract-console-integration
+
+test-trader-ui:
+	npm run test:trader-ui
 
 test-contract-console-live:
 	./tests/contract_console_live_smoke.sh

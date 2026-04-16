@@ -30,6 +30,7 @@ SORASWAP_TESTNET_CHAIN_DISCRIMINANT="${SORASWAP_TESTNET_CHAIN_DISCRIMINANT:-369}
 SORASWAP_PRODUCTION_CHAIN_ID="${SORASWAP_PRODUCTION_CHAIN_ID:-}"
 SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP="${SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP:-1048576}"
 SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS:-45}"
+SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS:-600}"
 SORASWAP_DEPLOY_PIPELINE_WAIT_SECS="${SORASWAP_DEPLOY_PIPELINE_WAIT_SECS:-300}"
 SORASWAP_DEPLOY_COMMITTED_WAIT_SECS="${SORASWAP_DEPLOY_COMMITTED_WAIT_SECS:-120}"
 SORASWAP_DEPLOY_MANIFEST_WAIT_SECS="${SORASWAP_DEPLOY_MANIFEST_WAIT_SECS:-180}"
@@ -698,11 +699,12 @@ chain_id_override_for_config() {
 
 materialize_cli_compatible_config() {
   local source_config="$1"
-  local chain torii_url domain public_key private_key ttl_ms status_timeout_ms nonce
+  local chain torii_url torii_request_timeout_ms domain public_key private_key ttl_ms status_timeout_ms nonce
   local tmp_config
 
   chain="$(config_chain_id_from_config "$source_config")"
   torii_url="$(awk -F '"' '/^[[:space:]]*torii_url[[:space:]]*=/ {print $2; exit}' "$source_config")"
+  torii_request_timeout_ms="$(awk '/^[[:space:]]*torii_request_timeout_ms[[:space:]]*=/ { gsub(/[^0-9]/, "", $0); print $0; exit }' "$source_config")"
   domain="$(awk -F '"' '/^[[:space:]]*domain[[:space:]]*=/ {print $2; exit}' "$source_config")"
   public_key="$(awk -F '"' '/^[[:space:]]*public_key[[:space:]]*=/ {print $2; exit}' "$source_config")"
   private_key="$(awk -F '"' '/^[[:space:]]*private_key[[:space:]]*=/ {print $2; exit}' "$source_config")"
@@ -737,6 +739,7 @@ materialize_cli_compatible_config() {
   printf '%s\n' \
     "chain = \"$chain\"" \
     "torii_url = \"$torii_url\"" \
+    "${torii_request_timeout_ms:+torii_request_timeout_ms = $torii_request_timeout_ms}" \
     "" \
     "[account]" \
     "domain = \"$domain\"" \
@@ -2022,6 +2025,14 @@ try_public_onboard_account() {
   return 1
 }
 
+public_onboard_alias_for_account() {
+  local account_id="$1"
+  local digest
+
+  digest="$(printf '%s' "$account_id" | shasum -a 256 | awk '{print substr($1, 1, 16)}')"
+  printf 'soraswap-%s\n' "$digest"
+}
+
 probe_public_faucet() {
   local config="$1"
   fetch_public_faucet_puzzle_json "$config" >/dev/null
@@ -2332,60 +2343,72 @@ claim_public_testnet_faucet() {
   local config="$1"
   local account_id="$2"
   local torii_base puzzle_json nonce_hex payload_json response http_code body tx_hash
+  local attempt=1
+  local max_attempts="${SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS:-3}"
 
-  puzzle_json="$(fetch_public_faucet_puzzle_json "$config")" || return 1
-  nonce_hex="$(solve_public_faucet_nonce_hex "$account_id" "$puzzle_json")"
   torii_base="$(torii_base_from_config "$config")"
-  payload_json="$(jq -cn \
-    --arg account_id "$account_id" \
-    --argjson anchor_height "$(jq -r '.anchor_height' <<<"$puzzle_json")" \
-    --arg nonce_hex "$nonce_hex" \
-    --argjson difficulty_bits "$(jq -r '.difficulty_bits // 0' <<<"$puzzle_json")" \
-    '{
-      account_id: $account_id
-    } + (if $difficulty_bits > 0 then {
-      pow_anchor_height: $anchor_height,
-      pow_nonce_hex: $nonce_hex
-    } else {} end)')"
+  while (( attempt <= max_attempts )); do
+    puzzle_json="$(fetch_public_faucet_puzzle_json "$config")" || return 1
+    nonce_hex="$(solve_public_faucet_nonce_hex "$account_id" "$puzzle_json")"
+    payload_json="$(jq -cn \
+      --arg account_id "$account_id" \
+      --argjson anchor_height "$(jq -r '.anchor_height' <<<"$puzzle_json")" \
+      --arg nonce_hex "$nonce_hex" \
+      --argjson difficulty_bits "$(jq -r '.difficulty_bits // 0' <<<"$puzzle_json")" \
+      '{
+        account_id: $account_id
+      } + (if $difficulty_bits > 0 then {
+        pow_anchor_height: $anchor_height,
+        pow_nonce_hex: $nonce_hex
+      } else {} end)')"
 
-  response="$(curl -sS \
-    --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-    -H 'Accept: application/json' \
-    -H 'Content-Type: application/json' \
-    -H 'X-Iroha-API-Version: 1.1' \
-    -w $'\n%{http_code}' \
-    -X POST \
-    "$torii_base/v1/accounts/faucet" \
-    -d "$payload_json")" || {
-      echo "failed to reach $torii_base/v1/accounts/faucet" >&2
+    response="$(curl -sS \
+      --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
+      -H 'Accept: application/json' \
+      -H 'Content-Type: application/json' \
+      -H 'X-Iroha-API-Version: 1.1' \
+      -w $'\n%{http_code}' \
+      -X POST \
+      "$torii_base/v1/accounts/faucet" \
+      -d "$payload_json")" || {
+        echo "failed to reach $torii_base/v1/accounts/faucet" >&2
+        return 1
+      }
+    http_code="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+
+    if [[ "$http_code" != "200" && "$http_code" != "202" ]]; then
+      echo "faucet claim failed for $account_id: HTTP $http_code: $body" >&2
       return 1
-    }
-  http_code="${response##*$'\n'}"
-  body="${response%$'\n'*}"
-
-  if [[ "$http_code" != "200" && "$http_code" != "202" ]]; then
-    echo "faucet claim failed for $account_id: HTTP $http_code: $body" >&2
-    return 1
-  fi
-
-  tx_hash="$(jq -r '.tx_hash_hex // empty' <<<"$body")"
-  if [[ -n "$tx_hash" ]]; then
-    local pipeline_json pipeline_kind
-    if pipeline_json="$(wait_for_transaction_terminal_status "$config" "$tx_hash" 90 1 auto)"; then
-      pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_json")"
-      case "$pipeline_kind" in
-        Applied|Committed)
-          :
-          ;;
-        *)
-          echo "faucet claim transaction did not commit cleanly: $pipeline_json" >&2
-          return 1
-          ;;
-      esac
     fi
-  fi
 
-  printf '%s\n' "$body"
+    tx_hash="$(jq -r '.tx_hash_hex // empty' <<<"$body")"
+    if [[ -n "$tx_hash" ]]; then
+      local pipeline_json pipeline_kind
+      if pipeline_json="$(wait_for_transaction_terminal_status "$config" "$tx_hash" 90 1 auto)"; then
+        pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_json")"
+        case "$pipeline_kind" in
+          Applied|Committed)
+            printf '%s\n' "$body"
+            return 0
+            ;;
+          Expired)
+            if (( attempt < max_attempts )); then
+              echo "faucet claim expired for $account_id; retrying with a fresh puzzle (${attempt}/${max_attempts})" >&2
+              sleep 1
+              attempt=$(( attempt + 1 ))
+              continue
+            fi
+            ;;
+        esac
+        echo "faucet claim transaction did not commit cleanly: $pipeline_json" >&2
+        return 1
+      fi
+    fi
+
+    printf '%s\n' "$body"
+    return 0
+  done
 }
 
 warn_if_public_tx_gossip_cap_low() {
@@ -3257,13 +3280,54 @@ submit_contract_app_bundle() {
   local config="$1"
   local action="${2:-deploy}"
   local manifest_path="${3:-$(contract_app_manifest_path)}"
-  local private_key
+  local private_key timeout_secs timeout_ms tmp_config active_config
+  local output exit_code stderr_file stderr_output
 
   private_key="$(account_private_key_from_config "$config")"
-  iroha_cli_json --config "$config" contract app "$action" \
+  timeout_secs="${SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS:-${SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS:-45}}"
+  timeout_ms="$(( timeout_secs * 1000 ))"
+  active_config="$config"
+  tmp_config=""
+  stderr_file=""
+
+  if [[ "$timeout_ms" -gt 0 ]]; then
+    tmp_config="$(mktemp "${TMPDIR:-/tmp}/soraswap-contract-app-config.XXXXXX")"
+    cp "$config" "$tmp_config"
+    perl -0pi -e 's/^[[:space:]]*torii_request_timeout_ms[[:space:]]*=.*\n//mg; s/^[[:space:]]*torii_request_timeout[[:space:]]*=.*\n//mg;' "$tmp_config"
+    printf '\ntorii_request_timeout_ms = %s\n' "$timeout_ms" >> "$tmp_config"
+    active_config="$tmp_config"
+  fi
+
+  exit_code=0
+  stderr_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-contract-app-stderr.XXXXXX")"
+  if ! output="$(iroha_cli_json --config "$active_config" contract app "$action" \
     --manifest "$manifest_path" \
     --authority "$SORASWAP_AUTHORITY" \
-    --private-key "$private_key"
+    --private-key "$private_key" 2>"$stderr_file")"; then
+    exit_code=$?
+  fi
+  stderr_output="$(cat "$stderr_file" 2>/dev/null || true)"
+
+  if [[ -n "$tmp_config" ]]; then
+    rm -f "$tmp_config"
+  fi
+  if [[ -n "$stderr_file" ]]; then
+    rm -f "$stderr_file"
+  fi
+
+  if (( exit_code != 0 )); then
+    if [[ -n "$stderr_output" ]]; then
+      printf '%s\n' "$stderr_output" >&2
+    fi
+    printf '%s\n' "$output" >&2
+    return $exit_code
+  fi
+
+  if [[ -n "$stderr_output" ]]; then
+    printf '%s\n' "$stderr_output" >&2
+  fi
+
+  printf '%s\n' "$output"
 }
 
 materialize_contract_bundle_records_for_env() {
@@ -4230,6 +4294,7 @@ ensure_public_signer_ready() {
   local balance="0"
   local positive_assets_json='[]'
   local skip_ready_check="${SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK:-0}"
+  local onboard_alias=""
 
   fee_label="$(fee_asset_label_for_config "$config")"
   fee_asset_id="$(fee_asset_definition_id_for_config "$config")"
@@ -4249,6 +4314,15 @@ ensure_public_signer_ready() {
   fi
 
   if [[ "$mode" == "autofund" ]] && is_taira_public_config "$config"; then
+    if ! account_exists "$config" "$account_id"; then
+      try_public_self_register_account "$config" "$account_id" >/dev/null 2>&1 || true
+      wait_for_account_exists "$config" "$account_id" 5 1 >/dev/null 2>&1 || true
+      if ! account_exists "$config" "$account_id"; then
+        onboard_alias="$(public_onboard_alias_for_account "$account_id")"
+        try_public_onboard_account "$config" "$account_id" "$onboard_alias" >/dev/null 2>&1 || true
+        wait_for_account_exists "$config" "$account_id" 5 1 >/dev/null 2>&1 || true
+      fi
+    fi
     echo "claim faucet funding for testnet signer: $account_id"
     claim_public_testnet_faucet "$config" "$account_id" >/dev/null
     wait_for_account_exists "$config" "$account_id" 15 1 >/dev/null || true

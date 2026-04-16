@@ -40,6 +40,14 @@ Router scalar state:
 - `RouterContractBound`
 - `BoundPoolContract`
 - `PoolBound`
+- `SwapHistoryHead`
+
+Router swap-history maps:
+- `SwapHistoryTrader`
+- `SwapHistoryInputIsBase`
+- `SwapHistoryAmountIn`
+- `SwapHistoryAmountOut`
+- `SwapHistoryMinOut`
 
 View tuple fields returned by `mirror_state()`:
 - `soraswap_dlmm_pool_initialized`
@@ -63,6 +71,20 @@ View fields returned by `contract_binding()`:
 
 View fields returned by `execution_binding()`:
 - `soraswap_dlmm_router_pool_bound`
+
+View tuple fields returned by `router_assets()`:
+- `soraswap_dlmm_router_base_asset`
+- `soraswap_dlmm_router_quote_asset`
+
+View field returned by `swap_history_head()`:
+- `soraswap_dlmm_router_swap_history_head`
+
+View tuple fields returned by `mirror_swap_history(record_id)`:
+- `soraswap_dlmm_router_swap_trader`
+- `soraswap_dlmm_router_swap_input_is_base`
+- `soraswap_dlmm_router_swap_amount_in`
+- `soraswap_dlmm_router_swap_amount_out`
+- `soraswap_dlmm_router_swap_min_out`
 
 View tuple fields returned by `pool_config()`:
 - `soraswap_dlmm_pool_base_asset`
@@ -107,5 +129,6 @@ Notes:
 - The active `VaultAccount` can now be rotated only by the current vault authority through `bind_custody_account(...)`; bootstrap uses that once to migrate legacy treasury-backed pools onto pool-subject custody.
 - The signed testnet bootstrap now materializes the pool contract subject as the custody account so router c2c swaps settle under the pool runtime subject instead of an external treasury signer.
 - The router layout now stores both its own contract subject account and the bound pool contract address because production execution uses same-transaction router-to-pool `call_contract(...)` dispatch, not quote-only inspection.
+- The router now also stores a monotonic swap-history journal keyed by `record_id`. Each successful `route_swap(...)` appends the effective trader, trade direction, exact `amount_in`, exact executed `amount_out`, and the submitted `min_out`.
 - `make smoke-local` and the signed `make smoke-testnet` lane both record the router contract binding, router execution binding, and the post-swap decoded state snapshots.
 - `quote_position_fees(...)` reports pending claimable fees after applying the current bin fee-growth deltas to the position's stored debt. `mirror_position(...)` remains a raw stored-state snapshot.

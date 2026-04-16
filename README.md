@@ -55,9 +55,11 @@ make test-local
 make test-local-isolated
 make test-local-foundation-isolated
 make contract-console
+make trader-ui
 make test-contract-console
 make test-contract-console-ui
 make test-contract-console-integration
+make test-trader-ui
 make test-contract-console-live
 make test-contract-console-testnet
 make soak-contract-console
@@ -134,6 +136,70 @@ The operator console now also adds:
 - best-effort remote transaction history rendering through `/v1/transactions/history`; public Taira may report this as unavailable, and the UI degrades to a warning state instead of failing
 - an SCCP proof/status workspace that renders live capabilities, manifests, newest-first recent messages, counterparties, verifier targets, finality models, raw bundles, typed artifacts, normalized jobs, and submission-package metadata
 - guided proof and bridge-message submission builders that keep the final payload as editable JSON while prebuilding common `message_bundle`, `finalize_inbound`, and `activate_route_governed` settlement shapes
+
+## Trader Cockpit
+For swap history, charting, wallet-level PnL, and direct DLMM router trading, start the chart-first trader cockpit:
+
+```bash
+make trader-ui
+```
+
+By default it serves `http://127.0.0.1:4274`, reads the same checked-in deployment metadata as the contract console, and proxies a narrow trading surface for:
+- `GET /v1/contracts/events`
+- `GET /v1/contracts/events/sse`
+- `GET /v1/contracts/rollups/swaps/fills`
+- `GET /v1/contracts/rollups/swaps/candles`
+- `GET /v1/contracts/rollups/trader/activity`
+- `GET /v1/contracts/rollups/trader/account`
+- `POST /v1/contracts/view`
+- `POST /v1/contracts/view/batch`
+- `POST /v1/contracts/call`
+- `GET /v1/pipeline/transactions/status`
+
+The cockpit prefers the deployed `dlmm.dlmm_router` contract in the selected environment. It loads:
+- trader account rollups for module cards, wallet metrics, and live product posture
+- swap fill and candle rollups for the chart and journal
+- trader activity rollups plus contract-event SSE for the unified action feed and live refresh path
+- batch contract views only for narrow fallback/config reads
+
+The browser surface keeps the chart, journal, avg entry, realized and unrealized PnL, and trader action rails in one frame so users can see position context and submit without bouncing between raw history and a separate form. It also now:
+- keeps a cross-product radar and selectable overview for swaps, `n3x`, perps, farms, launchpad, options, and cover
+- adds a focused product stage so traders can pin one surface while keeping the rest visible
+- unifies public `options` into one trader surface instead of split factory/manager tiles
+- exposes real action rails for swaps, `n3x`, perps, farms, launchpad, options, and cover
+- follows Torii contract-event SSE in live mode and refreshes the cockpit when the chain moves, with automatic polling fallback if the stream drops
+
+It accepts the same signer and authority flags as the contract console:
+
+```bash
+make trader-ui \
+  TRADER_UI_ARGS="--signer local=$SORASWAP_LOCALNET_DIR/client.toml --authority local=$SORASWAP_AUTHORITY"
+```
+
+Custom environments allow signed swaps when a signer with a private key is bound. Public `testnet` and `production` environments still inherit the same mutate gate as the contract console, so `SORASWAP_ALLOW_TESTNET_MUTATIONS=1` must be exported before starting the trader if you want the submit button enabled against those deployments.
+
+The browser smoke suite starts the real Python trader server against a local mock Torii node and verifies history load, chart/journal rendering, and a live `route_swap` submission:
+
+```bash
+make test-trader-ui
+```
+
+Public Taira trader evidence now has dedicated lanes:
+
+```bash
+make smoke-testnet-trader-readonly
+SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make smoke-testnet-trader
+```
+
+Those commands write `deployments/testnet/trader_readonly.latest.json` and `deployments/testnet/trader.latest.json`. The readonly lane probes `view/batch` plus the trader rollups directly. The signed lane also runs a live `route_swap` probe when the signer can be funded and records the resulting transaction hash and balance deltas.
+
+The trader API route bundle can also be published to SoraFS and addressed through Torii's CID app API gateway:
+
+```bash
+make publish-trader-api
+```
+
+That writes `deployments/testnet/trader_api_bundle.latest.json` by default, including the generated content CID, manifest digest, route manifest, the local SoraFS storage-pin receipt, the public pin-registry submission receipt, a read-only deployment-record freshness summary, and a repeated `/v1/app-api/cid/{cid}` probe summary. The publish path no longer tries to recover stale deployment records by recompiling contracts mid-rollout; it reports drift as `deployment_record_check.status = "degraded"` and still republishes the route bundle. By default the probe uses the same `torii_url` as the selected client config; when public rollout is being validated against an explicit direct node, set `SORASWAP_TRADER_API_PROBE_ROOT=https://<direct-public-node>` before running the target. `status = "completed"` now means every sampled probe hit `2xx`; mixed `200/404` results are reported as `status = "inconsistent"` so a single lucky cache hit does not look like a healthy public rollout. To activate the CID through an existing public SoraCloud service, set `SORASWAP_PUBLISH_TRADER_API_BINDING=1` and `SORASWAP_TRADER_API_SERVICE_NAME=<service>` before running the target; the script upserts the `torii/app_api_binding` config with the pinned CID and trader route adapters.
 
 View-only sessions can be started with a default authority override:
 
@@ -233,12 +299,14 @@ make soak-contract-console
 - `SORASWAP_USDT_ASSET_DEFINITION_ID`, `SORASWAP_USDC_ASSET_DEFINITION_ID`, `SORASWAP_KUSD_ASSET_DEFINITION_ID`, `SORASWAP_N3X_ASSET_DEFINITION_ID` - optional public helper-asset definition overrides used by `bootstrap_assets.sh`; set these before `make deploy-production` when the parallel public chain uses different helper asset ids than Taira
 - `SORASWAP_SMOKE_GAS_LIMIT` - defaults to `100000`
 - `SORASWAP_SKIP_IROHA_CLI_BUILD` - set to `1` to reuse an existing `../iroha/target/debug/iroha` binary even when the sibling tree is newer than the binary
+- `SORASWAP_SORAFS_CLI_BIN` - optional explicit `sorafs_cli` path used by `make publish-trader-api`; otherwise the script reuses or builds `../iroha/target/debug/sorafs_cli`
 - `SORASWAP_SKIP_KOTO_TOOL_BUILD` - set to `1` to reuse existing `../iroha/target/debug/{koto_compile,koto_lint}` binaries instead of rebuilding them
 - `SORASWAP_SKIP_LOCALNET_TOOL_BUILD` - set to `1` to reuse existing `../iroha/target/debug/{iroha,irohad,kagami}` binaries instead of rebuilding them
 - `SORASWAP_TORII_URL` - optional explicit Torii URL override
 - `SORASWAP_TESTNET_CHAIN_ID` - defaults to `809574f5-fee7-5e69-bfcf-52451e42d50f`; used to override malformed borrowed public Taira client configs and to keep testnet evidence tied to the live chain id
 - `SORASWAP_TESTNET_CHAIN_DISCRIMINANT` - defaults to `369`; used when deriving canonical public contract addresses locally for testnet deploy recovery
 - `SORASWAP_ALLOW_TESTNET_MUTATIONS` - required for any signed Taira console or Taira smoke path
+- `SORASWAP_PUBLISH_TRADER_API_BINDING`, `SORASWAP_TRADER_API_SERVICE_NAME`, `SORASWAP_TRADER_API_APP_ID`, `SORASWAP_TORII_API_TOKEN`, `SORASWAP_TRADER_API_PROBE_ROOT` - optional trader API publication controls for `make publish-trader-api`; binding publication is off by default and requires a live public SoraCloud service name, while `SORASWAP_TRADER_API_PROBE_ROOT` lets the CID probe hit an explicit direct public validator instead of the client config's default Torii URL
 - `SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK` - optional debug bypass for public deploy/smoke signer balance checks; use only when the configured chain cannot expose the fee asset or faucet state yet and you explicitly want to skip readiness validation
 - `SORASWAP_PUBLIC_BOOTSTRAP` - optional shared bootstrap toggle for `make deploy-testnet` and `make deploy-production`; set to `1` to run the one-time public domain and helper-asset bootstrap before contract deploy
 - `SORASWAP_PRODUCTION_BOOTSTRAP` - optional production-specific bootstrap toggle that overrides `SORASWAP_PUBLIC_BOOTSTRAP` for `make deploy-production`
@@ -258,6 +326,7 @@ make soak-contract-console
 - `SORASWAP_LAUNCHPAD_POOL_QUOTE_ASSET_ID` - optional launchpad executor / DLMM quote-asset override; defaults to `usdt#soraswap.universal`
 - `SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP` - defaults to `1048576`; deploy scripts warn when live Taira is below this frame-cap budget
 - `SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS` - defaults to `45`; max request time for the public `/v1/contracts/deploy` wrapper before deploy recovery/fallback logic takes over
+- `SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS` - defaults to `600`; max request time for the multi-contract `contract app deploy` bundle path before the local/public deploy wrapper gives up
 - `SORASWAP_DEPLOY_PIPELINE_WAIT_SECS`, `SORASWAP_DEPLOY_COMMITTED_WAIT_SECS`, `SORASWAP_DEPLOY_MANIFEST_WAIT_SECS` - default to `300`, `120`, and `180`; control live deploy revalidation windows for pipeline status, committed transaction lookup, and manifest visibility during deploy recovery plus post-deploy bootstrap
 - `SORASWAP_CONTRACT_CALL_MAX_TIME_SECS` - defaults to `120`; max request time for signed `/v1/contracts/call` mutations before the wrapper fails the request
 - `SORASWAP_CONTRACT_CALL_RETRY_COUNT` - defaults to `1`; mutating `/v1/contracts/call` requests are not retried by default because a transport timeout can still submit the first transaction and make a blind retry duplicate a non-idempotent action
@@ -359,6 +428,11 @@ On March 28, 2026, probing the live Taira node showed:
 - `/v1/accounts/faucet/puzzle` responding `200` once faucet is enabled on the public node
 - `status.tx_gossip.caps.frame_cap_bytes` is expected to be at least `1048576` for routine SoraSwap deploys without split fallback
 - public contract lifecycle writes were being rejected when Taira omitted an explicit `[nexus.fees]` block and fell back to the canonical default fee selector instead of `xor#universal`
+
+On April 15, 2026, probing the live Taira node additionally showed:
+- `/v1/contracts/rollups/swaps/fills`, `/v1/contracts/rollups/swaps/candles`, `/v1/contracts/rollups/trader/activity`, and `/v1/contracts/rollups/trader/account` still responding `404 Not Found`
+- `/v1/contracts/view/batch` still responding `404 Not Found`
+- fresh public faucet claims for new testnet signers reaching terminal `Expired` under the saturated public queue, so the trader signed evidence lane now retries the faucet claim and records the exact blocker in `deployments/testnet/trader.latest.json` when the public node still cannot fund a brand-new signer in time
 
 Public SoraSwap docs and scripts now target canonical contract addresses in the `universal` dataspace. A Taira rollout must therefore include both the explicit `nexus.fees.fee_asset_id = "xor#universal"` override and the raised `network.max_frame_bytes_tx_gossip = 1048576` setting from `../iroha/configs/soranexus/taira/config.toml`, then a fresh `make deploy-testnet` run after the node comes back.
 

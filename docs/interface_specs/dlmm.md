@@ -33,7 +33,10 @@ Contracts:
 - `bind_pool(pool_contract, quote_asset)`
 - `assert_router_config(default_fee_pips)`
 - `router_config() -> (AssetDefinitionId, int)`
+- `router_assets() -> (AssetDefinitionId, AssetDefinitionId)`
 - `mirror_state() -> (int, int)`
+- `swap_history_head() -> int`
+- `mirror_swap_history(record_id) -> (AccountId, int, int, int, int)`
 - `contract_binding() -> int`
 - `execution_binding() -> int`
 - `quote_direct(reserve_in, reserve_out, amount_in, fee_pips) -> int`
@@ -48,4 +51,6 @@ Notes:
 - The production bootstrap now binds the DLMM pool vault to the pool contract subject so direct pool flows and router-to-pool nested swaps share the same custody authority model on public Taira.
 - The release path is no longer quote-only. `dlmm_router.ko` binds both its own contract subject account and a deployed pool, then executes same-transaction contract-to-contract swaps through `route_swap(...)`.
 - `route_swap(...)` now escrows the caller input into the router contract subject before the c2c pool call, and the pool pays the output directly to the signer through the recipient-aware `swap_exact_in_*_for(...)` entrypoints.
+- Successful router swaps now append a router-local fill journal. Use `swap_history_head()` plus `mirror_swap_history(record_id)` to reconstruct exact executed fills and user-facing entry/exit analytics without inferring amounts from the submitted call payload alone.
+- `router_assets()` exposes both the canonical base asset and the currently bound quote asset so charting and journal surfaces can label the traded pair directly from the router state.
 - `mirror_position(...)` exposes stored fee debt and stored credits only. Use `quote_position_fees(...)` to read the fees that would become claimable after an accrual pass, especially before `remove_position_liquidity(...)`.

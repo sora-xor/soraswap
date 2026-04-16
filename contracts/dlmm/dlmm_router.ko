@@ -10,6 +10,12 @@ seiyaku DlmmRouter {
   state int RouterContractBound;
   state bytes BoundPoolContract;
   state int PoolBound;
+  state int SwapHistoryHead;
+  state SwapHistoryTrader: Map<int, AccountId>;
+  state SwapHistoryInputIsBase: Map<int, int>;
+  state SwapHistoryAmountIn: Map<int, int>;
+  state SwapHistoryAmountOut: Map<int, int>;
+  state SwapHistoryMinOut: Map<int, int>;
 
   fn ppm_scale() -> int {
     return 1_000_000;
@@ -44,6 +50,20 @@ seiyaku DlmmRouter {
     assert(RouterContractBound == 1, "router contract unbound");
   }
 
+  fn record_swap_history(trader: AccountId,
+                         input_is_base: int,
+                         amount_in: int,
+                         amount_out: int,
+                         min_out: int) {
+    let record_id = SwapHistoryHead + 1;
+    SwapHistoryHead = record_id;
+    SwapHistoryTrader[record_id] = trader;
+    SwapHistoryInputIsBase[record_id] = input_is_base;
+    SwapHistoryAmountIn[record_id] = amount_in;
+    SwapHistoryAmountOut[record_id] = amount_out;
+    SwapHistoryMinOut[record_id] = min_out;
+  }
+
   #[access(read="*", write="*")]
   kotoage fn main() -> int {
     if RouterInitialized == 1 {
@@ -65,6 +85,7 @@ seiyaku DlmmRouter {
     RouterContractBound = 0;
     BoundPoolContract = blob("");
     PoolBound = 0;
+    SwapHistoryHead = 0;
     info("dlmm_router_initialized");
   }
 
@@ -96,9 +117,31 @@ seiyaku DlmmRouter {
     return (BaseAsset, DefaultFeePips);
   }
 
+  view fn router_assets() -> (AssetDefinitionId, AssetDefinitionId) {
+    assert(RouterInitialized == 1, "router not initialized");
+    return (BaseAsset, QuoteAsset);
+  }
+
   view fn mirror_state() -> (int, int) {
     assert(RouterInitialized == 1, "router not initialized");
     return (RouterInitialized, DefaultFeePips);
+  }
+
+  view fn swap_history_head() -> int {
+    assert(RouterInitialized == 1, "router not initialized");
+    return SwapHistoryHead;
+  }
+
+  view fn mirror_swap_history(record_id: int) -> (AccountId, int, int, int, int) {
+    assert(RouterInitialized == 1, "router not initialized");
+    assert(SwapHistoryTrader.contains(record_id), "swap history missing");
+    return (
+      SwapHistoryTrader[record_id],
+      SwapHistoryInputIsBase.get_or(record_id, 0),
+      SwapHistoryAmountIn.get_or(record_id, 0),
+      SwapHistoryAmountOut.get_or(record_id, 0),
+      SwapHistoryMinOut.get_or(record_id, 0)
+    );
   }
 
   view fn execution_binding() -> int {
@@ -233,11 +276,15 @@ seiyaku DlmmRouter {
 
     if input_is_base == 1 {
       transfer_asset(trader, RouterContractId, BaseAsset, amount_in);
-      return decode_int(call_contract(BoundPoolContract, "swap_exact_in_base_for", payload));
+      let amount_out = decode_int(call_contract(BoundPoolContract, "swap_exact_in_base_for", payload));
+      record_swap_history(trader, input_is_base, amount_in, amount_out, min_out);
+      return amount_out;
     }
 
     assert(input_is_base == 0, "invalid direction");
     transfer_asset(trader, RouterContractId, QuoteAsset, amount_in);
-    return decode_int(call_contract(BoundPoolContract, "swap_exact_in_quote_for", payload));
+    let amount_out = decode_int(call_contract(BoundPoolContract, "swap_exact_in_quote_for", payload));
+    record_swap_history(trader, input_is_base, amount_in, amount_out, min_out);
+    return amount_out;
   }
 }
