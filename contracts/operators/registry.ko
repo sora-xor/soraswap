@@ -1,0 +1,72 @@
+seiyaku OperatorRegistry {
+  state OperatorOwner: Map<Name, AccountId>;
+  state OperatorBondAsset: Map<Name, AssetDefinitionId>;
+  state OperatorMinBond: Map<Name, int>;
+  state OperatorBonded: Map<Name, int>;
+  state OperatorHealthBps: Map<Name, int>;
+  state OperatorLastHeartbeatSlot: Map<Name, int>;
+  state OperatorFeesAccrued: Map<Name, int>;
+  state OperatorJailed: Map<Name, int>;
+
+  fn assert_operator_service(service: Name) {
+    assert(OperatorOwner.contains(service), "operator missing");
+    assert(OperatorOwner[service] == authority(), "operator mismatch");
+  }
+
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  kotoage fn register_operator(service: Name, bond_asset: AssetDefinitionId, min_bond: int) {
+    assert(!OperatorOwner.contains(service), "operator exists");
+    assert(min_bond > 0, "invalid min bond");
+    OperatorOwner[service] = authority();
+    OperatorBondAsset[service] = bond_asset;
+    OperatorMinBond[service] = min_bond;
+    OperatorBonded[service] = 0;
+    OperatorHealthBps[service] = 10_000;
+    OperatorJailed[service] = 0;
+  }
+
+  kotoage fn bond(service: Name, amount: int) permission(AssetOps) {
+    assert_operator_service(service);
+    assert(amount > 0, "invalid bond");
+    OperatorBonded[service] = OperatorBonded.ensure(service, 0) + amount;
+  }
+
+  kotoage fn heartbeat(service: Name, slot: int, health_bps: int, fees_accrued: int) {
+    assert_operator_service(service);
+    assert(health_bps >= 0, "invalid health");
+    assert(health_bps <= 10_000, "invalid health");
+    assert(fees_accrued >= 0, "invalid fees");
+    OperatorLastHeartbeatSlot[service] = slot;
+    OperatorHealthBps[service] = health_bps;
+    OperatorFeesAccrued[service] = OperatorFeesAccrued.ensure(service, 0) + fees_accrued;
+    if health_bps < 5_000 {
+      OperatorJailed[service] = 1;
+    }
+  }
+
+  kotoage fn claim_fees(service: Name) -> int {
+    assert_operator_service(service);
+    let amount = OperatorFeesAccrued.ensure(service, 0);
+    OperatorFeesAccrued[service] = 0;
+    return amount;
+  }
+
+  view fn operator_state(service: Name) -> (int, int, int, int, int, int, int) {
+    let registered = 0;
+    if OperatorOwner.contains(service) {
+      registered = 1;
+    }
+    return (
+      registered,
+      OperatorMinBond.get_or(service, 0),
+      OperatorBonded.get_or(service, 0),
+      OperatorHealthBps.get_or(service, 0),
+      OperatorLastHeartbeatSlot.get_or(service, 0),
+      OperatorFeesAccrued.get_or(service, 0),
+      OperatorJailed.get_or(service, 0)
+    );
+  }
+}

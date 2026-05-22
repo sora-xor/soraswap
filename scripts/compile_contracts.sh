@@ -1,9 +1,5 @@
 #!/bin/zsh
 set -euo pipefail
 
-source "$(cd "$(dirname "$0")" && pwd)/common.sh"
-
-while IFS= read -r contract; do
-  echo "compile: $contract"
-  compile_one "$contract"
-done < <(list_contracts)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$SCRIPT_DIR/dev_iroha.sh" build --manifest "${SORASWAP_CONTRACTS_MANIFEST:-iroha.contracts.toml}" --profile "${SORASWAP_PROFILE:-local}" "$@"

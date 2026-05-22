@@ -61,6 +61,7 @@ export SORASWAP_PRODUCTION_FEE_ASSET_LABEL="Prod Fee"
 [[ "$(network_prefix_for_config "$production_cfg")" == "369" ]]
 [[ "$(fee_asset_definition_id_for_config "$production_cfg")" == "prod-fee-id" ]]
 [[ "$(fee_asset_label_for_config "$production_cfg")" == "Prod Fee" ]]
+[[ "$(gas_metadata_asset_id_for_config "$production_cfg")" == "Prod Fee" ]]
 
 export SORASWAP_TESTNET_RUN_SUFFIX="testnet-leak"
 export SORASWAP_TESTNET_BRIDGE_ROUTE="testnet_route_leak"
@@ -108,6 +109,7 @@ export SORASWAP_PUBLIC_ENV=testnet
 [[ "$(network_prefix_for_config "$taira_cfg")" == "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT" ]]
 [[ "$(fee_asset_definition_id_for_config "$taira_cfg")" == "$SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID" ]]
 [[ "$(fee_asset_label_for_config "$taira_cfg")" == "$SORASWAP_TESTNET_FEE_ASSET_LABEL" ]]
+[[ "$(gas_metadata_asset_id_for_config "$taira_cfg")" == "$SORASWAP_TESTNET_FEE_ASSET_LABEL" ]]
 unset SORASWAP_PUBLIC_ENV
 
 current_fingerprint='{"torii_url":"https://node-a.example.invalid","chain":"same-chain","block_1_hash":"same-block-1"}'

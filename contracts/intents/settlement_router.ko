@@ -1,0 +1,92 @@
+seiyaku IntentSettlementRouter {
+  state IntentOwner: Map<Name, AccountId>;
+  state IntentInputAsset: Map<Name, AssetDefinitionId>;
+  state IntentOutputAsset: Map<Name, AssetDefinitionId>;
+  state IntentAmountIn: Map<Name, int>;
+  state IntentMinOut: Map<Name, int>;
+  state IntentSolverFeeBps: Map<Name, int>;
+  state IntentDeadlineSlot: Map<Name, int>;
+  state IntentNonce: Map<Name, int>;
+  state IntentStatus: Map<Name, int>;
+  state IntentSolver: Map<Name, AccountId>;
+  state IntentAmountOut: Map<Name, int>;
+  state IntentFillSlot: Map<Name, int>;
+
+  fn assert_intent_exists(intent_id: Name) {
+    assert(IntentOwner.contains(intent_id), "intent missing");
+  }
+
+  fn assert_intent_owner(intent_id: Name) {
+    assert_intent_exists(intent_id);
+    assert(IntentOwner[intent_id] == authority(), "intent owner mismatch");
+  }
+
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  kotoage fn open_intent(intent_id: Name,
+                         input_asset: AssetDefinitionId,
+                         output_asset: AssetDefinitionId,
+                         amount_in: int,
+                         min_out: int,
+                         solver_fee_bps: int,
+                         deadline_slot: int,
+                         nonce: int) permission(AssetOps) {
+    assert(!IntentOwner.contains(intent_id), "intent exists");
+    assert(amount_in > 0, "invalid amount in");
+    assert(min_out > 0, "invalid min out");
+    assert(solver_fee_bps >= 0, "invalid solver fee");
+    assert(solver_fee_bps <= 10_000, "invalid solver fee");
+    assert(deadline_slot >= 0, "invalid deadline");
+    assert(nonce >= 0, "invalid nonce");
+    IntentOwner[intent_id] = authority();
+    IntentInputAsset[intent_id] = input_asset;
+    IntentOutputAsset[intent_id] = output_asset;
+    IntentAmountIn[intent_id] = amount_in;
+    IntentMinOut[intent_id] = min_out;
+    IntentSolverFeeBps[intent_id] = solver_fee_bps;
+    IntentDeadlineSlot[intent_id] = deadline_slot;
+    IntentNonce[intent_id] = nonce;
+    IntentStatus[intent_id] = 1;
+  }
+
+  kotoage fn cancel_intent(intent_id: Name) {
+    assert_intent_owner(intent_id);
+    assert(IntentStatus.ensure(intent_id, 0) == 1, "intent not open");
+    IntentStatus[intent_id] = 3;
+  }
+
+  kotoage fn fill_intent(intent_id: Name, amount_out: int, fill_slot: int) {
+    assert_intent_exists(intent_id);
+    assert(IntentStatus.ensure(intent_id, 0) == 1, "intent not open");
+    assert(amount_out >= IntentMinOut.ensure(intent_id, 0), "insufficient output");
+    assert(fill_slot <= IntentDeadlineSlot.ensure(intent_id, 0), "intent expired");
+    IntentStatus[intent_id] = 2;
+    IntentSolver[intent_id] = authority();
+    IntentAmountOut[intent_id] = amount_out;
+    IntentFillSlot[intent_id] = fill_slot;
+  }
+
+  view fn intent_state(intent_id: Name) -> (int, int, int, int, int, int, int, int, int) {
+    let registered = 0;
+    let solver_bound = 0;
+    if IntentOwner.contains(intent_id) {
+      registered = 1;
+    }
+    if IntentSolver.contains(intent_id) {
+      solver_bound = 1;
+    }
+    return (
+      registered,
+      IntentStatus.get_or(intent_id, 0),
+      IntentAmountIn.get_or(intent_id, 0),
+      IntentMinOut.get_or(intent_id, 0),
+      IntentSolverFeeBps.get_or(intent_id, 0),
+      IntentDeadlineSlot.get_or(intent_id, 0),
+      IntentNonce.get_or(intent_id, 0),
+      solver_bound,
+      IntentAmountOut.get_or(intent_id, 0)
+    );
+  }
+}

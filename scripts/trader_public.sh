@@ -133,12 +133,24 @@ required_routes_json="$(
     --argjson swaps_candles "$(request_json GET "/v1/contracts/rollups/swaps/candles?authority=${encoded_authority}&limit=5&bucket_secs=3600")" \
     --argjson trader_activity "$(request_json GET "/v1/contracts/rollups/trader/activity?authority=${encoded_authority}&limit=5")" \
     --argjson trader_account "$(request_json GET "/v1/contracts/rollups/trader/account?authority=${encoded_authority}")" \
+    --argjson intents "$(request_json GET "/v1/contracts/rollups/intents?authority=${encoded_authority}&limit=5")" \
+    --argjson vault_positions "$(request_json GET "/v1/contracts/rollups/vaults/positions?authority=${encoded_authority}&limit=5")" \
+    --argjson operators_status "$(request_json GET "/v1/contracts/rollups/operators/status?authority=${encoded_authority}&limit=5")" \
+    --argjson margin_health "$(request_json GET "/v1/contracts/rollups/margin/health?authority=${encoded_authority}&limit=5")" \
+    --argjson rwa_lots "$(request_json GET "/v1/contracts/rollups/rwa/lots?authority=${encoded_authority}&limit=5")" \
+    --argjson dlmm_hooks "$(request_json GET "/v1/contracts/rollups/dlmm/hooks?authority=${encoded_authority}&limit=5")" \
     '{
       view_batch: $view_batch,
       swaps_fills: $swaps_fills,
       swaps_candles: $swaps_candles,
       trader_activity: $trader_activity,
-      trader_account: $trader_account
+      trader_account: $trader_account,
+      intents: $intents,
+      vault_positions: $vault_positions,
+      operators_status: $operators_status,
+      margin_health: $margin_health,
+      rwa_lots: $rwa_lots,
+      dlmm_hooks: $dlmm_hooks
     }'
 )"
 
@@ -256,10 +268,22 @@ if [[ "$mode" == "mutating" ]]; then
         --argjson swaps_fills "$(request_json GET "/v1/contracts/rollups/swaps/fills?authority=${encoded_authority}&limit=5")" \
         --argjson trader_activity "$(request_json GET "/v1/contracts/rollups/trader/activity?authority=${encoded_authority}&limit=5")" \
         --argjson trader_account "$(request_json GET "/v1/contracts/rollups/trader/account?authority=${encoded_authority}")" \
+        --argjson intents "$(request_json GET "/v1/contracts/rollups/intents?authority=${encoded_authority}&limit=5")" \
+        --argjson vault_positions "$(request_json GET "/v1/contracts/rollups/vaults/positions?authority=${encoded_authority}&limit=5")" \
+        --argjson operators_status "$(request_json GET "/v1/contracts/rollups/operators/status?authority=${encoded_authority}&limit=5")" \
+        --argjson margin_health "$(request_json GET "/v1/contracts/rollups/margin/health?authority=${encoded_authority}&limit=5")" \
+        --argjson rwa_lots "$(request_json GET "/v1/contracts/rollups/rwa/lots?authority=${encoded_authority}&limit=5")" \
+        --argjson dlmm_hooks "$(request_json GET "/v1/contracts/rollups/dlmm/hooks?authority=${encoded_authority}&limit=5")" \
         '{
           swaps_fills: $swaps_fills,
           trader_activity: $trader_activity,
-          trader_account: $trader_account
+          trader_account: $trader_account,
+          intents: $intents,
+          vault_positions: $vault_positions,
+          operators_status: $operators_status,
+          margin_health: $margin_health,
+          rwa_lots: $rwa_lots,
+          dlmm_hooks: $dlmm_hooks
         }'
     )"
     legacy_routes_after_json="$(

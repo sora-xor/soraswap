@@ -255,6 +255,7 @@ button:disabled {
 .rail {
   position: sticky;
   top: 18px;
+  min-width: 0;
 }
 
 .center-stage {
@@ -797,11 +798,14 @@ button:disabled {
   margin: 0;
   padding: 14px;
   min-height: 128px;
+  max-width: 100%;
   border-radius: 18px;
   border: 1px solid var(--border);
   background: rgba(17, 25, 37, 0.92);
   color: rgba(255, 255, 255, 0.84);
   overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .insight-grid {
@@ -843,7 +847,7 @@ button:disabled {
   color: var(--text);
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1320px) {
   .workspace {
     grid-template-columns: 1fr;
   }

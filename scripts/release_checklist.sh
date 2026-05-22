@@ -21,6 +21,11 @@ required_evidence=(
   "$testnet_dir/trader_readonly.latest.json"
   "$testnet_dir/trader.latest.json"
   "$testnet_dir/trader_api_bundle.latest.json"
+  "$testnet_dir/rwa_compliance.latest.json"
+)
+
+required_local_evidence=(
+  "$ROOT/artifacts/telemetry/defi_2026_primitives_latest.json"
 )
 
 local_acceptance_targets=(
@@ -37,12 +42,24 @@ for target in "${local_acceptance_targets[@]}"; do
   make -C "$ROOT" "$target"
 done
 
-for artifact_path in "${required_docs[@]}" "${required_evidence[@]}"; do
+for artifact_path in "${required_docs[@]}" "${required_evidence[@]}" "${required_local_evidence[@]}"; do
   if [[ ! -f "$artifact_path" ]]; then
     echo "missing required release artifact: $artifact_path" >&2
     exit 1
   fi
 done
+
+if ! jq -e '
+  (.launchReady // false) == true
+  and (.intent.status // "") == "filled"
+  and ((.vault.assets // 0) > 0)
+  and ((.operator.jailed // true) == false)
+  and ((.margin.healthBps // 0) >= 1000)
+  and ((.rwa.frozen // true) == false)
+' "$ROOT/artifacts/telemetry/defi_2026_primitives_latest.json" >/dev/null; then
+  echo "release checklist failed: defi_2026_primitives_latest.json does not prove all 2026 primitives" >&2
+  exit 1
+fi
 
 typeset -a non_ported_lines
 ported_count=0
@@ -93,6 +110,7 @@ console_json="$(cat "$testnet_dir/contract_console_smoke.latest.json")"
 trader_readonly_json="$(cat "$testnet_dir/trader_readonly.latest.json")"
 trader_json="$(cat "$testnet_dir/trader.latest.json")"
 trader_api_json="$(cat "$testnet_dir/trader_api_bundle.latest.json")"
+rwa_compliance_json="$(cat "$testnet_dir/rwa_compliance.latest.json")"
 
 for evidence_path in \
   "$testnet_dir/deploy.latest.json" \
@@ -102,7 +120,8 @@ for evidence_path in \
   "$testnet_dir/contract_console_smoke.latest.json" \
   "$testnet_dir/trader_readonly.latest.json" \
   "$testnet_dir/trader.latest.json" \
-  "$testnet_dir/trader_api_bundle.latest.json"; do
+  "$testnet_dir/trader_api_bundle.latest.json" \
+  "$testnet_dir/rwa_compliance.latest.json"; do
   if ! jq -e \
     --argjson chain "$chain_json" \
     '.chain_fingerprint != null
@@ -116,6 +135,18 @@ done
 
 if ! jq -e '.status == "completed"' <<<"$deploy_json" >/dev/null; then
   echo "release checklist failed: deployments/testnet/deploy.latest.json is not completed" >&2
+  exit 1
+fi
+
+if ! jq -e '
+  .status == "completed"
+  and ((.issuer_approval_ref // "") | type == "string" and length > 0)
+  and ((.legal_review_ref // "") | type == "string" and length > 0)
+  and ((.compliance_policy_ref // "") | type == "string" and length > 0)
+  and ((.nav_source_ref // "") | type == "string" and length > 0)
+  and ((.redemption_terms_ref // "") | type == "string" and length > 0)
+' <<<"$rwa_compliance_json" >/dev/null; then
+  echo "release checklist failed: rwa_compliance.latest.json must be completed and include issuer_approval_ref, legal_review_ref, compliance_policy_ref, nav_source_ref, and redemption_terms_ref" >&2
   exit 1
 fi
 
@@ -142,7 +173,7 @@ fi
 if ! jq -e '
   ((.content_cid // "") | test("^b[a-z2-7]+$"))
   and ((.manifest_digest_hex // "") | test("^[0-9a-fA-F]{64}$"))
-  and ((.routes // []) | length >= 5)
+  and ((.routes // []) | length >= 11)
   and (.cid_probe.status // "") == "completed"
 ' <<<"$trader_api_json" >/dev/null; then
   echo "release checklist failed: trader_api_bundle.latest.json is missing CID, manifest digest, routes, or successful CID probe" >&2
@@ -241,6 +272,44 @@ if ! jq -e '
   and ((.view_results.perps_liquidation_position_liquidation_state[2] // 0) > 0)
 ' <<<"$smoke_json" >/dev/null; then
   echo "release checklist failed: smoke.latest.json is missing automatic perps liquidation evidence" >&2
+  exit 1
+fi
+
+if ! jq -e '
+  (.tx_hashes.intent_open // null) != null
+  and (.tx_hashes.intent_fill // null) != null
+  and (.tx_hashes.vault_register // null) != null
+  and (.tx_hashes.vault_deposit // null) != null
+  and (.tx_hashes.vault_request_redeem // null) != null
+  and (.tx_hashes.vault_claim_redeem // null) != null
+  and (.tx_hashes.operator_register // null) != null
+  and (.tx_hashes.operator_bond // null) != null
+  and (.tx_hashes.operator_heartbeat // null) != null
+  and (.tx_hashes.margin_register_market // null) != null
+  and (.tx_hashes.margin_deposit_collateral // null) != null
+  and (.tx_hashes.margin_lock_exposure // null) != null
+  and (.tx_hashes.margin_liquidate_account // null) != null
+  and (.tx_hashes.rwa_issue_lot // null) != null
+  and (.tx_hashes.rwa_report_nav // null) != null
+  and (.tx_hashes.rwa_request_redemption // null) != null
+  and (.tx_hashes.rwa_settle_redemption // null) != null
+  and (.tx_hashes.dlmm_configure_hook // null) != null
+  and (.tx_hashes.dlmm_place_limit_order // null) != null
+  and (.tx_hashes.dlmm_schedule_twamm // null) != null
+  and (.tx_hashes.dlmm_record_hook_execution // null) != null
+  and ((.rejection_evidence.intent_replay // "") | length > 0)
+  and ((.rejection_evidence.unregistered_operator // "") | length > 0)
+  and ((.rejection_evidence.unhealthy_margin_withdraw // "") | length > 0)
+  and ((.rejection_evidence.duplicate_rwa_issue // "") | length > 0)
+  and ((.rejection_evidence.disabled_dlmm_hook // "") | length > 0)
+  and (.view_results.intent_state == [1,2,10,9,30,100,1,1,10])
+  and (.view_results.vault_state == [1,1,1,15,15])
+  and (.view_results.operator_state == [1,100,125,8000,11,0,0])
+  and (.view_results.margin_account_health == [0,0,10000,1])
+  and (.view_results.rwa_market_state == [1,105,900,1])
+  and (.view_results.dlmm_hook_quote == [1,20,18,20,19])
+' <<<"$smoke_json" >/dev/null; then
+  echo "release checklist failed: smoke.latest.json is missing 2026 primitive mutation/rejection evidence" >&2
   exit 1
 fi
 

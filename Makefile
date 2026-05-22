@@ -1,12 +1,30 @@
 SHELL := /bin/zsh
 
-.PHONY: lint compile simulate-smoke simulate-full local-up local-down deploy-local smoke-local deploy-testnet deploy-production publish-trader-api smoke-testnet smoke-testnet-readonly smoke-testnet-trader smoke-testnet-trader-readonly smoke-production smoke-production-readonly public-nested-call-probe testnet-nested-call-probe production-nested-call-probe test-public-env-helpers test-local test-local-isolated test-local-foundation-isolated contract-console trader-ui test-contract-console test-contract-console-ui test-contract-console-integration test-trader-ui test-contract-console-live test-contract-console-testnet test-contract-console-production soak-contract-console release-checklist
+.PHONY: dev-doctor dev-build dev-check dev-test dev-schema dev-smoke lint compile simulate-smoke simulate-full local-up local-down deploy-local smoke-local deploy-testnet deploy-production publish-trader-api smoke-testnet smoke-testnet-readonly smoke-testnet-trader smoke-testnet-trader-readonly smoke-production smoke-production-readonly public-nested-call-probe testnet-nested-call-probe production-nested-call-probe test-public-env-helpers test-local test-local-isolated test-local-foundation-isolated contract-console trader-ui test-contract-console test-contract-console-ui test-contract-console-integration test-trader-ui test-contract-console-live test-contract-console-testnet test-contract-console-production soak-contract-console release-taira release-checklist
+
+dev-doctor:
+	./scripts/dev_iroha.sh doctor --manifest iroha.contracts.toml --profile $(or $(SORASWAP_PROFILE),local)
+
+dev-build:
+	./scripts/dev_iroha.sh build --manifest iroha.contracts.toml --profile $(or $(SORASWAP_PROFILE),local)
+
+dev-check:
+	./scripts/dev_iroha.sh check --manifest iroha.contracts.toml --profile $(or $(SORASWAP_PROFILE),local)
+
+dev-test:
+	./scripts/dev_iroha.sh test --manifest iroha.contracts.toml --profile $(or $(SORASWAP_PROFILE),local)
+
+dev-schema:
+	./scripts/dev_iroha.sh schema --manifest iroha.contracts.toml --profile $(or $(SORASWAP_PROFILE),local) --out docs/interface_specs/generated.md
+
+dev-smoke:
+	./scripts/dev_iroha.sh smoke --manifest iroha.contracts.toml --profile $(or $(SORASWAP_PROFILE),local)
 
 lint:
-	./scripts/lint_contracts.sh
+	$(MAKE) dev-check
 
 compile:
-	./scripts/compile_contracts.sh
+	$(MAKE) dev-build
 
 simulate-smoke:
 	npm run simulate:smoke
@@ -103,6 +121,9 @@ test-contract-console-production:
 
 soak-contract-console:
 	./scripts/soak_contract_console.sh
+
+release-taira:
+	./scripts/release_taira.sh
 
 release-checklist:
 	./scripts/release_checklist.sh

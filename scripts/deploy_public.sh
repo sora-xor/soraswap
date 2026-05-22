@@ -86,7 +86,7 @@ while IFS= read -r contract; do
 done < <(list_contracts)
 rm -f "$(contract_bundle_receipt_path_for_env "$public_env")"
 bundle_receipt_json="$(submit_contract_app_bundle "$config" deploy)"
-materialize_contract_bundle_records_for_env "$public_env" "$bundle_receipt_json"
+materialize_contract_bundle_records_for_env "$public_env" "$bundle_receipt_json" "$config"
 deploy_report_set_phase "$public_env" deploy completed "$(jq -cn \
   --arg bundle_digest "$(jq -r '.bundle_digest' <<<"$bundle_receipt_json")" \
   --arg total "$(jq -r '.contracts | length' <<<"$bundle_receipt_json")" \

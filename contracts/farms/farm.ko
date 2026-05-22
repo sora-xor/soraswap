@@ -83,12 +83,10 @@ seiyaku Farm {
     return emitted;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     return FarmInitialized;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_farm(stake_asset: AssetDefinitionId,
                        reward_asset: AssetDefinitionId,
                        treasury: AccountId,
@@ -110,13 +108,11 @@ seiyaku Farm {
     RewardIndexRemainder = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_slot(current_slot: int) -> int {
     assert(current_slot >= 0, "invalid slot");
     return sync_slot_impl(current_slot);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn fund_rewards(amount: int) -> int permission(AssetOps) {
     assert_initialized();
     assert(amount > 0, "invalid reward amount");
@@ -126,7 +122,6 @@ seiyaku Farm {
     return amount;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn stake(position: Name, amount: int) permission(AssetOps) {
     assert_initialized();
     let staker = authority();
@@ -147,7 +142,6 @@ seiyaku Farm {
     RewardDebt[position] = GlobalRewardIndex;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn unstake(position: Name, amount: int) permission(AssetOps) {
     assert_initialized();
     let staker = authority();
@@ -163,7 +157,6 @@ seiyaku Farm {
     RewardDebt[position] = GlobalRewardIndex;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn claim(position: Name) permission(AssetOps) {
     assert_initialized();
     let staker = authority();

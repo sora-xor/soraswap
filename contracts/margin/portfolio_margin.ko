@@ -1,0 +1,91 @@
+seiyaku PortfolioMargin {
+  state MarketOwner: Map<Name, AccountId>;
+  state MarketRiskWeightBps: Map<Name, int>;
+  state MarketLiquidationThresholdBps: Map<Name, int>;
+  state AccountCollateral: Map<Name, int>;
+  state AccountExposure: Map<Name, int>;
+  state AccountHealthBps: Map<Name, int>;
+  state LiquidationCount: Map<Name, int>;
+
+  fn assert_market_exists(market_id: Name) {
+    assert(MarketOwner.contains(market_id), "market missing");
+  }
+
+  fn recalc(account_key: Name) {
+    let collateral = AccountCollateral.ensure(account_key, 0);
+    let exposure = AccountExposure.ensure(account_key, 0);
+    if exposure == 0 {
+      AccountHealthBps[account_key] = 10_000;
+      return;
+    }
+    AccountHealthBps[account_key] = (collateral * 10_000) / exposure;
+  }
+
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  kotoage fn register_market(market_id: Name, risk_weight_bps: int, liquidation_threshold_bps: int) {
+    assert(!MarketOwner.contains(market_id), "market exists");
+    assert(risk_weight_bps >= 0, "invalid risk weight");
+    assert(risk_weight_bps <= 10_000, "invalid risk weight");
+    assert(liquidation_threshold_bps >= 0, "invalid threshold");
+    assert(liquidation_threshold_bps <= 10_000, "invalid threshold");
+    MarketOwner[market_id] = authority();
+    MarketRiskWeightBps[market_id] = risk_weight_bps;
+    MarketLiquidationThresholdBps[market_id] = liquidation_threshold_bps;
+  }
+
+  kotoage fn deposit_collateral(account_key: Name, amount: int) permission(AssetOps) {
+    assert(amount > 0, "invalid collateral");
+    AccountCollateral[account_key] = AccountCollateral.ensure(account_key, 0) + amount;
+    recalc(account_key);
+  }
+
+  kotoage fn withdraw_collateral(account_key: Name, amount: int) permission(AssetOps) {
+    assert(amount > 0, "invalid collateral");
+    assert(AccountCollateral.ensure(account_key, 0) >= amount, "insufficient collateral");
+    AccountCollateral[account_key] = AccountCollateral.ensure(account_key, 0) - amount;
+    recalc(account_key);
+    assert(AccountHealthBps.ensure(account_key, 0) >= 1_000, "margin unhealthy");
+  }
+
+  kotoage fn lock_exposure(market_id: Name, account_key: Name, exposure_delta: int) {
+    assert_market_exists(market_id);
+    assert(exposure_delta >= 0, "invalid exposure");
+    AccountExposure[account_key] = AccountExposure.ensure(account_key, 0) + exposure_delta;
+    recalc(account_key);
+  }
+
+  kotoage fn liquidate_account(account_key: Name) -> int {
+    let health = AccountHealthBps.ensure(account_key, 10_000);
+    assert(health < 1_000, "account healthy");
+    let collateral = AccountCollateral.ensure(account_key, 0);
+    AccountCollateral[account_key] = 0;
+    AccountExposure[account_key] = 0;
+    AccountHealthBps[account_key] = 10_000;
+    LiquidationCount[account_key] = LiquidationCount.ensure(account_key, 0) + 1;
+    return collateral;
+  }
+
+  view fn market_state(market_id: Name) -> (int, int, int) {
+    let registered = 0;
+    if MarketOwner.contains(market_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      MarketRiskWeightBps.get_or(market_id, 0),
+      MarketLiquidationThresholdBps.get_or(market_id, 0)
+    );
+  }
+
+  view fn account_health(account_key: Name) -> (int, int, int, int) {
+    return (
+      AccountCollateral.get_or(account_key, 0),
+      AccountExposure.get_or(account_key, 0),
+      AccountHealthBps.get_or(account_key, 10_000),
+      LiquidationCount.get_or(account_key, 0)
+    );
+  }
+}

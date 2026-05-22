@@ -5,6 +5,8 @@
 
 seiyaku SccpBridge {
   state int BridgeInitialized;
+  state AccountId BridgeOwner;
+  state AccountId BridgeProofAuthority;
   state int RegistryEnabled;
   state AssetDefinitionId ListingFeeAsset;
   state AccountId TreasuryAccount;
@@ -41,6 +43,16 @@ seiyaku SccpBridge {
 
   fn assert_initialized() {
     assert(BridgeInitialized == 1, "bridge not initialized");
+  }
+
+  fn assert_owner() {
+    assert_initialized();
+    assert(BridgeOwner == authority(), "bridge owner mismatch");
+  }
+
+  fn assert_proof_authority() {
+    assert_initialized();
+    assert(BridgeProofAuthority == authority(), "bridge proof authority mismatch");
   }
 
   fn assert_asset_exists(asset_key: Name) {
@@ -135,17 +147,18 @@ seiyaku SccpBridge {
     }
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     return BridgeInitialized;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_bridge(listing_fee_asset: AssetDefinitionId,
                          treasury: AccountId,
-                         listing_fee_amount: int) {
+                         listing_fee_amount: int,
+                         proof_authority: AccountId) {
     assert(BridgeInitialized == 0, "bridge initialized");
     assert(listing_fee_amount >= 0, "invalid listing fee");
+    BridgeOwner = authority();
+    BridgeProofAuthority = proof_authority;
     ListingFeeAsset = listing_fee_asset;
     TreasuryAccount = treasury;
     ListingFeeAmount = listing_fee_amount;
@@ -153,7 +166,11 @@ seiyaku SccpBridge {
     BridgeInitialized = 1;
   }
 
-  #[access(read="*", write="*")]
+  kotoage fn set_proof_authority(proof_authority: AccountId) {
+    assert_owner();
+    BridgeProofAuthority = proof_authority;
+  }
+
   kotoage fn register_asset(asset_key: Name,
                             asset: AssetDefinitionId,
                             home_domain: int,
@@ -170,7 +187,6 @@ seiyaku SccpBridge {
     AssetListingPaid[asset_key] = ListingFeeAmount;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_asset_vault(asset_key: Name,
                               vault_account: AccountId) permission(AssetOps) {
     assert_initialized();
@@ -182,7 +198,6 @@ seiyaku SccpBridge {
     AssetVaultAccount[asset_key] = vault_account;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn activate_route(route: Name,
                             asset_key: Name,
                             remote_domain: int,
@@ -195,12 +210,12 @@ seiyaku SccpBridge {
     store_route(route, asset_key, remote_domain, local_asset, vault_account, 0, route);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn activate_route_governed(message_id: Name,
                                      route: Name,
                                      asset_key: Name,
                                      remote_domain: int) {
     assert_initialized();
+    assert_proof_authority();
     assert_asset_exists(asset_key);
     assert_asset_vault_bound(asset_key);
     assert(remote_domain >= 0, "invalid remote domain");
@@ -216,21 +231,18 @@ seiyaku SccpBridge {
     store_route(route, asset_key, remote_domain, local_asset, vault_account, 1, message_id);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn pause_route(route: Name) {
     assert_route_owner(route);
     assert_route_not_governed(route);
     RouteEnabled[route] = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn resume_route(route: Name) {
     assert_route_owner(route);
     assert_route_not_governed(route);
     RouteEnabled[route] = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn lock_to_remote(route: Name,
                             transfer: Name,
                             recipient: Name,
@@ -255,12 +267,12 @@ seiyaku SccpBridge {
     return next_nonce;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn finalize_inbound(route: Name,
                               message_id: Name,
                               recipient: AccountId,
                               amount: int) permission(AssetOps) {
     assert_initialized();
+    assert_proof_authority();
     assert_route_exists(route);
     assert(amount > 0, "invalid amount");
     assert(ConsumedInbound.get_or(message_id, 0) == 0, "message consumed");
@@ -275,6 +287,14 @@ seiyaku SccpBridge {
       TreasuryAccount,
       ListingFeeAmount,
       RegistryEnabled
+    );
+  }
+
+  view fn bridge_authorities() -> (AccountId, AccountId) {
+    assert_initialized();
+    return (
+      BridgeOwner,
+      BridgeProofAuthority
     );
   }
 

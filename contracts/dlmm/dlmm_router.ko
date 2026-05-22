@@ -64,7 +64,6 @@ seiyaku DlmmRouter {
     SwapHistoryMinOut[record_id] = min_out;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     if RouterInitialized == 1 {
       return DefaultFeePips;
@@ -72,7 +71,6 @@ seiyaku DlmmRouter {
     return 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_router(base_asset: AssetDefinitionId, default_fee_pips: int) {
     assert(RouterInitialized == 0, "router initialized");
     assert_valid_fee(default_fee_pips);
@@ -89,7 +87,6 @@ seiyaku DlmmRouter {
     info("dlmm_router_initialized");
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_contract(contract_id: AccountId) {
     assert(RouterInitialized == 1, "router not initialized");
     assert_owner();
@@ -97,7 +94,6 @@ seiyaku DlmmRouter {
     RouterContractBound = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_pool(pool_contract: bytes, quote_asset: AssetDefinitionId) {
     assert(RouterInitialized == 1, "router not initialized");
     assert_owner();
@@ -259,7 +255,6 @@ seiyaku DlmmRouter {
     return via_base_out;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn route_swap(amount_in: int,
                         input_is_base: int,
                         min_out: int) -> int permission(AssetOps) {

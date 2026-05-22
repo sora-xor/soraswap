@@ -5,6 +5,9 @@ SORASWAP_ROOT="${SORASWAP_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 SORASWAP_IROHA_ROOT="${SORASWAP_IROHA_ROOT:-$(cd "$SORASWAP_ROOT/../iroha" && pwd)}"
 SORASWAP_BASE_ASSET_ALIAS="${SORASWAP_BASE_ASSET_ALIAS:-xor#universal}"
 SORASWAP_FEE_ASSET_ALIAS="${SORASWAP_FEE_ASSET_ALIAS:-$SORASWAP_BASE_ASSET_ALIAS}"
+SORASWAP_LOCAL_FEE_ASSET_LABEL="${SORASWAP_LOCAL_FEE_ASSET_LABEL:-xor#wonderland}"
+SORASWAP_LOCAL_FEE_ASSET_SCALE="${SORASWAP_LOCAL_FEE_ASSET_SCALE:-9}"
+SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID="${SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID:-6TEAJqbb8oEPmLncoNiMRbLEK6tw}"
 SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID="${SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID:-6TEAJqbb8oEPmLncoNiMRbLEK6tw}"
 SORASWAP_TESTNET_FEE_ASSET_LABEL="${SORASWAP_TESTNET_FEE_ASSET_LABEL:-$SORASWAP_FEE_ASSET_ALIAS}"
 SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID="${SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID:-}"
@@ -20,17 +23,16 @@ DEFAULT_LOCAL_CLIENT="$DEFAULT_LOCALNET_DIR/client.toml"
 DEFAULT_TESTNET_CLIENT="$SORASWAP_ROOT/config/testnet/taira.client.toml"
 DEFAULT_PRODUCTION_CLIENT="$SORASWAP_ROOT/config/production/production.client.toml"
 SORASWAP_SNS_DOMAIN_SUFFIX_ID="${SORASWAP_SNS_DOMAIN_SUFFIX_ID:-4098}"
-SORASWAP_SNS_PAYMENT_ASSET_ID="${SORASWAP_SNS_PAYMENT_ASSET_ID:-61CtjvNd9T3THAR65GsMVHr82Bjc}"
 # The `/v1/contracts/call` wrapper expects an explicit positive gas limit.
 # Keep the default aligned with the verified local smoke path and README docs;
 # callers can still override this per-run for heavier scenarios.
-SORASWAP_SMOKE_GAS_LIMIT="${SORASWAP_SMOKE_GAS_LIMIT:-100000}"
+SORASWAP_SMOKE_GAS_LIMIT="${SORASWAP_SMOKE_GAS_LIMIT:-500000}"
 SORASWAP_TESTNET_CHAIN_ID="${SORASWAP_TESTNET_CHAIN_ID:-809574f5-fee7-5e69-bfcf-52451e42d50f}"
 SORASWAP_TESTNET_CHAIN_DISCRIMINANT="${SORASWAP_TESTNET_CHAIN_DISCRIMINANT:-369}"
 SORASWAP_PRODUCTION_CHAIN_ID="${SORASWAP_PRODUCTION_CHAIN_ID:-}"
 SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP="${SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP:-1048576}"
 SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS:-45}"
-SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS:-600}"
+SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS:-1800}"
 SORASWAP_DEPLOY_PIPELINE_WAIT_SECS="${SORASWAP_DEPLOY_PIPELINE_WAIT_SECS:-300}"
 SORASWAP_DEPLOY_COMMITTED_WAIT_SECS="${SORASWAP_DEPLOY_COMMITTED_WAIT_SECS:-120}"
 SORASWAP_DEPLOY_MANIFEST_WAIT_SECS="${SORASWAP_DEPLOY_MANIFEST_WAIT_SECS:-180}"
@@ -40,6 +42,8 @@ SORASWAP_CONTRACT_CALL_MAX_TIME_SECS="${SORASWAP_CONTRACT_CALL_MAX_TIME_SECS:-12
 SORASWAP_CONTRACT_CALL_RETRY_COUNT="${SORASWAP_CONTRACT_CALL_RETRY_COUNT:-1}"
 SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS="${SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS:-30}"
 SORASWAP_TORII_READ_MAX_TIME_SECS="${SORASWAP_TORII_READ_MAX_TIME_SECS:-10}"
+SORASWAP_ORACLE_SCHEME="${SORASWAP_ORACLE_SCHEME:-1}"
+typeset -gA SORASWAP_LOCAL_ORACLE_KEYPAIR_CACHE
 
 utc_timestamp() {
   env TZ=UTC date '+%Y%m%dT%H%M%SZ'
@@ -87,6 +91,511 @@ compact_json_or_fail() {
   }
 
   jq -ce . <<<"$normalized"
+}
+
+soraswap_normalize_oracle_public_key_hex() {
+  local raw_key="${1:-}"
+  local value
+  if [[ -z "$raw_key" ]]; then
+    echo "SORASWAP_ORACLE_PUBLIC_KEY_HEX is required" >&2
+    return 1
+  fi
+  value="${raw_key#ed25519:}"
+  value="${value#ED25519:}"
+  value="${value#0x}"
+  value="${value#0X}"
+  value="$(printf '%s' "$value" | tr -d '[:space:]')"
+  if [[ "${#value}" == "70" && "${value[1,6]:l}" == "ed0120" ]]; then
+    value="${value[7,-1]}"
+  fi
+  if [[ "${#value}" != "64" || ! "$value" =~ '^[0-9A-Fa-f]+$' ]]; then
+    echo "public key must be a raw 32-byte Ed25519 key or ed0120-prefixed Iroha key" >&2
+    return 1
+  fi
+  printf '0x%s\n' "${value:l}"
+}
+
+soraswap_local_oracle_keypair_json_for_config() {
+  local config="$1"
+  local chain torii_base seed cache_key key_output public_key private_key kagami_bin
+
+  if public_env_for_config "$config" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  chain="$(config_chain_id_from_config "$config")"
+  torii_base="$(torii_base_from_config "$config")"
+  cache_key="${chain}|${torii_base}"
+  if [[ -n "${SORASWAP_LOCAL_ORACLE_KEYPAIR_CACHE[$cache_key]:-}" ]]; then
+    printf '%s\n' "${SORASWAP_LOCAL_ORACLE_KEYPAIR_CACHE[$cache_key]}"
+    return 0
+  fi
+
+  seed="soraswap:oracle:v1:${chain}:${torii_base}"
+
+  ensure_kagami_bin >/dev/null
+  kagami_bin="$SORASWAP_IROHA_ROOT/target/debug/kagami"
+  key_output="$("$kagami_bin" keys --algorithm ed25519 --seed "$seed" --compact 2>/dev/null)"
+  public_key="$(awk '/^ed[0-9A-Fa-f]+$/ { print; exit }' <<<"$key_output")"
+  private_key="$(awk '/^8026[0-9A-Fa-f]+$/ { print; exit }' <<<"$key_output")"
+  if [[ -z "$public_key" || -z "$private_key" ]]; then
+    echo "failed to derive local oracle keypair for $config" >&2
+    return 1
+  fi
+
+  SORASWAP_LOCAL_ORACLE_KEYPAIR_CACHE[$cache_key]="$(jq -cn --arg public_key "$public_key" --arg private_key "$private_key" \
+    '{public_key: $public_key, private_key: $private_key}'
+  )"
+  printf '%s\n' "${SORASWAP_LOCAL_ORACLE_KEYPAIR_CACHE[$cache_key]}"
+}
+
+soraswap_oracle_public_key_hex_for_config() {
+  local config="${1:-}"
+  local keypair_json
+
+  if [[ -n "${SORASWAP_ORACLE_PUBLIC_KEY_HEX:-}" ]]; then
+    soraswap_normalize_oracle_public_key_hex "$SORASWAP_ORACLE_PUBLIC_KEY_HEX"
+    return
+  fi
+
+  if [[ -n "$config" ]]; then
+    local config_public_key
+    config_public_key="$(account_public_key_from_config "$config" 2>/dev/null || true)"
+    if [[ -n "$config_public_key" ]]; then
+      soraswap_normalize_oracle_public_key_hex "$config_public_key"
+      return
+    fi
+  fi
+
+  if [[ -n "$config" ]] && keypair_json="$(soraswap_local_oracle_keypair_json_for_config "$config")"; then
+    soraswap_normalize_oracle_public_key_hex "$(jq -r '.public_key' <<<"$keypair_json")"
+    return
+  fi
+
+  echo "SORASWAP_ORACLE_PUBLIC_KEY_HEX is required for public bootstrap; local configs use the signer key unless explicitly overridden" >&2
+  return 1
+}
+
+soraswap_oracle_private_key_hex_for_config() {
+  local config="${1:-}"
+  local keypair_json
+
+  if [[ -n "${SORASWAP_ORACLE_PRIVATE_KEY_HEX:-}" ]]; then
+    printf '%s\n' "$SORASWAP_ORACLE_PRIVATE_KEY_HEX"
+    return
+  fi
+
+  if [[ -n "$config" ]]; then
+    local config_private_key
+    config_private_key="$(account_private_key_from_config "$config" 2>/dev/null || true)"
+    if [[ -n "$config_private_key" ]]; then
+      printf '%s\n' "$config_private_key"
+      return
+    fi
+  fi
+
+  if [[ -n "$config" ]] && keypair_json="$(soraswap_local_oracle_keypair_json_for_config "$config")"; then
+    jq -r '.private_key' <<<"$keypair_json"
+    return
+  fi
+
+  echo "SORASWAP_ORACLE_PRIVATE_KEY_HEX is required for signed oracle smoke on public configs; local configs use the signer key unless explicitly overridden" >&2
+  return 1
+}
+
+soraswap_required_oracle_public_key_hex() {
+  soraswap_oracle_public_key_hex_for_config "${1:-}"
+}
+
+soraswap_current_block_height() {
+  local config="$1"
+  local torii_base response
+
+  torii_base="$(torii_base_from_config "$config")"
+  response="$(curl -sS --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" "$torii_base/status/blocks" 2>/dev/null || true)"
+  if [[ -n "$response" ]] && jq -e 'type == "number"' >/dev/null 2>&1 <<<"$response"; then
+    jq -r '.' <<<"$response"
+    return 0
+  fi
+
+  response="$(curl -sS --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" "$torii_base/status" 2>/dev/null || true)"
+  if [[ -n "$response" ]] && jq -e '.blocks? // empty' >/dev/null 2>&1 <<<"$response"; then
+    jq -r '.blocks' <<<"$response"
+    return 0
+  fi
+
+  echo "0"
+}
+
+soraswap_wait_for_block_height_at_least() {
+  local config="$1"
+  local target_height="$2"
+  local label="${3:-block height}"
+  local attempts="${4:-120}"
+  local height
+
+  if [[ -z "$target_height" || "$target_height" == "null" || "$target_height" != <-> ]]; then
+    echo "invalid target block height for $label: $target_height" >&2
+    return 1
+  fi
+
+  while (( attempts > 0 )); do
+    height="$(soraswap_current_block_height "$config")"
+    if [[ -n "$height" && "$height" != "null" && "$height" == <-> ]]; then
+      if (( height >= target_height )); then
+        return 0
+      fi
+    fi
+    attempts=$(( attempts - 1 ))
+    sleep 1
+  done
+
+  echo "timed out waiting for $label block height >= $target_height; last height=${height:-unknown}" >&2
+  return 1
+}
+
+soraswap_next_oracle_slot() {
+  local config="$1"
+  local height attempts
+
+  typeset -g SORASWAP_LAST_ORACLE_SLOT="${SORASWAP_LAST_ORACLE_SLOT:-0}"
+  attempts=0
+  while true; do
+    height="$(soraswap_current_block_height "$config")"
+    if [[ -z "$height" || "$height" == "null" || "$height" != <-> ]]; then
+      height=0
+    fi
+    if (( height < 1 )); then
+      if (( SORASWAP_LAST_ORACLE_SLOT < 1 )); then
+        SORASWAP_LAST_ORACLE_SLOT=1
+      fi
+      echo "$SORASWAP_LAST_ORACLE_SLOT"
+      return 0
+    fi
+    if (( height > SORASWAP_LAST_ORACLE_SLOT )); then
+      SORASWAP_LAST_ORACLE_SLOT="$height"
+      echo "$height"
+      return 0
+    fi
+    if (( attempts >= 12 )); then
+      echo "oracle block height did not advance past $SORASWAP_LAST_ORACLE_SLOT" >&2
+      return 1
+    fi
+    sleep 1
+    attempts=$(( attempts + 1 ))
+  done
+}
+
+soraswap_native_oracle_attestation_json() {
+  local config="$1"
+  local domain="$2"
+  local subject_id="$3"
+  local response_json="" torii_base endpoint response http_code body
+
+  torii_base="$(torii_base_from_config "$config")"
+  endpoint="$torii_base/v1/soracles/defi/attestations/latest?domain=$(uri_encode "$domain")&subject_id=$(uri_encode "$subject_id")"
+  if response="$(curl -sS --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
+    -w $'\n%{http_code}' \
+    "$endpoint" 2>/dev/null)"; then
+    http_code="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+    if [[ "$http_code" == "200" ]] && jq -e . >/dev/null 2>&1 <<<"$body"; then
+      response_json="$body"
+    elif [[ "$http_code" == "404" ]]; then
+      echo "native DeFi oracle attestation not found for domain=$domain subject_id=$subject_id" >&2
+      return 1
+    fi
+  fi
+
+  if [[ -z "$response_json" ]]; then
+    response_json="$(iroha_cli_json --config "$config" app soracles query defi-attestation \
+      --domain "$domain" \
+      --subject-id "$subject_id")" || {
+        echo "native DeFi oracle attestation not found for domain=$domain subject_id=$subject_id" >&2
+        return 1
+      }
+  fi
+
+  jq -ce . <<<"$response_json"
+}
+
+soraswap_native_oracle_fields_json() {
+  local config="$1"
+  local domain="$2"
+  local subject_id="$3"
+  local response_json
+
+  response_json="$(soraswap_native_oracle_attestation_json "$config" "$domain" "$subject_id")" || return 1
+
+  jq -ce --argjson raw "$response_json" '
+    def hex_digit:
+      ((. / 16) | floor) as $hi
+      | (. % 16) as $lo
+      | "0123456789abcdef"[$hi:$hi + 1]
+        + "0123456789abcdef"[$lo:$lo + 1];
+    def bytes_hex:
+      if type == "string" then
+        if startswith("0x") or startswith("0X") then . else "0x" + . end
+      elif type == "array" then
+        "0x" + (map(hex_digit) | join(""))
+      else
+        empty
+      end;
+    ($raw.data // $raw.result // $raw) as $a
+    | {
+        oracle_payload: (($a.oracle_payload // $a.oraclePayload) | bytes_hex),
+        oracle_signature: (($a.oracle_signature // $a.oracleSignature) | bytes_hex)
+      }
+    | select(.oracle_payload != null and .oracle_signature != null)
+  ' || {
+    echo "native DeFi oracle attestation response did not include oracle payload/signature" >&2
+    return 1
+  }
+}
+
+soraswap_sign_oracle_payload_json() {
+  local config="$1"
+  local payload_json="$2"
+  local private_key expected_public_key actual_public_key
+
+  private_key="$(soraswap_oracle_private_key_hex_for_config "$config")"
+  expected_public_key="$(soraswap_oracle_public_key_hex_for_config "$config")"
+  local signed_json
+  signed_json="$(python3 "$SORASWAP_ROOT/scripts/oracle_payload.py" \
+    --payload-json "$payload_json" \
+    --private-key-hex "$private_key")"
+  actual_public_key="$(soraswap_normalize_oracle_public_key_hex "$(jq -r '.oracle_public_key' <<<"$signed_json")")"
+  if [[ "$actual_public_key" != "$expected_public_key" ]]; then
+    echo "oracle private key does not match SORASWAP_ORACLE_PUBLIC_KEY_HEX/config signer public key" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$signed_json"
+}
+
+soraswap_submit_native_defi_attestation() {
+  local config="$1"
+  local domain="$2"
+  local subject_id="$3"
+  local oracle_slot="$4"
+  local status_flags="$5"
+  local attestation_hash="$6"
+  local signed_json="$7"
+  local provider account_public_key oracle_public_key attestation_file
+  local exit_code
+
+  provider="$(authority_from_config "$config")" || {
+    echo "failed to derive DeFi oracle provider account from $config" >&2
+    return 1
+  }
+  account_public_key="$(soraswap_normalize_oracle_public_key_hex "$(account_public_key_from_config "$config")")"
+  oracle_public_key="$(soraswap_oracle_public_key_hex_for_config "$config")"
+  if [[ "$account_public_key" != "$oracle_public_key" ]]; then
+    echo "native DeFi oracle attestations must be signed by the submitting provider account key" >&2
+    return 1
+  fi
+
+  attestation_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-defi-attestation.XXXXXX.json")"
+  jq -cn \
+    --arg provider "$provider" \
+    --argjson domain "$domain" \
+    --argjson subject_id "$subject_id" \
+    --argjson oracle_slot "$oracle_slot" \
+    --argjson status_flags "$status_flags" \
+    --argjson attestation_hash "$attestation_hash" \
+    --argjson oracle_payload "$(jq -c '.oracle_payload_bytes' <<<"$signed_json")" \
+    --argjson oracle_signature "$(jq -c '.oracle_signature_bytes' <<<"$signed_json")" \
+    --argjson signer_public_key "$(jq -c '.oracle_public_key_bytes' <<<"$signed_json")" \
+    '{
+      key: {
+        domain: $domain,
+        subject_id: $subject_id
+      },
+      provider: $provider,
+      oracle_slot: $oracle_slot,
+      status_flags: $status_flags,
+      attestation_hash: $attestation_hash,
+      oracle_payload: $oracle_payload,
+      oracle_signature: $oracle_signature,
+      signer_public_key: $signer_public_key,
+      oracle_scheme: 1,
+      source_events: []
+    }' > "$attestation_file"
+
+  if iroha_cli_with_gas_metadata "$config" app soracles tx attest-defi --attestation-json "$attestation_file" >/dev/null; then
+    exit_code=0
+  else
+    exit_code=$?
+  fi
+  rm -f "$attestation_file"
+  return "$exit_code"
+}
+
+soraswap_wait_native_oracle_attestation_json() {
+  local config="$1"
+  local domain="$2"
+  local subject_id="$3"
+  local attempts=0
+  local attestation_json
+
+  while (( attempts < 20 )); do
+    if attestation_json="$(soraswap_native_oracle_attestation_json "$config" "$domain" "$subject_id" 2>/dev/null)"; then
+      printf '%s\n' "$attestation_json"
+      return 0
+    fi
+    attempts=$(( attempts + 1 ))
+    sleep 1
+  done
+
+  soraswap_native_oracle_attestation_json "$config" "$domain" "$subject_id"
+}
+
+soraswap_use_native_oracle_fields_json() {
+  local config="$1"
+  local domain="$2"
+  local subject_id="$3"
+  local payload_json="$4"
+  local oracle_slot="$5"
+  local status_flags="$6"
+  local attestation_hash="$7"
+  local signed_json
+
+  signed_json="$(soraswap_sign_oracle_payload_json "$config" "$payload_json")" || return 1
+  soraswap_submit_native_defi_attestation \
+    "$config" \
+    "$domain" \
+    "$subject_id" \
+    "$oracle_slot" \
+    "$status_flags" \
+    "$attestation_hash" \
+    "$signed_json" || return 1
+  soraswap_wait_native_oracle_attestation_json "$config" "$domain" "$subject_id" >/dev/null || return 1
+  jq -ce '{oracle_payload, oracle_signature}' <<<"$signed_json"
+}
+
+soraswap_perps_oracle_fields_json() {
+  local config="$1"
+  local market_id="$2"
+  local mark_price_bps="$3"
+  local index_price_bps="$4"
+  local confidence_bps="$5"
+  local attestation_hash="$6"
+  local status_flags="${7:-0}"
+  local oracle_slot="${8:-}"
+  if [[ -z "$oracle_slot" ]]; then
+    oracle_slot="$(soraswap_next_oracle_slot "$config")" || return 1
+  fi
+  local payload_json
+  payload_json="$(jq -cn \
+    --argjson domain 1 \
+    --argjson market_id "$market_id" \
+    --argjson mark_price_bps "$mark_price_bps" \
+    --argjson index_price_bps "$index_price_bps" \
+    --argjson confidence_bps "$confidence_bps" \
+    --argjson oracle_slot "$oracle_slot" \
+    --argjson status_flags "$status_flags" \
+    --argjson attestation_hash "$attestation_hash" \
+    '{
+      domain: $domain,
+      market_id: $market_id,
+      mark_price_bps: $mark_price_bps,
+      index_price_bps: $index_price_bps,
+      confidence_bps: $confidence_bps,
+      oracle_slot: $oracle_slot,
+      status_flags: $status_flags,
+      attestation_hash: $attestation_hash
+    }')"
+  soraswap_use_native_oracle_fields_json "$config" 1 "$market_id" "$payload_json" "$oracle_slot" "$status_flags" "$attestation_hash"
+}
+
+soraswap_options_series_oracle_fields_json() {
+  local config="$1"
+  local series_id="$2"
+  local final_mark="$3"
+  local final_quote_mark="$4"
+  local attestation_hash="$5"
+  local status_flags="${6:-0}"
+  local oracle_slot="${7:-}"
+  if [[ -z "$oracle_slot" ]]; then
+    oracle_slot="$(soraswap_next_oracle_slot "$config")" || return 1
+  fi
+  local payload_json
+  payload_json="$(jq -cn \
+    --argjson domain 2 \
+    --argjson series_id "$series_id" \
+    --argjson final_mark "$final_mark" \
+    --argjson final_quote_mark "$final_quote_mark" \
+    --argjson oracle_slot "$oracle_slot" \
+    --argjson status_flags "$status_flags" \
+    --argjson attestation_hash "$attestation_hash" \
+    '{
+      domain: $domain,
+      series_id: $series_id,
+      final_mark: $final_mark,
+      final_quote_mark: $final_quote_mark,
+      oracle_slot: $oracle_slot,
+      status_flags: $status_flags,
+      attestation_hash: $attestation_hash
+    }')"
+  soraswap_use_native_oracle_fields_json "$config" 2 "$series_id" "$payload_json" "$oracle_slot" "$status_flags" "$attestation_hash"
+}
+
+soraswap_shout_oracle_fields_json() {
+  local config="$1"
+  local position_id="$2"
+  local mark_price_bps="$3"
+  local attestation_hash="$4"
+  local status_flags="${5:-0}"
+  local oracle_slot="${6:-}"
+  if [[ -z "$oracle_slot" ]]; then
+    oracle_slot="$(soraswap_next_oracle_slot "$config")" || return 1
+  fi
+  local payload_json
+  payload_json="$(jq -cn \
+    --argjson domain 3 \
+    --argjson position_id "$position_id" \
+    --argjson mark_price_bps "$mark_price_bps" \
+    --argjson oracle_slot "$oracle_slot" \
+    --argjson status_flags "$status_flags" \
+    --argjson attestation_hash "$attestation_hash" \
+    '{
+      domain: $domain,
+      position_id: $position_id,
+      mark_price_bps: $mark_price_bps,
+      oracle_slot: $oracle_slot,
+      status_flags: $status_flags,
+      attestation_hash: $attestation_hash
+    }')"
+  soraswap_use_native_oracle_fields_json "$config" 3 "$position_id" "$payload_json" "$oracle_slot" "$status_flags" "$attestation_hash"
+}
+
+soraswap_cover_oracle_fields_json() {
+  local config="$1"
+  local policy_id="$2"
+  local observed_price="$3"
+  local attestation_hash="$4"
+  local status_flags="${5:-0}"
+  local oracle_slot="${6:-}"
+  if [[ -z "$oracle_slot" ]]; then
+    oracle_slot="$(soraswap_next_oracle_slot "$config")" || return 1
+  fi
+  local payload_json
+  payload_json="$(jq -cn \
+    --argjson domain 4 \
+    --argjson policy_id "$policy_id" \
+    --argjson observed_price "$observed_price" \
+    --argjson oracle_slot "$oracle_slot" \
+    --argjson status_flags "$status_flags" \
+    --argjson attestation_hash "$attestation_hash" \
+    '{
+      domain: $domain,
+      policy_id: $policy_id,
+      observed_price: $observed_price,
+      oracle_slot: $oracle_slot,
+      status_flags: $status_flags,
+      attestation_hash: $attestation_hash
+    }')"
+  soraswap_use_native_oracle_fields_json "$config" 4 "$policy_id" "$payload_json" "$oracle_slot" "$status_flags" "$attestation_hash"
 }
 
 chain_fingerprint_json_or_null() {
@@ -152,6 +661,11 @@ fee_asset_definition_id_for_config() {
     return 0
   fi
 
+  if [[ -n "$SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID" ]]; then
+    printf '%s\n' "$SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID"
+    return 0
+  fi
+
   asset_definition_id_for_alias "$config" "$SORASWAP_FEE_ASSET_ALIAS"
 }
 
@@ -174,7 +688,66 @@ fee_asset_label_for_config() {
     return 0
   fi
 
+  if [[ -z "$public_env" && -n "$SORASWAP_LOCAL_FEE_ASSET_LABEL" ]]; then
+    printf '%s\n' "$SORASWAP_LOCAL_FEE_ASSET_LABEL"
+    return 0
+  fi
+
   printf '%s\n' "$SORASWAP_FEE_ASSET_ALIAS"
+}
+
+gas_metadata_asset_id_for_config() {
+  local config="$1"
+  local label
+
+  label="$(fee_asset_label_for_config "$config" 2>/dev/null || true)"
+  if [[ -n "$label" ]]; then
+    printf '%s\n' "$label"
+    return 0
+  fi
+
+  fee_asset_definition_id_for_config "$config"
+}
+
+localnet_fee_asset_definition_id_for_config() {
+  local config="$1"
+  local config_dir peer_config value
+
+  config_dir="${config:h}"
+  for peer_config in "$config_dir"/peer*.toml; do
+    [[ -f "$peer_config" ]] || continue
+    value="$(awk '
+      function clean(raw) {
+        sub(/^[^=]*=/, "", raw)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", raw)
+        gsub(/^"|"$/, "", raw)
+        return raw
+      }
+      /^\[/ {
+        section = $0
+        next
+      }
+      section == "[torii.faucet]" && $1 == "asset_definition_id" {
+        print clean($0)
+        found = 1
+        exit
+      }
+      section == "[nexus.fees]" && $1 == "fee_asset_id" && fallback == "" {
+        fallback = clean($0)
+      }
+      END {
+        if (!found && fallback != "") {
+          print fallback
+        }
+      }
+    ' "$peer_config")"
+    if [[ -n "$value" ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 path_is_newer_than() {
@@ -202,6 +775,13 @@ path_is_newer_than() {
   done
 
   return 1
+}
+
+cargo_lock_holder_pid() {
+  local cargo_lock="$1"
+
+  { lsof -t "$cargo_lock" 2>/dev/null || true; } \
+    | awk -v self="$$" '$1 != self { print; exit }'
 }
 
 ensure_iroha_cli_bin() {
@@ -257,7 +837,7 @@ ensure_iroha_cli_bin() {
 
   if (( rebuild )); then
     if [[ -n "$fallback_bin" && -f "$cargo_lock" ]]; then
-      lock_holder="$(lsof -t "$cargo_lock" 2>/dev/null | awk -v self="$$" '$1 != self { print; exit }')"
+      lock_holder="$(cargo_lock_holder_pid "$cargo_lock")"
       if [[ -n "$lock_holder" ]]; then
         SORASWAP_ACTIVE_IROHA_CLI_BIN="$fallback_bin"
         echo "cli tool: sibling cargo job holds $cargo_lock; reusing existing iroha binary $fallback_bin" >&2
@@ -291,10 +871,10 @@ ensure_split_contract_deploy_bin() {
     "$SORASWAP_IROHA_ROOT/Cargo.toml" \
     "$SORASWAP_IROHA_ROOT/Cargo.lock" \
     "$SORASWAP_IROHA_ROOT/crates/iroha_cli" \
-    "$SORASWAP_IROHA_ROOT/crates/iroha_data_model" \
-    "$SORASWAP_IROHA_ROOT/crates/iroha_crypto"; then
+      "$SORASWAP_IROHA_ROOT/crates/iroha_data_model" \
+      "$SORASWAP_IROHA_ROOT/crates/iroha_crypto"; then
     if [[ -x "$debug_bin" && -f "$cargo_lock" ]]; then
-      lock_holder="$(lsof -t "$cargo_lock" 2>/dev/null | awk -v self="$$" '$1 != self { print; exit }')"
+      lock_holder="$(cargo_lock_holder_pid "$cargo_lock")"
       if [[ -n "$lock_holder" ]]; then
         SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN="$debug_bin"
         echo "cli tool: sibling cargo job holds $cargo_lock; reusing existing split_contract_deploy binary $debug_bin" >&2
@@ -319,6 +899,8 @@ ensure_localnet_tool_bins() {
   local irohad_bin="$SORASWAP_IROHA_ROOT/target/debug/irohad"
   local iroha_bin="$SORASWAP_IROHA_ROOT/target/debug/iroha"
   local kagami_bin="$SORASWAP_IROHA_ROOT/target/debug/kagami"
+  local cargo_lock="$SORASWAP_IROHA_ROOT/target/debug/.cargo-lock"
+  local lock_holder=""
 
   if [[ "${SORASWAP_SKIP_LOCALNET_TOOL_BUILD:-0}" == "1" ]]; then
     if [[ -x "$irohad_bin" && -x "$iroha_bin" && -x "$kagami_bin" ]]; then
@@ -347,9 +929,18 @@ ensure_localnet_tool_bins() {
       "$SORASWAP_IROHA_ROOT/crates/iroha_kagami" \
       "$SORASWAP_IROHA_ROOT/crates/iroha_swarm" \
       "$SORASWAP_IROHA_ROOT/crates/iroha_test_samples"; then
+    if [[ -x "$irohad_bin" && -x "$iroha_bin" && -x "$kagami_bin" && -f "$cargo_lock" ]]; then
+      lock_holder="$(cargo_lock_holder_pid "$cargo_lock")"
+      if [[ -n "$lock_holder" ]]; then
+        echo "localnet tools: sibling cargo job holds $cargo_lock; reusing existing iroha/kagami binaries" >&2
+        return 0
+      fi
+    fi
     (
       cd "$SORASWAP_IROHA_ROOT"
-      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build --bin kagami --bin irohad --bin iroha
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_kagami --bin kagami
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p irohad --bin irohad
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_cli --bin iroha
     )
   fi
 }
@@ -365,7 +956,7 @@ ensure_irohad_bin() {
     "$SORASWAP_IROHA_ROOT/crates/iroha_torii"; then
     (
       cd "$SORASWAP_IROHA_ROOT"
-      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build --bin irohad
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p irohad --bin irohad
     )
   fi
 }
@@ -382,10 +973,10 @@ ensure_kagami_bin() {
     "$SORASWAP_IROHA_ROOT/Cargo.toml" \
     "$SORASWAP_IROHA_ROOT/Cargo.lock" \
     "$SORASWAP_IROHA_ROOT/crates/iroha_kagami" \
-    "$SORASWAP_IROHA_ROOT/crates/iroha_swarm" \
-    "$SORASWAP_IROHA_ROOT/crates/iroha_test_samples"; then
+      "$SORASWAP_IROHA_ROOT/crates/iroha_swarm" \
+      "$SORASWAP_IROHA_ROOT/crates/iroha_test_samples"; then
     if [[ -x "$bin" && -f "$cargo_lock" ]]; then
-      lock_holder="$(lsof -t "$cargo_lock" 2>/dev/null | awk -v self="$$" '$1 != self { print; exit }')"
+      lock_holder="$(cargo_lock_holder_pid "$cargo_lock")"
       if [[ -n "$lock_holder" ]]; then
         echo "cli tool: sibling cargo job holds $cargo_lock; reusing existing kagami binary $bin" >&2
         return 0
@@ -393,7 +984,7 @@ ensure_kagami_bin() {
     fi
     (
       cd "$SORASWAP_IROHA_ROOT"
-      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build --bin kagami
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_kagami --bin kagami
     )
   fi
 }
@@ -530,6 +1121,28 @@ iroha_cli() {
 
 iroha_cli_json() {
   iroha_cli --machine --output-format json "$@"
+}
+
+iroha_cli_with_gas_metadata() {
+  local config="$1"
+  shift
+  local metadata_file gas_asset_id gas_limit exit_code
+
+  gas_asset_id="$(gas_metadata_asset_id_for_config "$config")"
+  gas_limit="${SORASWAP_LEDGER_GAS_LIMIT:-2000000}"
+  metadata_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-ledger-metadata.XXXXXX")"
+  jq -cn \
+    --arg gas_asset_id "$gas_asset_id" \
+    --argjson gas_limit "$gas_limit" \
+    '{gas_asset_id: $gas_asset_id, gas_limit: $gas_limit}' > "$metadata_file"
+
+  if iroha_cli --machine --config "$config" --metadata "$metadata_file" "$@"; then
+    exit_code=0
+  else
+    exit_code=$?
+  fi
+  rm -f "$metadata_file"
+  return "$exit_code"
 }
 
 normalize_hash_literal() {
@@ -699,10 +1312,11 @@ chain_id_override_for_config() {
 
 materialize_cli_compatible_config() {
   local source_config="$1"
-  local chain torii_url torii_request_timeout_ms domain public_key private_key ttl_ms status_timeout_ms nonce
+  local chain network_prefix torii_url torii_request_timeout_ms domain public_key private_key ttl_ms status_timeout_ms nonce
   local tmp_config
 
   chain="$(config_chain_id_from_config "$source_config")"
+  network_prefix="$(network_prefix_for_config "$source_config")"
   torii_url="$(awk -F '"' '/^[[:space:]]*torii_url[[:space:]]*=/ {print $2; exit}' "$source_config")"
   torii_request_timeout_ms="$(awk '/^[[:space:]]*torii_request_timeout_ms[[:space:]]*=/ { gsub(/[^0-9]/, "", $0); print $0; exit }' "$source_config")"
   domain="$(awk -F '"' '/^[[:space:]]*domain[[:space:]]*=/ {print $2; exit}' "$source_config")"
@@ -745,6 +1359,7 @@ materialize_cli_compatible_config() {
     "domain = \"$domain\"" \
     "public_key = \"$public_key\"" \
     "private_key = \"$private_key\"" \
+    "chain_discriminant = $network_prefix" \
     "" \
     "[transaction]" \
     "time_to_live_ms = $ttl_ms" \
@@ -1201,7 +1816,6 @@ run_nested_call_probe() {
 seiyaku NestedProbeBytesState {
   state bytes Stored;
 
-  #[access(read="*", write="*")]
   kotoage fn bind_value(value: bytes) permission(Admin) {
     Stored = value;
   }
@@ -1214,7 +1828,6 @@ EOF
 
   cat >"$callee_src" <<'EOF'
 seiyaku NestedProbeCallee {
-  #[access(read="*", write="*")]
   kotoage fn noop() -> int {
     return 13;
   }
@@ -1226,13 +1839,11 @@ seiyaku NestedProbeCaller {
   state bytes CalleeContract;
   state bytes CalleeEntrypoint;
 
-  #[access(read="*", write="*")]
   kotoage fn bind_target(callee_contract: bytes, callee_entrypoint: bytes) permission(Admin) {
     CalleeContract = callee_contract;
     CalleeEntrypoint = callee_entrypoint;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn ping() -> int permission(Admin) {
     let payload = json_object();
     return decode_int(call_contract(CalleeContract, CalleeEntrypoint, payload));
@@ -1250,14 +1861,12 @@ seiyaku NestedAssetProbeCallee {
     assert(Initialized == 1, "callee not initialized");
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_contract(contract_id: AccountId, asset: AssetDefinitionId) permission(Admin) {
     ProbeAsset = asset;
     CalleeContractId = contract_id;
     Initialized = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn receive(amount: int) -> int permission(AssetOps) {
     assert_initialized();
     assert(amount > 0, "invalid amount");
@@ -1278,7 +1887,6 @@ seiyaku NestedAssetProbeMiddle {
     assert(Initialized == 1, "middle not initialized");
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_target(contract_id: AccountId,
                          callee_contract: bytes,
                          asset: AssetDefinitionId) permission(Admin) {
@@ -1288,7 +1896,6 @@ seiyaku NestedAssetProbeMiddle {
     Initialized = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn relay(amount: int) -> int permission(AssetOps) {
     let payload = json_object();
     assert_initialized();
@@ -1311,7 +1918,6 @@ seiyaku NestedAssetProbeCaller {
     assert(Initialized == 1, "caller not initialized");
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_target(contract_id: AccountId,
                          middle_contract: bytes,
                          asset: AssetDefinitionId) permission(Admin) {
@@ -1321,7 +1927,6 @@ seiyaku NestedAssetProbeCaller {
     Initialized = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn relay(amount: int) -> int permission(AssetOps) {
     let payload = json_object();
     assert_initialized();
@@ -1844,7 +2449,7 @@ authority_from_config() {
 
   network_prefix="$(network_prefix_for_config "$config")"
 
-  iroha_cli --output-format text tools address convert \
+  iroha_cli --config "$config" --output-format text tools address convert \
     --network-prefix "$network_prefix" \
     "$public_key" 2>/dev/null \
     | tail -n 1 \
@@ -1938,7 +2543,7 @@ ensure_account_registered() {
   fi
 
   echo "register account: $account_id -> $domain"
-  iroha_cli --machine --config "$config" ledger account register \
+  iroha_cli_with_gas_metadata "$config" ledger account register \
     --id "$account_id"
 }
 
@@ -2489,7 +3094,7 @@ ensure_asset_definition_alias() {
 
   echo "register asset definition alias: $alias -> $asset_id"
   if output="$(
-    iroha_cli --machine --config "$config" ledger asset definition register \
+    iroha_cli_with_gas_metadata "$config" ledger asset definition register \
       --id "$asset_id" \
       --name "$name" \
       --alias "$alias" \
@@ -2609,7 +3214,7 @@ ensure_asset_balance_min() {
 
   delta=$(( minimum - current ))
   echo "mint asset balance: $alias +$delta -> $account"
-  iroha_cli --machine --config "$config" ledger asset mint \
+  iroha_cli_with_gas_metadata "$config" ledger asset mint \
     --definition-alias "$alias" \
     --account "$account" \
     --quantity "$delta"
@@ -2708,7 +3313,7 @@ submit_contract_call() {
   local entrypoint="$3"
   local gas_limit="${4:-$SORASWAP_SMOKE_GAS_LIMIT}"
   local payload_json="${5:-null}"
-  local torii_base authority private_key request response http_code body attempt=1 retry_count
+  local torii_base authority private_key gas_asset_id request response http_code body attempt=1 retry_count
   local curl_args=()
 
   authority="$(authority_from_config "$config" 2>/dev/null || true)"
@@ -2718,20 +3323,23 @@ submit_contract_call() {
   fi
   torii_base="$(torii_base_from_config "$config")"
   private_key="$(account_private_key_from_config "$config")"
+  gas_asset_id="$(gas_metadata_asset_id_for_config "$config")"
 
   if is_contract_address_literal "$contract_id"; then
     request="$(jq -cn \
       --arg authority "$authority" \
-      --arg private_key "$private_key" \
-      --arg contract_address "$contract_id" \
-      --arg entrypoint "$entrypoint" \
-      --argjson gas_limit "$gas_limit" \
+	      --arg private_key "$private_key" \
+	      --arg contract_address "$contract_id" \
+	      --arg entrypoint "$entrypoint" \
+	      --arg gas_asset_id "$gas_asset_id" \
+	      --argjson gas_limit "$gas_limit" \
       --argjson payload "$payload_json" \
       '{
         authority: $authority,
         private_key: $private_key,
         contract_address: $contract_address,
         entrypoint: $entrypoint,
+        gas_asset_id: $gas_asset_id,
         gas_limit: $gas_limit
       } + (if $payload == null then {} else {payload: $payload} end)')"
   else
@@ -3120,6 +3728,45 @@ wait_for_transaction_terminal_status() {
   return 1
 }
 
+wait_for_transaction_terminal_or_committed() {
+  local config="$1"
+  local tx_hash="$2"
+  local attempts="${3:-60}"
+  local sleep_seconds="${4:-1}"
+  local scope="${5:-auto}"
+  local committed_hash="${6:-$tx_hash}"
+  local attempt=1
+  local response kind tx_json latest_kind=""
+
+  while (( attempt <= attempts )); do
+    if response="$(pipeline_transaction_status_json "$config" "$tx_hash" "$scope" 2>/dev/null)"; then
+      kind="$(pipeline_status_kind_from_json "$response")"
+      latest_kind="$kind"
+      case "$kind" in
+        Applied|Committed|Rejected|Expired)
+          jq -cn --argjson status "$response" '{source:"pipeline", status:$status}'
+          return 0
+          ;;
+      esac
+    fi
+
+    if tx_json="$(iroha_cli_json --config "$config" ledger transaction get --hash "$committed_hash" 2>/dev/null)"; then
+      jq -cn --argjson transaction "$tx_json" '{source:"committed", transaction:$transaction}'
+      return 0
+    fi
+
+    sleep "$sleep_seconds"
+    attempt=$(( attempt + 1 ))
+  done
+
+  if [[ -n "$latest_kind" ]]; then
+    echo "transaction $tx_hash did not reach a terminal pipeline status or committed lookup for $committed_hash after ${attempts}s (latest pipeline: $latest_kind)" >&2
+  else
+    echo "transaction $tx_hash did not expose pipeline status or committed lookup for $committed_hash after ${attempts}s" >&2
+  fi
+  return 1
+}
+
 committed_transaction_json() {
   local config="$1"
   local tx_hash="$2"
@@ -3162,33 +3809,45 @@ call_contract_and_wait() {
   local entrypoint="$3"
   local payload_json="${4:-null}"
   local gas_limit="${5:-$SORASWAP_SMOKE_GAS_LIMIT}"
-  local response tx_hash tx_json pipeline_json pipeline_kind pipeline_content
+  local response tx_hash committed_hash terminal_json terminal_source tx_json pipeline_json pipeline_kind pipeline_content
 
   response="$(submit_contract_call "$config" "$contract_id" "$entrypoint" "$gas_limit" "$payload_json")"
   echo "$response" \
     | jq -e '.ok == true and .submitted == true and (.tx_hash_hex | type == "string") and (.tx_hash_hex | length > 0)' \
     >/dev/null
   tx_hash="$(echo "$response" | jq -r '.tx_hash_hex')"
-  if pipeline_json="$(wait_for_transaction_terminal_status "$config" "$tx_hash" "$SORASWAP_TX_PIPELINE_WAIT_SECS" 1 auto 2>/dev/null)"; then
-    pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_json")"
-    case "$pipeline_kind" in
-      Applied|Committed)
-        :
-        ;;
-      Rejected|Expired)
-        pipeline_content="$(pipeline_status_content_from_json "$pipeline_json")"
-        echo "$contract_id.$entrypoint failed for transaction $tx_hash: $pipeline_content" >&2
-        return 1
-        ;;
-      *)
-        echo "$contract_id.$entrypoint reached unexpected pipeline status for transaction $tx_hash: $pipeline_kind" >&2
-        return 1
-        ;;
-    esac
-  else
-    tx_json="$(committed_transaction_json "$config" "$tx_hash")"
-    assert_transaction_ok "$tx_json" "$tx_hash" "$contract_id.$entrypoint"
-  fi
+  committed_hash="$(echo "$response" | jq -r '.entrypoint_hash_hex // .transaction_entrypoint_hash_hex // .entrypoint_hash // .tx_hash_hex')"
+  terminal_json="$(wait_for_transaction_terminal_or_committed "$config" "$tx_hash" "$SORASWAP_TX_COMMITTED_WAIT_SECS" 1 auto "$committed_hash")"
+  terminal_source="$(jq -r '.source' <<<"$terminal_json")"
+  case "$terminal_source" in
+    pipeline)
+      pipeline_json="$(jq -c '.status' <<<"$terminal_json")"
+      pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_json")"
+      case "$pipeline_kind" in
+        Applied|Committed)
+          tx_json="$(committed_transaction_json "$config" "$committed_hash" "$SORASWAP_TX_COMMITTED_WAIT_SECS" 1)" || return 1
+          assert_transaction_ok "$tx_json" "$tx_hash" "$contract_id.$entrypoint" || return 1
+          ;;
+        Rejected|Expired)
+          pipeline_content="$(pipeline_status_content_from_json "$pipeline_json")"
+          echo "$contract_id.$entrypoint failed for transaction $tx_hash: $pipeline_content" >&2
+          return 1
+          ;;
+        *)
+          echo "$contract_id.$entrypoint reached unexpected pipeline status for transaction $tx_hash: $pipeline_kind" >&2
+          return 1
+          ;;
+      esac
+      ;;
+    committed)
+      tx_json="$(jq -c '.transaction' <<<"$terminal_json")"
+      assert_transaction_ok "$tx_json" "$tx_hash" "$contract_id.$entrypoint" || return 1
+      ;;
+    *)
+      echo "$contract_id.$entrypoint reached unexpected transaction wait source for $tx_hash: $terminal_source" >&2
+      return 1
+      ;;
+  esac
   echo "$tx_hash"
 }
 
@@ -3254,7 +3913,7 @@ contract_alias_for() {
 }
 
 contract_app_manifest_path() {
-  echo "$SORASWAP_ROOT/iroha.app.toml"
+  echo "$SORASWAP_ROOT/${SORASWAP_CONTRACTS_MANIFEST:-iroha.contracts.toml}"
 }
 
 contract_bundle_receipt_path_for_env() {
@@ -3281,14 +3940,18 @@ submit_contract_app_bundle() {
   local action="${2:-deploy}"
   local manifest_path="${3:-$(contract_app_manifest_path)}"
   local private_key timeout_secs timeout_ms tmp_config active_config
-  local output exit_code stderr_file stderr_output
+  local output exit_code stderr_file stderr_output combined_error
+  local attempt max_attempts current_action
 
   private_key="$(account_private_key_from_config "$config")"
   timeout_secs="${SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS:-${SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS:-45}}"
   timeout_ms="$(( timeout_secs * 1000 ))"
+  max_attempts="${SORASWAP_CONTRACT_APP_DEPLOY_ATTEMPTS:-3}"
+  if ! [[ "$max_attempts" =~ '^[0-9]+$' ]] || (( max_attempts < 1 )); then
+    max_attempts=1
+  fi
   active_config="$config"
   tmp_config=""
-  stderr_file=""
 
   if [[ "$timeout_ms" -gt 0 ]]; then
     tmp_config="$(mktemp "${TMPDIR:-/tmp}/soraswap-contract-app-config.XXXXXX")"
@@ -3298,43 +3961,97 @@ submit_contract_app_bundle() {
     active_config="$tmp_config"
   fi
 
-  exit_code=0
-  stderr_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-contract-app-stderr.XXXXXX")"
-  if ! output="$(iroha_cli_json --config "$active_config" contract app "$action" \
-    --manifest "$manifest_path" \
-    --authority "$SORASWAP_AUTHORITY" \
-    --private-key "$private_key" 2>"$stderr_file")"; then
+  current_action="$action"
+  attempt=1
+  while (( attempt <= max_attempts )); do
+    stderr_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-contract-app-stderr.XXXXXX")"
+    set +e
+    output="$(iroha_cli_json --config "$active_config" contract app "$current_action" \
+      --manifest "$manifest_path" \
+      --authority "$SORASWAP_AUTHORITY" \
+      --private-key "$private_key" 2>"$stderr_file")"
     exit_code=$?
-  fi
-  stderr_output="$(cat "$stderr_file" 2>/dev/null || true)"
-
-  if [[ -n "$tmp_config" ]]; then
-    rm -f "$tmp_config"
-  fi
-  if [[ -n "$stderr_file" ]]; then
+    set -e
+    stderr_output="$(cat "$stderr_file" 2>/dev/null || true)"
     rm -f "$stderr_file"
-  fi
 
-  if (( exit_code != 0 )); then
+    if (( exit_code == 0 )); then
+      if [[ -n "$tmp_config" ]]; then
+        rm -f "$tmp_config"
+      fi
+      if [[ -n "$stderr_output" ]]; then
+        printf '%s\n' "$stderr_output" >&2
+      fi
+      printf '%s\n' "$output"
+      return 0
+    fi
+
+    combined_error="$stderr_output"$'\n'"$output"
+    if (( attempt < max_attempts )) \
+      && [[ "$action" != "plan" ]] \
+      && grep -qiE 'timed out|timeout|deadline' <<<"$combined_error"; then
+      printf 'contract app %s timed out after %ss; resuming bundle deployment (attempt %s/%s)\n' \
+        "$current_action" "$timeout_secs" "$(( attempt + 1 ))" "$max_attempts" >&2
+      current_action="resume"
+      attempt=$(( attempt + 1 ))
+      continue
+    fi
+
+    if [[ -n "$tmp_config" ]]; then
+      rm -f "$tmp_config"
+    fi
     if [[ -n "$stderr_output" ]]; then
       printf '%s\n' "$stderr_output" >&2
     fi
     printf '%s\n' "$output" >&2
-    return $exit_code
-  fi
+    return "$exit_code"
+  done
 
-  if [[ -n "$stderr_output" ]]; then
-    printf '%s\n' "$stderr_output" >&2
+  if [[ -n "$tmp_config" ]]; then
+    rm -f "$tmp_config"
   fi
+  return 1
+}
 
-  printf '%s\n' "$output"
+wait_for_contract_alias_activation() {
+  local config="$1"
+  local contract_alias="$2"
+  local expected_contract_address="$3"
+  local timeout_secs="${SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS:-180}"
+  local deadline now resolved_response resolved_address resolve_status
+
+  deadline=$(( $(date +%s) + timeout_secs ))
+  while true; do
+    if resolved_response="$(contract_alias_resolve_json "$config" "$contract_alias" 2>/dev/null)"; then
+      resolved_address="$(jq -r '.contract_address // empty' <<<"$resolved_response")"
+      if [[ "$resolved_address" == "$expected_contract_address" ]]; then
+        printf '%s\n' "$resolved_response"
+        return 0
+      fi
+    else
+      resolve_status=$?
+      if (( resolve_status != 2 )); then
+        contract_alias_resolve_json "$config" "$contract_alias" >/dev/null
+        return 1
+      fi
+    fi
+
+    now="$(date +%s)"
+    if (( now >= deadline )); then
+      echo "timed out waiting for $contract_alias to activate at $expected_contract_address" >&2
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 materialize_contract_bundle_records_for_env() {
   local env="$1"
   local receipt_json="$2"
+  local config="${3:-$(client_config_or_default "$env")}"
   local report_dir receipt_path chain_fingerprint_json contract_entry contract_key contract_source
   local contract_alias contract_address previous_contract_address upgraded dataspace deploy_nonce
+  local contract_status activation_response activation_address
   local code_hash_hex abi_hash_hex tx_hash_hex response_json instance_json record_json
   local record_path manifest_out compiled_manifest detail_json
 
@@ -3355,10 +4072,9 @@ materialize_contract_bundle_records_for_env() {
       echo "bundle receipt contained a contract without a name" >&2
       return 1
     fi
-    if [[ "$(jq -r '.status // empty' <<<"$contract_entry")" != "deployed" ]]; then
-      echo "bundle receipt contract ${contract_key} is not fully deployed" >&2
-      return 1
-    fi
+    contract_alias="$(jq -r '.contract_alias' <<<"$contract_entry")"
+    contract_address="$(jq -r '.contract_address' <<<"$contract_entry")"
+    contract_status="$(jq -r '.status // empty' <<<"$contract_entry")"
 
     contract_source="$(contract_source_for_key "$contract_key")" || {
       echo "unable to map bundle receipt contract ${contract_key} to a repo source file" >&2
@@ -3370,8 +4086,21 @@ materialize_contract_bundle_records_for_env() {
       return 1
     fi
 
-    contract_alias="$(jq -r '.contract_alias' <<<"$contract_entry")"
-    contract_address="$(jq -r '.contract_address' <<<"$contract_entry")"
+    if [[ "$contract_status" != "deployed" ]]; then
+      activation_response="$(wait_for_contract_alias_activation "$config" "$contract_alias" "$contract_address")" || {
+        echo "bundle receipt contract ${contract_key} is not fully deployed" >&2
+        return 1
+      }
+      activation_address="$(jq -r '.contract_address // empty' <<<"$activation_response")"
+      if [[ "$activation_address" != "$contract_address" ]]; then
+        echo "bundle receipt contract ${contract_key} resolved to $activation_address, expected $contract_address" >&2
+        return 1
+      fi
+      contract_entry="$(jq '.status = "deployed"' <<<"$contract_entry")"
+      receipt_json="$(jq --arg contract_key "$contract_key" '(.contracts[] | select(.name == $contract_key) | .status) = "deployed"' <<<"$receipt_json")"
+      contract_status="deployed"
+    fi
+
     previous_contract_address="$(jq -r '.previous_contract_address // empty' <<<"$contract_entry")"
     upgraded="$(jq -r '.upgraded // false' <<<"$contract_entry")"
     dataspace="$(jq -r '.dataspace // "universal"' <<<"$contract_entry")"
@@ -3443,6 +4172,8 @@ materialize_contract_bundle_records_for_env() {
       '{record_path: $record_path, receipt: $receipt}')"
     deploy_report_set_contract "$env" "$contract_key" "completed" "$detail_json"
   done < <(jq -c '.contracts[]' <<<"$receipt_json")
+
+  printf '%s\n' "$receipt_json" > "$receipt_path"
 }
 
 deployment_record_path_for_env() {
@@ -3753,7 +4484,7 @@ contract_subject_account_for_literal() {
     return 1
   fi
 
-  iroha_cli --output-format text tools address convert \
+  iroha_cli --config "$config" --output-format text tools address convert \
     --network-prefix "$network_prefix" \
     "$public_key" 2>/dev/null \
     | tail -n 1 \
@@ -3782,7 +4513,6 @@ compile_one() {
       --out "$out" \
       --manifest-out "$manifest" \
       --strip-debug \
-      --iter-cap 32 \
       --abi 1 2>&1
   )"; then
     printf '%s\n' "$output" >&2
@@ -4404,7 +5134,7 @@ account_address_canonical_hex() {
 
   network_prefix="$(network_prefix_for_config "$config")"
 
-  iroha_cli --output-format text tools address convert \
+  iroha_cli --config "$config" --output-format text tools address convert \
     --expect-prefix "$network_prefix" \
     --format canonical-hex \
     "$account_literal" 2>/dev/null \
@@ -4442,8 +5172,19 @@ ensure_domain_sns_lease() {
     return 1
   fi
 
+  if ! public_env_for_config "$config" >/dev/null 2>&1; then
+    payment_gross="$(/usr/bin/python3 - "$payment_gross" <<'PY'
+from decimal import Decimal, ROUND_CEILING
+import sys
+
+value = Decimal(sys.argv[1])
+print(value.to_integral_value(rounding=ROUND_CEILING))
+PY
+)"
+  fi
+
   if output="$(
-    iroha_cli --config "$config" app sns register \
+    iroha_cli_with_gas_metadata "$config" app sns register \
       --label "$selector_literal" \
       --suffix-id "$SORASWAP_SNS_DOMAIN_SUFFIX_ID" \
       --term-years 1 \
@@ -4458,7 +5199,6 @@ ensure_domain_sns_lease() {
   if [[ "$output" == *"selector \`${selector_literal}\` is already registered"* ]]; then
     return 0
   fi
-
   if [[ "$output" == *"ERR_UNEXPECTED_NETWORK_PREFIX"* ]]; then
     local torii_base payload_json tmp http_code
 

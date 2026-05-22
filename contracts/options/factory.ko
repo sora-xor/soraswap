@@ -11,6 +11,8 @@ seiyaku OptionsFactory {
   state int OptFactoryContractBound;
   state AccountId OptFactoryContractId;
   state int OptFactoryWithdrawalOnly;
+  state bytes OptFactoryOraclePublicKey;
+  state int OptFactoryOracleScheme;
 
   state AccountId OptFactoryAutomationExecutor;
   state int OptFactoryAutomationJobId;
@@ -34,6 +36,8 @@ seiyaku OptionsFactory {
   state OptFactorySeriesPauseThresholdBps: Map<int, int>;
   state OptFactorySeriesBumpPercentBps: Map<int, int>;
   state OptFactorySeriesLastSettlementSlot: Map<int, int>;
+  state OptFactorySeriesOracleSlot: Map<int, int>;
+  state OptFactorySeriesAttestationHash: Map<int, int>;
   state OptFactorySeriesFinalMark: Map<int, int>;
   state OptFactorySeriesFinalQuoteMark: Map<int, int>;
   state OptFactorySeriesSettlementReady: Map<int, int>;
@@ -49,6 +53,8 @@ seiyaku OptionsFactory {
   state OptFactoryPositionSettlementReady: Map<int, int>;
   state OptFactoryPositionShoutFloor: Map<int, int>;
   state OptFactoryPositionLastOracleMark: Map<int, int>;
+  state OptFactoryPositionLastOracleSlot: Map<int, int>;
+  state OptFactoryPositionLastAttestationHash: Map<int, int>;
 
   fn assert_initialized() {
     assert(OptFactoryInitialized == 1, "factory not initialized");
@@ -106,6 +112,59 @@ seiyaku OptionsFactory {
       return 1;
     }
     return 0;
+  }
+
+  fn verify_series_oracle(series_id: int,
+                          oracle_payload: bytes,
+                          oracle_signature: bytes) -> (int, int, int, int, int) {
+    assert_series_exists(series_id);
+    assert(OptFactoryOracleScheme > 0, "oracle scheme missing");
+    assert(verify_signature(oracle_payload, oracle_signature, OptFactoryOraclePublicKey, OptFactoryOracleScheme), "oracle signature");
+    let payload = decode_json(oracle_payload);
+    assert(payload.get_int(name("domain")) == 2, "oracle domain mismatch");
+    assert(payload.get_int(name("series_id")) == series_id, "oracle series mismatch");
+    let final_mark = payload.get_int(name("final_mark"));
+    let final_quote_mark = payload.get_int(name("final_quote_mark"));
+    let oracle_slot = payload.get_int(name("oracle_slot"));
+    let status_flags = payload.get_int(name("status_flags"));
+    let attestation_hash = payload.get_int(name("attestation_hash"));
+    let current_slot = block_height();
+    assert(final_mark >= 0, "invalid final mark");
+    assert(final_quote_mark >= 0, "invalid final quote mark");
+    assert(attestation_hash > 0, "missing attestation");
+    assert(current_slot >= oracle_slot, "invalid oracle slot");
+    let prior_oracle_slot = OptFactorySeriesOracleSlot.get_or(series_id, 0);
+    if prior_oracle_slot > 0 {
+      assert(oracle_slot > prior_oracle_slot, "oracle slot replay");
+    }
+    assert(current_slot >= OptFactorySeriesExpirySlot.get_or(series_id, 0), "series live");
+    assert(status_flags == 0, "oracle degraded");
+    return (final_mark, final_quote_mark, oracle_slot, current_slot, attestation_hash);
+  }
+
+  fn verify_shout_oracle(position_id: int,
+                         oracle_payload: bytes,
+                         oracle_signature: bytes) -> (int, int, int) {
+    assert_position_exists(position_id);
+    assert(OptFactoryOracleScheme > 0, "oracle scheme missing");
+    assert(verify_signature(oracle_payload, oracle_signature, OptFactoryOraclePublicKey, OptFactoryOracleScheme), "oracle signature");
+    let payload = decode_json(oracle_payload);
+    assert(payload.get_int(name("domain")) == 3, "oracle domain mismatch");
+    assert(payload.get_int(name("position_id")) == position_id, "oracle position mismatch");
+    let mark_price_bps = payload.get_int(name("mark_price_bps"));
+    let oracle_slot = payload.get_int(name("oracle_slot"));
+    let status_flags = payload.get_int(name("status_flags"));
+    let attestation_hash = payload.get_int(name("attestation_hash"));
+    let current_slot = block_height();
+    assert(mark_price_bps >= 0, "invalid mark");
+    assert(attestation_hash > 0, "missing attestation");
+    assert(current_slot >= oracle_slot, "invalid oracle slot");
+    let prior_oracle_slot = OptFactoryPositionLastOracleSlot.get_or(position_id, 0);
+    if prior_oracle_slot > 0 {
+      assert(oracle_slot > prior_oracle_slot, "oracle slot replay");
+    }
+    assert(status_flags == 0, "oracle degraded");
+    return (mark_price_bps, oracle_slot, attestation_hash);
   }
 
   fn required_premium(series_id: int, notional: int) -> int {
@@ -255,8 +314,6 @@ seiyaku OptionsFactory {
                            final_quote_mark: int,
                            settlement_slot: int,
                            oracle_slot: int,
-                           current_slot: int,
-                           status_flags: int,
                            attestation_hash: int) {
     let payload = json_object();
     let payload = json_set_int(payload, name("series_id"), series_id);
@@ -264,8 +321,6 @@ seiyaku OptionsFactory {
     let payload = json_set_int(payload, name("final_quote_mark"), final_quote_mark);
     let payload = json_set_int(payload, name("settlement_slot"), settlement_slot);
     let payload = json_set_int(payload, name("oracle_slot"), oracle_slot);
-    let payload = json_set_int(payload, name("current_slot"), current_slot);
-    let payload = json_set_int(payload, name("status_flags"), status_flags);
     let payload = json_set_int(payload, name("attestation_hash"), attestation_hash);
     let result = call_contract(OptFactoryManagerContract, "settle_series_c2c", payload);
     assert(decode_int(result) == 1, "manager settle failed");
@@ -287,15 +342,11 @@ seiyaku OptionsFactory {
   fn shout_record_position(position_id: int,
                            mark_price_bps: int,
                            oracle_slot: int,
-                           current_slot: int,
-                           status_flags: int,
                            attestation_hash: int) {
     let payload = json_object();
     let payload = json_set_int(payload, name("position_id"), position_id);
     let payload = json_set_int(payload, name("mark_price_bps"), mark_price_bps);
     let payload = json_set_int(payload, name("oracle_slot"), oracle_slot);
-    let payload = json_set_int(payload, name("current_slot"), current_slot);
-    let payload = json_set_int(payload, name("status_flags"), status_flags);
     let payload = json_set_int(payload, name("attestation_hash"), attestation_hash);
     let result = call_contract(OptFactoryShoutContract, "record_shout_c2c", payload);
     assert(decode_int(result) == 1, "shout record failed");
@@ -304,17 +355,13 @@ seiyaku OptionsFactory {
   fn shout_exercise_position(position_id: int,
                              mark_price_bps: int,
                              oracle_slot: int,
-                             current_slot: int,
-                             status_flags: int,
                              attestation_hash: int) -> int {
     let payload = json_object();
     let payload = json_set_int(payload, name("position_id"), position_id);
     let payload = json_set_int(payload, name("mark_price_bps"), mark_price_bps);
     let payload = json_set_int(payload, name("oracle_slot"), oracle_slot);
-    let payload = json_set_int(payload, name("current_slot"), current_slot);
-    let payload = json_set_int(payload, name("status_flags"), status_flags);
     let payload = json_set_int(payload, name("attestation_hash"), attestation_hash);
-    return decode_int(call_contract(OptFactoryShoutContract, "exercise_position", payload));
+    return decode_int(call_contract(OptFactoryShoutContract, "exercise_position_c2c", payload));
   }
 
   fn outperf_exercise_position(position_id: int) -> int {
@@ -403,28 +450,35 @@ seiyaku OptionsFactory {
     OptFactoryPositionSettlementReady[position_id] = 0;
     OptFactoryPositionShoutFloor[position_id] = 0;
     OptFactoryPositionLastOracleMark[position_id] = 0;
+    OptFactoryPositionLastOracleSlot[position_id] = 0;
+    OptFactoryPositionLastAttestationHash[position_id] = 0;
     OptFactorySeriesOpenNotional[series_id] = next_open_notional;
     OptFactorySeriesUtilisationBps[series_id] = next_utilisation_bps(series_id, next_open_notional);
     return position_id;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     return OptFactoryInitialized;
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn init_factory(settlement_asset: AssetDefinitionId, guardian: AccountId) {
+  kotoage fn init_factory(settlement_asset: AssetDefinitionId,
+                          guardian: AccountId,
+                          oracle_public_key: bytes,
+                          oracle_scheme: int) {
     assert(OptFactoryInitialized == 0, "factory initialized");
+    assert(oracle_scheme > 0, "invalid oracle scheme");
     OptFactoryInitialized = 1;
     OptFactoryOwner = authority();
     OptFactoryGuardian = guardian;
     OptFactorySettlementAsset = settlement_asset;
-    OptFactoryManagerContract = blob("");
-    OptFactoryRiskVaultContract = blob("");
-    OptFactoryVaultContract = blob("");
-    OptFactoryShoutContract = blob("");
-    OptFactoryOutperfContract = blob("");
+    OptFactoryOraclePublicKey = oracle_public_key;
+    OptFactoryOracleScheme = oracle_scheme;
+    let empty_contract = blob("");
+    OptFactoryManagerContract = empty_contract;
+    OptFactoryRiskVaultContract = empty_contract;
+    OptFactoryVaultContract = empty_contract;
+    OptFactoryShoutContract = empty_contract;
+    OptFactoryOutperfContract = empty_contract;
     OptFactoryContractBound = 0;
     OptFactoryContractId = authority();
     OptFactoryWithdrawalOnly = 1;
@@ -436,7 +490,6 @@ seiyaku OptionsFactory {
     OptFactoryNextPositionId = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_modules(risk_vault_contract: bytes,
                           vault_contract: bytes,
                           shout_contract: bytes,
@@ -448,20 +501,17 @@ seiyaku OptionsFactory {
     OptFactoryOutperfContract = outperf_contract;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_manager(manager_contract: bytes) {
     assert_owner();
     OptFactoryManagerContract = manager_contract;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_contract(contract_id: AccountId) {
     assert_owner();
     OptFactoryContractId = contract_id;
     OptFactoryContractBound = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_automation(executor: AccountId,
                              job_id: int,
                              cadence_slots: int,
@@ -478,7 +528,6 @@ seiyaku OptionsFactory {
     OptFactoryAutomationSafeMode = safe_mode;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn heartbeat(current_backlog: int,
                        safe_mode: int) permission(Admin) {
     assert_owner();
@@ -488,19 +537,16 @@ seiyaku OptionsFactory {
     risk_vault_report_bucket();
   }
 
-  #[access(read="*", write="*")]
   kotoage fn enter_withdrawal_only() {
     assert_owner();
     OptFactoryWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exit_withdrawal_only() {
     assert_owner();
     OptFactoryWithdrawalOnly = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_series(series_id: int,
                          option_kind: int,
                          max_notional: int,
@@ -527,6 +573,8 @@ seiyaku OptionsFactory {
     OptFactorySeriesPauseThresholdBps[series_id] = OptFactorySeriesPauseThresholdBps.ensure(series_id, 0);
     OptFactorySeriesBumpPercentBps[series_id] = OptFactorySeriesBumpPercentBps.ensure(series_id, 0);
     OptFactorySeriesLastSettlementSlot[series_id] = OptFactorySeriesLastSettlementSlot.ensure(series_id, 0);
+    OptFactorySeriesOracleSlot[series_id] = OptFactorySeriesOracleSlot.ensure(series_id, 0);
+    OptFactorySeriesAttestationHash[series_id] = OptFactorySeriesAttestationHash.ensure(series_id, 0);
     OptFactorySeriesFinalMark[series_id] = OptFactorySeriesFinalMark.ensure(series_id, 0);
     OptFactorySeriesFinalQuoteMark[series_id] = OptFactorySeriesFinalQuoteMark.ensure(series_id, 0);
     OptFactorySeriesSettlementReady[series_id] = OptFactorySeriesSettlementReady.ensure(series_id, 0);
@@ -540,7 +588,6 @@ seiyaku OptionsFactory {
     }
   }
 
-  #[access(read="*", write="*")]
   kotoage fn configure_utilisation_guard(series_id: int,
                                          bump_activate_bps: int,
                                          bump_deactivate_bps: int,
@@ -558,7 +605,6 @@ seiyaku OptionsFactory {
     OptFactorySeriesBumpPercentBps[series_id] = bump_percent_bps;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn buy_shout(series_id: int,
                        notional: int,
                        premium_paid: int,
@@ -566,7 +612,6 @@ seiyaku OptionsFactory {
     return buy_impl(series_id, notional, premium_paid, collateral_locked, 1);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn buy_outperformance(series_id: int,
                                 notional: int,
                                 premium_paid: int,
@@ -574,17 +619,16 @@ seiyaku OptionsFactory {
     return buy_impl(series_id, notional, premium_paid, collateral_locked, 2);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn settle_series(series_id: int,
-                           final_mark: int,
-                           final_quote_mark: int,
-                           settlement_slot: int,
-                           oracle_slot: int,
-                           current_slot: int,
-                           status_flags: int,
-                           attestation_hash: int) permission(Admin) {
-    assert_owner();
+                           oracle_payload: bytes,
+                           oracle_signature: bytes) permission(AssetOps) {
     assert_series_exists(series_id);
+    let oracle = verify_series_oracle(series_id, oracle_payload, oracle_signature);
+    let final_mark = oracle.0;
+    let final_quote_mark = oracle.1;
+    let oracle_slot = oracle.2;
+    let settlement_slot = oracle.3;
+    let attestation_hash = oracle.4;
 
     manager_settle_series(
       series_id,
@@ -592,8 +636,6 @@ seiyaku OptionsFactory {
       final_quote_mark,
       settlement_slot,
       oracle_slot,
-      current_slot,
-      status_flags,
       attestation_hash
     );
 
@@ -601,48 +643,50 @@ seiyaku OptionsFactory {
     OptFactorySeriesFinalQuoteMark[series_id] = final_quote_mark;
     OptFactorySeriesSettlementReady[series_id] = 1;
     OptFactorySeriesLastSettlementSlot[series_id] = settlement_slot;
+    OptFactorySeriesOracleSlot[series_id] = oracle_slot;
+    OptFactorySeriesAttestationHash[series_id] = attestation_hash;
 
     if OptFactorySeriesKind.get_or(series_id, 0) == 2 {
       outperf_settle_series(series_id, final_mark, final_quote_mark, settlement_slot);
     }
   }
 
-  #[access(read="*", write="*")]
   kotoage fn record_shout(position_id: int,
-                          mark_price_bps: int,
-                          oracle_slot: int,
-                          current_slot: int,
-                          status_flags: int,
-                          attestation_hash: int) permission(AssetOps) {
+                          oracle_payload: bytes,
+                          oracle_signature: bytes) permission(AssetOps) {
     assert_initialized();
     assert_position_owner(position_id);
     assert(OptFactoryPositionKind.get_or(position_id, 0) == 1, "position not shout");
-    shout_record_position(position_id, mark_price_bps, oracle_slot, current_slot, status_flags, attestation_hash);
+    let oracle = verify_shout_oracle(position_id, oracle_payload, oracle_signature);
+    let mark_price_bps = oracle.0;
+    let oracle_slot = oracle.1;
+    let attestation_hash = oracle.2;
+    shout_record_position(position_id, mark_price_bps, oracle_slot, attestation_hash);
     OptFactoryPositionShoutFloor[position_id] = max_int(
       OptFactoryPositionShoutFloor.get_or(position_id, 0),
       mark_price_bps
     );
     OptFactoryPositionLastOracleMark[position_id] = mark_price_bps;
+    OptFactoryPositionLastOracleSlot[position_id] = oracle_slot;
+    OptFactoryPositionLastAttestationHash[position_id] = attestation_hash;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exercise_shout_position(position_id: int,
-                                     mark_price_bps: int,
-                                     oracle_slot: int,
-                                     current_slot: int,
-                                     status_flags: int,
-                                     attestation_hash: int) -> int permission(AssetOps) {
+                                     oracle_payload: bytes,
+                                     oracle_signature: bytes) -> int permission(AssetOps) {
     assert_initialized();
     assert_position_owner(position_id);
     assert(OptFactoryPositionStatus.get_or(position_id, 0) == 1, "position not active");
     assert(OptFactoryPositionKind.get_or(position_id, 0) == 1, "position not shout");
+    let oracle = verify_shout_oracle(position_id, oracle_payload, oracle_signature);
+    let mark_price_bps = oracle.0;
+    let oracle_slot = oracle.1;
+    let attestation_hash = oracle.2;
 
     let desired_payout = shout_exercise_position(
       position_id,
       mark_price_bps,
       oracle_slot,
-      current_slot,
-      status_flags,
       attestation_hash
     );
     let settled_payout = risk_vault_settle_payout(position_id, authority(), desired_payout);
@@ -652,6 +696,8 @@ seiyaku OptionsFactory {
 
     let series_id = OptFactoryPositionSeriesId[position_id];
     OptFactoryPositionLastOracleMark[position_id] = mark_price_bps;
+    OptFactoryPositionLastOracleSlot[position_id] = oracle_slot;
+    OptFactoryPositionLastAttestationHash[position_id] = attestation_hash;
     OptFactoryPositionRecordedPayout[position_id] = settled_payout;
     OptFactoryPositionSettlementReady[position_id] = 1;
     OptFactoryPositionStatus[position_id] = 3;
@@ -663,7 +709,6 @@ seiyaku OptionsFactory {
     return settled_payout;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exercise_outperformance_position(position_id: int) -> int permission(AssetOps) {
     assert_initialized();
     assert_position_owner(position_id);

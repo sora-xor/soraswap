@@ -297,6 +297,24 @@ class TraderUiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/contracts/rollups/trader/account":
             self.handle_torii_read_proxy(parsed, "/v1/contracts/rollups/trader/account")
             return
+        if parsed.path == "/api/contracts/rollups/intents":
+            self.handle_torii_read_proxy(parsed, "/v1/contracts/rollups/intents")
+            return
+        if parsed.path == "/api/contracts/rollups/vaults/positions":
+            self.handle_torii_read_proxy(parsed, "/v1/contracts/rollups/vaults/positions")
+            return
+        if parsed.path == "/api/contracts/rollups/operators/status":
+            self.handle_torii_read_proxy(parsed, "/v1/contracts/rollups/operators/status")
+            return
+        if parsed.path == "/api/contracts/rollups/margin/health":
+            self.handle_torii_read_proxy(parsed, "/v1/contracts/rollups/margin/health")
+            return
+        if parsed.path == "/api/contracts/rollups/rwa/lots":
+            self.handle_torii_read_proxy(parsed, "/v1/contracts/rollups/rwa/lots")
+            return
+        if parsed.path == "/api/contracts/rollups/dlmm/hooks":
+            self.handle_torii_read_proxy(parsed, "/v1/contracts/rollups/dlmm/hooks")
+            return
         if parsed.path == "/api/events/sse":
             self.handle_torii_events_sse(parsed)
             return

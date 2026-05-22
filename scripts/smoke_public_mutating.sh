@@ -46,6 +46,12 @@ options_shout_option_contract="$(deployed_contract_id_for_env "$public_env" opti
 options_outperformance_option_contract="$(deployed_contract_id_for_env "$public_env" options.outperformance_option)"
 cover_policy_manager_contract="$(deployed_contract_id_for_env "$public_env" cover.policy_manager)"
 automation_job_queue_contract="$(deployed_contract_id_for_env "$public_env" automation.job_queue)"
+intents_settlement_router_contract="$(deployed_contract_id_for_env "$public_env" intents.settlement_router)"
+vaults_manager_contract="$(deployed_contract_id_for_env "$public_env" vaults.manager)"
+operators_registry_contract="$(deployed_contract_id_for_env "$public_env" operators.registry)"
+margin_portfolio_margin_contract="$(deployed_contract_id_for_env "$public_env" margin.portfolio_margin)"
+rwa_market_contract="$(deployed_contract_id_for_env "$public_env" rwa.market)"
+dlmm_hooks_manager_contract="$(deployed_contract_id_for_env "$public_env" dlmm_hooks.hook_manager)"
 risk_vault_contract_subject="$(contract_subject_account_for_literal "$config" "$risk_vault_contract")"
 risk_vault_contract_blob_hex="0x$(printf '%s' "$risk_vault_contract" | xxd -p -c 256 | tr -d '\n')"
 
@@ -133,7 +139,6 @@ cover_upper_bound="${SORASWAP_COVER_SMOKE_UPPER_BOUND:-110}"
 cover_trigger_price="${SORASWAP_COVER_SMOKE_TRIGGER_PRICE:-120}"
 cover_monitoring_window_slots="${SORASWAP_COVER_SMOKE_WINDOW_SLOTS:-2}"
 cover_policy_required_observations="${SORASWAP_COVER_SMOKE_POLICY_REQUIRED_OBSERVATIONS:-3}"
-cover_registration_slot="${SORASWAP_COVER_SMOKE_REGISTRATION_SLOT:-49}"
 risk_bucket_1_bootstrap_deposit="${SORASWAP_RISK_BUCKET_1_BOOTSTRAP_DEPOSIT:-200}"
 risk_bucket_2_bootstrap_deposit="${SORASWAP_RISK_BUCKET_2_BOOTSTRAP_DEPOSIT:-0}"
 risk_bucket_3_bootstrap_deposit="${SORASWAP_RISK_BUCKET_3_BOOTSTRAP_DEPOSIT:-0}"
@@ -171,6 +176,53 @@ automation_resume_slot="${SORASWAP_AUTOMATION_SMOKE_RESUME_SLOT:-6}"
 automation_retry_delay_slots="${SORASWAP_AUTOMATION_SMOKE_RETRY_DELAY_SLOTS:-3}"
 automation_max_retries="${SORASWAP_AUTOMATION_SMOKE_MAX_RETRIES:-2}"
 automation_cron_interval_slots="${SORASWAP_AUTOMATION_SMOKE_CRON_INTERVAL_SLOTS:-4}"
+intent_smoke_id="${SORASWAP_INTENT_SMOKE_ID:-smoke_intent_${run_suffix}}"
+intent_amount_in="${SORASWAP_INTENT_SMOKE_AMOUNT_IN:-10}"
+intent_min_out="${SORASWAP_INTENT_SMOKE_MIN_OUT:-9}"
+intent_amount_out="${SORASWAP_INTENT_SMOKE_AMOUNT_OUT:-10}"
+intent_solver_fee_bps="${SORASWAP_INTENT_SMOKE_SOLVER_FEE_BPS:-30}"
+intent_deadline_slot="${SORASWAP_INTENT_SMOKE_DEADLINE_SLOT:-100}"
+intent_nonce="${SORASWAP_INTENT_SMOKE_NONCE:-1}"
+intent_fill_slot="${SORASWAP_INTENT_SMOKE_FILL_SLOT:-2}"
+vault_smoke_id="${SORASWAP_VAULT_SMOKE_ID:-smoke_n3x_savings_${run_suffix}}"
+vault_position_id="${SORASWAP_VAULT_SMOKE_POSITION_ID:-smoke_vault_position_${run_suffix}}"
+vault_redeem_request_id="${SORASWAP_VAULT_SMOKE_REDEEM_REQUEST_ID:-smoke_vault_redeem_${run_suffix}}"
+vault_strategy_code="${SORASWAP_VAULT_SMOKE_STRATEGY_CODE:-1}"
+vault_async_redeem="${SORASWAP_VAULT_SMOKE_ASYNC_REDEEM:-1}"
+vault_deposit_amount="${SORASWAP_VAULT_SMOKE_DEPOSIT_AMOUNT:-25}"
+vault_redeem_shares="${SORASWAP_VAULT_SMOKE_REDEEM_SHARES:-10}"
+vault_claim_slot="${SORASWAP_VAULT_SMOKE_CLAIM_SLOT:-5}"
+operator_service="${SORASWAP_OPERATOR_SMOKE_SERVICE:-smoke_solver_${run_suffix}}"
+operator_unregistered_service="${SORASWAP_OPERATOR_SMOKE_UNREGISTERED_SERVICE:-smoke_unbonded_operator_${run_suffix}}"
+operator_min_bond="${SORASWAP_OPERATOR_SMOKE_MIN_BOND:-100}"
+operator_bond_amount="${SORASWAP_OPERATOR_SMOKE_BOND_AMOUNT:-125}"
+operator_heartbeat_slot="${SORASWAP_OPERATOR_SMOKE_HEARTBEAT_SLOT:-11}"
+operator_health_bps="${SORASWAP_OPERATOR_SMOKE_HEALTH_BPS:-8000}"
+operator_fees_accrued="${SORASWAP_OPERATOR_SMOKE_FEES_ACCRUED:-7}"
+margin_market_id="${SORASWAP_MARGIN_SMOKE_MARKET_ID:-smoke_portfolio_${run_suffix}}"
+margin_account_key="${SORASWAP_MARGIN_SMOKE_ACCOUNT_KEY:-smoke_account_${run_suffix}}"
+margin_risk_weight_bps="${SORASWAP_MARGIN_SMOKE_RISK_WEIGHT_BPS:-8000}"
+margin_liquidation_threshold_bps="${SORASWAP_MARGIN_SMOKE_LIQUIDATION_THRESHOLD_BPS:-1000}"
+margin_collateral_amount="${SORASWAP_MARGIN_SMOKE_COLLATERAL:-100}"
+margin_exposure_amount="${SORASWAP_MARGIN_SMOKE_EXPOSURE:-2000}"
+margin_rejected_withdraw_amount="${SORASWAP_MARGIN_SMOKE_REJECT_WITHDRAW:-1}"
+rwa_market_id="${SORASWAP_RWA_SMOKE_MARKET_ID:-smoke_tbill_2026_${run_suffix}}"
+rwa_redemption_id="${SORASWAP_RWA_SMOKE_REDEMPTION_ID:-smoke_rwa_redeem_${run_suffix}}"
+rwa_initial_nav_per_share="${SORASWAP_RWA_SMOKE_INITIAL_NAV:-100}"
+rwa_report_nav_per_share="${SORASWAP_RWA_SMOKE_REPORT_NAV:-105}"
+rwa_initial_total_shares="${SORASWAP_RWA_SMOKE_INITIAL_SHARES:-1000}"
+rwa_report_total_shares="${SORASWAP_RWA_SMOKE_REPORT_SHARES:-900}"
+rwa_redeem_shares="${SORASWAP_RWA_SMOKE_REDEEM_SHARES:-100}"
+dlmm_hook_id="${SORASWAP_DLMM_HOOK_SMOKE_ID:-smoke_dynamic_fee_${run_suffix}}"
+dlmm_disabled_hook_id="${SORASWAP_DLMM_HOOK_DISABLED_SMOKE_ID:-smoke_disabled_hook_${run_suffix}}"
+dlmm_limit_order_id="${SORASWAP_DLMM_HOOK_LIMIT_ORDER_ID:-smoke_limit_order_${run_suffix}}"
+dlmm_twamm_order_id="${SORASWAP_DLMM_HOOK_TWAMM_ORDER_ID:-smoke_twamm_order_${run_suffix}}"
+dlmm_hook_phase="${SORASWAP_DLMM_HOOK_SMOKE_PHASE:-1}"
+dlmm_hook_max_fee_pips="${SORASWAP_DLMM_HOOK_SMOKE_MAX_FEE_PIPS:-5000}"
+dlmm_hook_amount_in="${SORASWAP_DLMM_HOOK_SMOKE_AMOUNT_IN:-20}"
+dlmm_hook_min_out="${SORASWAP_DLMM_HOOK_SMOKE_MIN_OUT:-18}"
+dlmm_hook_amount_out="${SORASWAP_DLMM_HOOK_SMOKE_AMOUNT_OUT:-19}"
+dlmm_hook_interval_slots="${SORASWAP_DLMM_HOOK_SMOKE_INTERVAL_SLOTS:-4}"
 pool_fee_pips="${SORASWAP_POOL_FEE_PIPS:-3000}"
 pool_bin_step="${SORASWAP_POOL_BIN_STEP:-1}"
 pool_active_bin="${SORASWAP_POOL_ACTIVE_BIN:-0}"
@@ -385,6 +437,26 @@ print_smoke_tx() {
   echo "$public_env smoke committed $label tx: skipped"
 }
 
+expect_contract_call_rejection() {
+  local label="$1"
+  local contract_id="$2"
+  local entrypoint="$3"
+  local payload_json="${4:-null}"
+  local output call_status
+
+  set +e
+  output="$(call_contract_and_wait "$config" "$contract_id" "$entrypoint" "$payload_json" 2>&1)"
+  call_status=$?
+  set -e
+
+  if (( call_status == 0 )); then
+    echo "$public_env smoke expected $label to reject, but it committed tx $output" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$output"
+}
+
 preflight_required_balances_json() {
   jq -cn \
     --arg smoke_scope "$smoke_scope" \
@@ -580,7 +652,10 @@ n3x_quote_view_json="$(submit_contract_view "$config" "$n3x_hub_contract" quote_
 )")"
 
 n3x_gross_in=$(( n3x_usdt_in + n3x_usdc_in + n3x_kusd_in ))
-n3x_expected_mint_fee=$(( n3x_gross_in * n3x_mint_fee_bps / 10000 ))
+n3x_expected_mint_fee_usdt=$(( n3x_usdt_in * n3x_mint_fee_bps / 10000 ))
+n3x_expected_mint_fee_usdc=$(( n3x_usdc_in * n3x_mint_fee_bps / 10000 ))
+n3x_expected_mint_fee_kusd=$(( n3x_kusd_in * n3x_mint_fee_bps / 10000 ))
+n3x_expected_mint_fee=$(( n3x_expected_mint_fee_usdt + n3x_expected_mint_fee_usdc + n3x_expected_mint_fee_kusd ))
 n3x_expected_minted=$(( n3x_gross_in - n3x_expected_mint_fee ))
 if (( referral_direct_share_bps + referral_parent_share_bps != 10000 )); then
   echo "invalid referral share split: direct + parent must equal 10000 bps" >&2
@@ -638,6 +713,34 @@ if (( cover_payout_amount <= 0 || cover_premium_paid <= 0 || cover_lower_bound >
 fi
 if (( cover_policy_required_observations != 3 )); then
   echo "invalid cover observation configuration for smoke: $public_env shell smoke currently expects exactly 3 required observations" >&2
+  exit 1
+fi
+if (( intent_amount_in <= 0 || intent_min_out <= 0 || intent_amount_out < intent_min_out || intent_solver_fee_bps < 0 || intent_solver_fee_bps > 10000 || intent_fill_slot > intent_deadline_slot )); then
+  echo "invalid intent smoke configuration" >&2
+  exit 1
+fi
+if (( vault_deposit_amount <= 0 || vault_redeem_shares <= 0 || vault_redeem_shares > vault_deposit_amount || vault_async_redeem < 0 || vault_async_redeem > 1 )); then
+  echo "invalid vault smoke configuration" >&2
+  exit 1
+fi
+if (( operator_min_bond <= 0 || operator_bond_amount <= 0 || operator_health_bps < 0 || operator_health_bps > 10000 || operator_fees_accrued < 0 )); then
+  echo "invalid operator smoke configuration" >&2
+  exit 1
+fi
+if (( margin_risk_weight_bps < 0 || margin_risk_weight_bps > 10000 || margin_liquidation_threshold_bps < 0 || margin_liquidation_threshold_bps > 10000 || margin_collateral_amount <= 0 || margin_exposure_amount <= 0 || margin_rejected_withdraw_amount <= 0 )); then
+  echo "invalid margin smoke configuration" >&2
+  exit 1
+fi
+if (( (margin_collateral_amount * 10000 / margin_exposure_amount) >= margin_liquidation_threshold_bps )); then
+  echo "invalid margin smoke configuration: exposure must make the account liquidatable" >&2
+  exit 1
+fi
+if (( rwa_initial_nav_per_share <= 0 || rwa_report_nav_per_share <= 0 || rwa_initial_total_shares <= 0 || rwa_report_total_shares < 0 || rwa_redeem_shares <= 0 )); then
+  echo "invalid RWA smoke configuration" >&2
+  exit 1
+fi
+if (( dlmm_hook_max_fee_pips < 0 || dlmm_hook_amount_in <= 0 || dlmm_hook_min_out <= 0 || dlmm_hook_amount_out < dlmm_hook_min_out || dlmm_hook_interval_slots <= 0 )); then
+  echo "invalid DLMM hook smoke configuration" >&2
   exit 1
 fi
 
@@ -1011,10 +1114,8 @@ launchpad_finalize_activation_tx_hash="$(call_contract_and_wait "$config" "$laun
 launchpad_claim_tx_hash="$(call_contract_and_wait "$config" "$launchpad_sale_factory_contract" claim_allocation "$(
   jq -cn \
     --arg allocation "$launchpad_allocation_id" \
-    --argjson current_slot "$launchpad_claim_slot" \
     '{
-      allocation: $allocation,
-      current_slot: $current_slot
+      allocation: $allocation
     }'
 )")"
 refund_sale_init_tx_hash="$(call_contract_and_wait "$config" "$launchpad_sale_factory_contract" init_sale "$(
@@ -1258,52 +1359,30 @@ launchpad_activation_view_json="$(submit_contract_view "$config" "$launchpad_sal
 
 perps_open_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" open_position "$(
   jq -cn \
-    --argjson market_id 1 \
-    --argjson size "$perps_size" \
-    --argjson margin "$perps_initial_collateral" \
-    --argjson requested_leverage_bps "$perps_requested_leverage_bps" \
-    --argjson mark_price_bps "$perps_entry_price_bps" \
-    --argjson index_price_bps "$perps_entry_price_bps" \
-    --argjson confidence_bps 25 \
-    --argjson oracle_slot 1 \
-    --argjson current_slot 1 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 101 \
-    '{
-      market_id: $market_id,
-      size: $size,
-      margin: $margin,
-      requested_leverage_bps: $requested_leverage_bps,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }'
-)")"
+	    --argjson market_id 1 \
+	    --argjson size "$perps_size" \
+	    --argjson margin "$perps_initial_collateral" \
+	    --argjson requested_leverage_bps "$perps_requested_leverage_bps" \
+	    --argjson oracle "$(soraswap_perps_oracle_fields_json "$config" 1 "$perps_entry_price_bps" "$perps_entry_price_bps" 25 101)" \
+	    '{
+	      market_id: $market_id,
+	      size: $size,
+	      margin: $margin,
+	      requested_leverage_bps: $requested_leverage_bps,
+	      oracle_payload: $oracle.oracle_payload,
+	      oracle_signature: $oracle.oracle_signature
+	    }'
+	)")"
 perps_funding_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" sync_funding "$(
-  jq -cn \
-    --argjson market_id 1 \
-    --argjson mark_price_bps "$perps_funding_mark_price_bps" \
-    --argjson index_price_bps "$perps_funding_index_price_bps" \
-    --argjson confidence_bps 25 \
-    --argjson oracle_slot 2 \
-    --argjson current_slot 2 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 102 \
-    '{
-      market_id: $market_id,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }'
-)")"
+	  jq -cn \
+	    --argjson market_id 1 \
+	    --argjson oracle "$(soraswap_perps_oracle_fields_json "$config" 1 "$perps_funding_mark_price_bps" "$perps_funding_index_price_bps" 25 102)" \
+	    '{
+	      market_id: $market_id,
+	      oracle_payload: $oracle.oracle_payload,
+	      oracle_signature: $oracle.oracle_signature
+	    }'
+	)")"
 perps_add_margin_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" add_margin "$(
   jq -cn \
     --argjson position_id "$perps_position_id" \
@@ -1314,122 +1393,67 @@ perps_add_margin_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_cont
     }'
 )")"
 perps_remove_margin_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" remove_margin "$(
-  jq -cn \
-    --argjson position_id "$perps_position_id" \
-    --argjson amount "$perps_remove_collateral" \
-    --argjson mark_price_bps "$perps_entry_price_bps" \
-    --argjson index_price_bps "$perps_entry_price_bps" \
-    --argjson confidence_bps 25 \
-    --argjson oracle_slot 3 \
-    --argjson current_slot 3 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 103 \
-    '{
-      position_id: $position_id,
-      amount: $amount,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }'
-)")"
+	  jq -cn \
+	    --argjson position_id "$perps_position_id" \
+	    --argjson amount "$perps_remove_collateral" \
+	    --argjson oracle "$(soraswap_perps_oracle_fields_json "$config" 1 "$perps_entry_price_bps" "$perps_entry_price_bps" 25 103)" \
+	    '{
+	      position_id: $position_id,
+	      amount: $amount,
+	      oracle_payload: $oracle.oracle_payload,
+	      oracle_signature: $oracle.oracle_signature
+	    }'
+	)")"
 perps_close_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" close_position "$(
-  jq -cn \
-    --argjson position_id "$perps_position_id" \
-    --argjson mark_price_bps "$perps_exit_mark_price_bps" \
-    --argjson index_price_bps "$perps_exit_mark_price_bps" \
-    --argjson confidence_bps 25 \
-    --argjson oracle_slot 4 \
-    --argjson current_slot 4 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 104 \
-    '{
-      position_id: $position_id,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }'
-)")"
+	  jq -cn \
+	    --argjson position_id "$perps_position_id" \
+	    --argjson oracle "$(soraswap_perps_oracle_fields_json "$config" 1 "$perps_exit_mark_price_bps" "$perps_exit_mark_price_bps" 25 104)" \
+	    '{
+	      position_id: $position_id,
+	      oracle_payload: $oracle.oracle_payload,
+	      oracle_signature: $oracle.oracle_signature
+	    }'
+	)")"
 perps_liquidation_open_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" open_position "$(
   jq -cn \
-    --argjson market_id 1 \
-    --argjson size "$perps_size" \
-    --argjson margin "$perps_liquidation_collateral" \
-    --argjson requested_leverage_bps "$perps_liquidation_requested_leverage_bps" \
-    --argjson mark_price_bps "$perps_entry_price_bps" \
-    --argjson index_price_bps "$perps_entry_price_bps" \
-    --argjson confidence_bps 25 \
-    --argjson oracle_slot 70 \
-    --argjson current_slot 70 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 170 \
-    '{
-      market_id: $market_id,
-      size: $size,
-      margin: $margin,
-      requested_leverage_bps: $requested_leverage_bps,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }'
-)")"
+	    --argjson market_id 1 \
+	    --argjson size "$perps_size" \
+	    --argjson margin "$perps_liquidation_collateral" \
+	    --argjson requested_leverage_bps "$perps_liquidation_requested_leverage_bps" \
+	    --argjson oracle "$(soraswap_perps_oracle_fields_json "$config" 1 "$perps_entry_price_bps" "$perps_entry_price_bps" 25 170)" \
+	    '{
+	      market_id: $market_id,
+	      size: $size,
+	      margin: $margin,
+	      requested_leverage_bps: $requested_leverage_bps,
+	      oracle_payload: $oracle.oracle_payload,
+	      oracle_signature: $oracle.oracle_signature
+	    }'
+	)")"
 perps_liquidation_queue_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" run_liquidation_pass "$(
-  jq -cn \
-    --argjson market_id 1 \
-    --argjson max_positions "$perps_liquidation_scan_limit" \
-    --argjson mark_price_bps "$perps_liquidation_stress_mark_price_bps" \
-    --argjson index_price_bps "$perps_liquidation_stress_mark_price_bps" \
-    --argjson confidence_bps 25 \
-    --argjson oracle_slot 70 \
-    --argjson current_slot 70 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 171 \
-    '{
-      market_id: $market_id,
-      max_positions: $max_positions,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }'
-)")"
+	  jq -cn \
+	    --argjson market_id 1 \
+	    --argjson max_positions "$perps_liquidation_scan_limit" \
+	    --argjson oracle "$(soraswap_perps_oracle_fields_json "$config" 1 "$perps_liquidation_stress_mark_price_bps" "$perps_liquidation_stress_mark_price_bps" 25 171)" \
+	    '{
+	      market_id: $market_id,
+	      max_positions: $max_positions,
+	      oracle_payload: $oracle.oracle_payload,
+	      oracle_signature: $oracle.oracle_signature
+	    }'
+	)")"
 perps_liquidation_recover_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" run_liquidation_pass "$(
-  jq -cn \
-    --argjson market_id 1 \
-    --argjson max_positions "$perps_liquidation_scan_limit" \
-    --argjson mark_price_bps "$perps_liquidation_healthy_mark_price_bps" \
-    --argjson index_price_bps "$perps_liquidation_healthy_mark_price_bps" \
-    --argjson confidence_bps 25 \
-    --argjson oracle_slot 71 \
-    --argjson current_slot 71 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 172 \
-    '{
-      market_id: $market_id,
-      max_positions: $max_positions,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }'
-)")"
+	  jq -cn \
+	    --argjson market_id 1 \
+	    --argjson max_positions "$perps_liquidation_scan_limit" \
+	    --argjson oracle "$(soraswap_perps_oracle_fields_json "$config" 1 "$perps_liquidation_healthy_mark_price_bps" "$perps_liquidation_healthy_mark_price_bps" 25 172)" \
+	    '{
+	      market_id: $market_id,
+	      max_positions: $max_positions,
+	      oracle_payload: $oracle.oracle_payload,
+	      oracle_signature: $oracle.oracle_signature
+	    }'
+	)")"
 perps_recovery_position_state_view_json="$(submit_contract_view "$config" "$perps_engine_contract" position_state "$SORASWAP_SMOKE_GAS_LIMIT" "$(
   jq -cn --argjson position_id "$perps_liquidation_position_id" '{ position_id: $position_id }'
 )")"
@@ -1437,51 +1461,29 @@ perps_recovery_position_liquidation_view_json="$(submit_contract_view "$config" 
   jq -cn --argjson position_id "$perps_liquidation_position_id" '{ position_id: $position_id }'
 )")"
 perps_liquidation_requeue_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" run_liquidation_pass "$(
-  jq -cn \
-    --argjson market_id 1 \
-    --argjson max_positions "$perps_liquidation_scan_limit" \
-    --argjson mark_price_bps "$perps_liquidation_stress_mark_price_bps" \
-    --argjson index_price_bps "$perps_liquidation_stress_mark_price_bps" \
-    --argjson confidence_bps 25 \
-    --argjson oracle_slot 72 \
-    --argjson current_slot 72 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 173 \
-    '{
-      market_id: $market_id,
-      max_positions: $max_positions,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }'
-)")"
+	  jq -cn \
+	    --argjson market_id 1 \
+	    --argjson max_positions "$perps_liquidation_scan_limit" \
+	    --argjson oracle "$(soraswap_perps_oracle_fields_json "$config" 1 "$perps_liquidation_stress_mark_price_bps" "$perps_liquidation_stress_mark_price_bps" 25 173)" \
+	    '{
+	      market_id: $market_id,
+	      max_positions: $max_positions,
+	      oracle_payload: $oracle.oracle_payload,
+	      oracle_signature: $oracle.oracle_signature
+	    }'
+	)")"
 perps_liquidation_execute_tx_hash="$(call_contract_and_wait "$config" "$perps_engine_contract" run_liquidation_pass "$(
-  jq -cn \
-    --argjson market_id 1 \
-    --argjson max_positions "$perps_liquidation_scan_limit" \
-    --argjson mark_price_bps "$perps_liquidation_stress_mark_price_bps" \
-    --argjson index_price_bps "$perps_liquidation_stress_mark_price_bps" \
-    --argjson confidence_bps 25 \
-    --argjson oracle_slot 73 \
-    --argjson current_slot 73 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 174 \
-    '{
-      market_id: $market_id,
-      max_positions: $max_positions,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }'
-)")"
+	  jq -cn \
+	    --argjson market_id 1 \
+	    --argjson max_positions "$perps_liquidation_scan_limit" \
+	    --argjson oracle "$(soraswap_perps_oracle_fields_json "$config" 1 "$perps_liquidation_stress_mark_price_bps" "$perps_liquidation_stress_mark_price_bps" 25 174)" \
+	    '{
+	      market_id: $market_id,
+	      max_positions: $max_positions,
+	      oracle_payload: $oracle.oracle_payload,
+	      oracle_signature: $oracle.oracle_signature
+	    }'
+	)")"
 
 options_shout_buy_tx_hash="$(call_contract_and_wait "$config" "$options_factory_contract" buy_shout "$(
   jq -cn \
@@ -1499,35 +1501,21 @@ options_shout_buy_tx_hash="$(call_contract_and_wait "$config" "$options_factory_
 options_shout_record_tx_hash="$(call_contract_and_wait "$config" "$options_factory_contract" record_shout "$(
   jq -cn \
     --argjson position_id "$options_shout_position_id" \
-    --argjson mark_price_bps "$options_shout_record_mark_bps" \
-    --argjson oracle_slot 5 \
-    --argjson current_slot 5 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 201 \
+    --argjson oracle "$(soraswap_shout_oracle_fields_json "$config" "$options_shout_position_id" "$options_shout_record_mark_bps" 201)" \
     '{
       position_id: $position_id,
-      mark_price_bps: $mark_price_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
+      oracle_payload: $oracle.oracle_payload,
+      oracle_signature: $oracle.oracle_signature
     }'
 )")"
 options_shout_exercise_tx_hash="$(call_contract_and_wait "$config" "$options_factory_contract" exercise_shout_position "$(
   jq -cn \
     --argjson position_id "$options_shout_position_id" \
-    --argjson mark_price_bps "$options_shout_exercise_mark_bps" \
-    --argjson oracle_slot 6 \
-    --argjson current_slot 6 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 202 \
+    --argjson oracle "$(soraswap_shout_oracle_fields_json "$config" "$options_shout_position_id" "$options_shout_exercise_mark_bps" 202)" \
     '{
       position_id: $position_id,
-      mark_price_bps: $mark_price_bps,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
+      oracle_payload: $oracle.oracle_payload,
+      oracle_signature: $oracle.oracle_signature
     }'
 )")"
 options_outperformance_buy_tx_hash="$(call_contract_and_wait "$config" "$options_factory_contract" buy_outperformance "$(
@@ -1546,22 +1534,11 @@ options_outperformance_buy_tx_hash="$(call_contract_and_wait "$config" "$options
 options_outperformance_settle_tx_hash="$(call_contract_and_wait "$config" "$options_factory_contract" settle_series "$(
   jq -cn \
     --argjson series_id 2 \
-    --argjson final_mark "$options_outperformance_final_mark_bps" \
-    --argjson final_quote_mark "$options_outperformance_final_quote_mark_bps" \
-    --argjson settlement_slot "$options_outperformance_expiry_slot" \
-    --argjson oracle_slot "$options_outperformance_expiry_slot" \
-    --argjson current_slot "$options_outperformance_expiry_slot" \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 203 \
+    --argjson oracle "$(soraswap_options_series_oracle_fields_json "$config" 2 "$options_outperformance_final_mark_bps" "$options_outperformance_final_quote_mark_bps" 203)" \
     '{
       series_id: $series_id,
-      final_mark: $final_mark,
-      final_quote_mark: $final_quote_mark,
-      settlement_slot: $settlement_slot,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
+      oracle_payload: $oracle.oracle_payload,
+      oracle_signature: $oracle.oracle_signature
     }'
 )")"
 options_outperformance_exercise_tx_hash="$(call_contract_and_wait "$config" "$options_factory_contract" exercise_outperformance_position "$(
@@ -1581,7 +1558,6 @@ cover_register_tx_hash="$(call_contract_and_wait "$config" "$cover_policy_manage
     --argjson required_observations "$cover_policy_required_observations" \
     --argjson covered_notional "$cover_notional" \
     --argjson premium_paid "$cover_premium_paid" \
-    --argjson registration_slot "$cover_registration_slot" \
     '{
       lower_bound: $lower_bound,
       upper_bound: $upper_bound,
@@ -1589,93 +1565,57 @@ cover_register_tx_hash="$(call_contract_and_wait "$config" "$cover_policy_manage
       monitoring_window_slots: $monitoring_window_slots,
       required_observations: $required_observations,
       covered_notional: $covered_notional,
-      premium_paid: $premium_paid,
-      registration_slot: $registration_slot
+      premium_paid: $premium_paid
     }'
 )")"
 cover_trigger_1_tx_hash="$(call_contract_and_wait "$config" "$cover_policy_manager_contract" record_observation "$(
   jq -cn \
     --argjson policy_id "$cover_policy_id" \
-    --argjson observed_price "$cover_trigger_price" \
-    --argjson oracle_slot 50 \
-    --argjson current_slot 50 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 301 \
+    --argjson oracle "$(soraswap_cover_oracle_fields_json "$config" "$cover_policy_id" "$cover_trigger_price" 301)" \
     '{
       policy_id: $policy_id,
-      observed_price: $observed_price,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
+      oracle_payload: $oracle.oracle_payload,
+      oracle_signature: $oracle.oracle_signature
     }'
 )")"
 cover_stale_reset_tx_hash="$(call_contract_and_wait "$config" "$cover_policy_manager_contract" record_observation "$(
   jq -cn \
     --argjson policy_id "$cover_policy_id" \
-    --argjson observed_price "$cover_trigger_price" \
-    --argjson oracle_slot 50 \
-    --argjson current_slot $(( 50 + cover_oracle_stale_slots + 1 )) \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 302 \
+    --argjson oracle "$(soraswap_cover_oracle_fields_json "$config" "$cover_policy_id" "$cover_trigger_price" 302 1)" \
     '{
       policy_id: $policy_id,
-      observed_price: $observed_price,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
+      oracle_payload: $oracle.oracle_payload,
+      oracle_signature: $oracle.oracle_signature
     }'
 )")"
 cover_trigger_2_tx_hash="$(call_contract_and_wait "$config" "$cover_policy_manager_contract" record_observation "$(
   jq -cn \
     --argjson policy_id "$cover_policy_id" \
-    --argjson observed_price "$cover_trigger_price" \
-    --argjson oracle_slot 60 \
-    --argjson current_slot 60 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 303 \
+    --argjson oracle "$(soraswap_cover_oracle_fields_json "$config" "$cover_policy_id" "$cover_trigger_price" 303)" \
     '{
       policy_id: $policy_id,
-      observed_price: $observed_price,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
+      oracle_payload: $oracle.oracle_payload,
+      oracle_signature: $oracle.oracle_signature
     }'
 )")"
 cover_trigger_3_tx_hash="$(call_contract_and_wait "$config" "$cover_policy_manager_contract" record_observation "$(
   jq -cn \
     --argjson policy_id "$cover_policy_id" \
-    --argjson observed_price "$cover_trigger_price" \
-    --argjson oracle_slot 61 \
-    --argjson current_slot 61 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 304 \
+    --argjson oracle "$(soraswap_cover_oracle_fields_json "$config" "$cover_policy_id" "$cover_trigger_price" 304)" \
     '{
       policy_id: $policy_id,
-      observed_price: $observed_price,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
+      oracle_payload: $oracle.oracle_payload,
+      oracle_signature: $oracle.oracle_signature
     }'
 )")"
 cover_trigger_4_tx_hash="$(call_contract_and_wait "$config" "$cover_policy_manager_contract" record_observation "$(
   jq -cn \
     --argjson policy_id "$cover_policy_id" \
-    --argjson observed_price "$cover_trigger_price" \
-    --argjson oracle_slot 62 \
-    --argjson current_slot 62 \
-    --argjson status_flags 0 \
-    --argjson attestation_hash 305 \
+    --argjson oracle "$(soraswap_cover_oracle_fields_json "$config" "$cover_policy_id" "$cover_trigger_price" 305)" \
     '{
       policy_id: $policy_id,
-      observed_price: $observed_price,
-      oracle_slot: $oracle_slot,
-      current_slot: $current_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
+      oracle_payload: $oracle.oracle_payload,
+      oracle_signature: $oracle.oracle_signature
     }'
 )")"
 cover_claim_tx_hash="$(call_contract_and_wait "$config" "$cover_policy_manager_contract" route_claim "$(
@@ -1800,14 +1740,11 @@ job_cron_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_cont
       interval_slots: $interval_slots
     }'
 )")"
+soraswap_wait_for_block_height_at_least "$config" "$automation_next_slot" "automation initial dispatch"
 job_dispatch_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_contract" dispatch_job "$(
   jq -cn \
     --arg job "$job_name" \
-    --argjson current_slot "$automation_next_slot" \
-    '{
-      job: $job,
-      current_slot: $current_slot
-    }'
+    '{ job: $job }'
 )")"
 job_pause_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_contract" pause_job "$(
   jq -cn \
@@ -1817,38 +1754,29 @@ job_pause_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_con
 job_resume_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_contract" resume_job "$(
   jq -cn \
     --arg job "$job_name" \
-    --argjson current_slot "$automation_resume_slot" \
-    '{
-      job: $job,
-      current_slot: $current_slot
-    }'
+    '{ job: $job }'
 )")"
-job_retry_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_contract" retry_at "$(
+job_retry_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_contract" retry "$(
   jq -cn \
     --arg job "$job_name" \
-    --argjson current_slot "$automation_resume_slot" \
-    '{
-      job: $job,
-      current_slot: $current_slot
-    }'
+    '{ job: $job }'
 )")"
+job_retry_state_view_json="$(submit_contract_view "$config" "$automation_job_queue_contract" mirror_job "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn \
+    --arg job "$job_name" \
+    '{ job: $job }'
+)")"
+automation_retry_ready_slot="$(contract_view_result_json "$job_retry_state_view_json" | jq -er '.[5]')"
+soraswap_wait_for_block_height_at_least "$config" "$automation_retry_ready_slot" "automation retry dispatch"
 job_retry_dispatch_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_contract" dispatch_job "$(
   jq -cn \
     --arg job "$job_name" \
-    --argjson current_slot $(( automation_resume_slot + automation_retry_delay_slots )) \
-    '{
-      job: $job,
-      current_slot: $current_slot
-    }'
+    '{ job: $job }'
 )")"
 job_complete_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_contract" complete_run "$(
   jq -cn \
     --arg job "$job_name" \
-    --argjson current_slot $(( automation_resume_slot + automation_retry_delay_slots )) \
-    '{
-      job: $job,
-      current_slot: $current_slot
-    }'
+    '{ job: $job }'
 )")"
 job_mirror_view_json="$(submit_contract_view "$config" "$automation_job_queue_contract" mirror_job "$SORASWAP_SMOKE_GAS_LIMIT" "$(
   jq -cn \
@@ -2381,19 +2309,23 @@ risk_vault_state_expected_json="$(jq -cn \
     ($baseline[6] // 0),
     ($baseline[7] // 3)
   ]')"
-automation_retry_run_slot=$(( automation_resume_slot + automation_retry_delay_slots ))
+job_mirror_result_json="$(contract_view_result_json "$job_mirror_view_json")"
+automation_retry_run_slot="$(jq -er '.[9]' <<<"$job_mirror_result_json")"
 automation_expected_next_slot=$(( automation_retry_run_slot + automation_cron_interval_slots ))
 automation_expected_run_count=2
 n3x_total_after_mint=$(( n3x_baseline_total_n3x + n3x_expected_minted ))
-n3x_expected_redeem_gross_usdt=$(( (n3x_baseline_basket_usdt + n3x_usdt_in) * n3x_expected_minted / n3x_total_after_mint ))
-n3x_expected_redeem_gross_usdc=$(( (n3x_baseline_basket_usdc + n3x_usdc_in) * n3x_expected_minted / n3x_total_after_mint ))
-n3x_expected_redeem_gross_kusd=$(( (n3x_baseline_basket_kusd + n3x_kusd_in) * n3x_expected_minted / n3x_total_after_mint ))
+n3x_expected_net_usdt=$(( n3x_usdt_in - n3x_expected_mint_fee_usdt ))
+n3x_expected_net_usdc=$(( n3x_usdc_in - n3x_expected_mint_fee_usdc ))
+n3x_expected_net_kusd=$(( n3x_kusd_in - n3x_expected_mint_fee_kusd ))
+n3x_expected_redeem_gross_usdt=$(( (n3x_baseline_basket_usdt + n3x_expected_net_usdt) * n3x_expected_minted / n3x_total_after_mint ))
+n3x_expected_redeem_gross_usdc=$(( (n3x_baseline_basket_usdc + n3x_expected_net_usdc) * n3x_expected_minted / n3x_total_after_mint ))
+n3x_expected_redeem_gross_kusd=$(( (n3x_baseline_basket_kusd + n3x_expected_net_kusd) * n3x_expected_minted / n3x_total_after_mint ))
 n3x_expected_redeem_fee_usdt=$(( n3x_expected_redeem_gross_usdt * n3x_redeem_fee_bps / 10000 ))
 n3x_expected_redeem_fee_usdc=$(( n3x_expected_redeem_gross_usdc * n3x_redeem_fee_bps / 10000 ))
 n3x_expected_redeem_fee_kusd=$(( n3x_expected_redeem_gross_kusd * n3x_redeem_fee_bps / 10000 ))
-n3x_expected_basket_usdt=$(( n3x_baseline_basket_usdt + n3x_usdt_in - (n3x_expected_redeem_gross_usdt - n3x_expected_redeem_fee_usdt) ))
-n3x_expected_basket_usdc=$(( n3x_baseline_basket_usdc + n3x_usdc_in - (n3x_expected_redeem_gross_usdc - n3x_expected_redeem_fee_usdc) ))
-n3x_expected_basket_kusd=$(( n3x_baseline_basket_kusd + n3x_kusd_in - (n3x_expected_redeem_gross_kusd - n3x_expected_redeem_fee_kusd) ))
+n3x_expected_basket_usdt=$(( n3x_baseline_basket_usdt + n3x_expected_net_usdt - n3x_expected_redeem_gross_usdt ))
+n3x_expected_basket_usdc=$(( n3x_baseline_basket_usdc + n3x_expected_net_usdc - n3x_expected_redeem_gross_usdc ))
+n3x_expected_basket_kusd=$(( n3x_baseline_basket_kusd + n3x_expected_net_kusd - n3x_expected_redeem_gross_kusd ))
 n3x_expected_total_n3x="$n3x_baseline_total_n3x"
 n3x_expected_redeem_fees=$(( n3x_expected_redeem_fee_usdt + n3x_expected_redeem_fee_usdc + n3x_expected_redeem_fee_kusd ))
 n3x_expected_mint_fees_total=$(( n3x_baseline_mint_fees + n3x_expected_mint_fee ))
@@ -2767,9 +2699,14 @@ assert_view_result_equals "options outperformance template" "$options_outperform
 assert_view_result_equals "options shout series" "$options_shout_series_view_json" "$(jq -cn --argjson expiry_slot "$options_shout_expiry_slot" --argjson max_notional "$options_shout_max_notional" --argjson premium_bps "$options_shout_base_premium_bps" --argjson strike_bps "$options_shout_strike_bps" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" '[ 1, 1, 1, $expiry_slot, $max_notional, $premium_bps, $strike_bps, $collateral_multiplier_bps, 1, 0, 0 ]')"
 assert_view_result_equals "options outperformance series" "$options_outperformance_series_view_json" "$(jq -cn --argjson expiry_slot "$options_outperformance_expiry_slot" --argjson max_notional "$options_outperformance_max_notional" --argjson premium_bps "$options_outperformance_base_premium_bps" --argjson strike_bps "$options_outperformance_strike_bps" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" --argjson final_mark "$options_outperformance_final_mark_bps" --argjson final_quote_mark "$options_outperformance_final_quote_mark_bps" '[ 1, 2, 2, $expiry_slot, $max_notional, $premium_bps, $strike_bps, $collateral_multiplier_bps, 3, $final_mark, $final_quote_mark ]')"
 assert_view_result_equals "options manager automation" "$options_manager_automation_view_json" '[1,211,212,5,8,0,0]'
+options_factory_outperformance_last_settlement_slot="$(contract_view_result_json "$options_factory_outperformance_series_view_json" | jq -er '.[9]')"
+if (( options_factory_outperformance_last_settlement_slot < options_outperformance_expiry_slot )); then
+  echo "$public_env smoke options factory outperformance settlement slot precedes expiry: settlement=$options_factory_outperformance_last_settlement_slot expiry=$options_outperformance_expiry_slot" >&2
+  exit 1
+fi
 assert_view_result_equals "options factory config" "$options_factory_config_view_json" "$(jq -cn --arg settlement_asset "$usdt_id" --argjson next_position_id $(( options_outperformance_position_id + 1 )) '[ $settlement_asset, 0, $next_position_id, 213, 5, 8, 0 ]')"
 assert_view_result_equals "options factory shout series" "$options_factory_shout_series_view_json" "$(jq -cn --argjson max_notional "$options_shout_max_notional" --argjson premium_bps "$options_shout_base_premium_bps" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" --argjson pause_threshold_bps "$options_factory_pause_threshold_bps" --argjson bump_percent_bps "$options_factory_bump_percent_bps" '[ 1, 1, $max_notional, $premium_bps, $collateral_multiplier_bps, 0, 0, $pause_threshold_bps, $bump_percent_bps, 0 ]')"
-assert_view_result_equals "options factory outperformance series" "$options_factory_outperformance_series_view_json" "$(jq -cn --argjson max_notional "$options_outperformance_max_notional" --argjson premium_bps "$options_outperformance_base_premium_bps" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" --argjson pause_threshold_bps "$options_factory_pause_threshold_bps" --argjson bump_percent_bps "$options_factory_bump_percent_bps" --argjson expiry_slot "$options_outperformance_expiry_slot" '[ 1, 2, $max_notional, $premium_bps, $collateral_multiplier_bps, 0, 0, $pause_threshold_bps, $bump_percent_bps, $expiry_slot ]')"
+assert_view_result_equals "options factory outperformance series" "$options_factory_outperformance_series_view_json" "$(jq -cn --argjson max_notional "$options_outperformance_max_notional" --argjson premium_bps "$options_outperformance_base_premium_bps" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" --argjson pause_threshold_bps "$options_factory_pause_threshold_bps" --argjson bump_percent_bps "$options_factory_bump_percent_bps" --argjson last_settlement_slot "$options_factory_outperformance_last_settlement_slot" '[ 1, 2, $max_notional, $premium_bps, $collateral_multiplier_bps, 0, 0, $pause_threshold_bps, $bump_percent_bps, $last_settlement_slot ]')"
 assert_view_result_equals "options factory automation" "$options_factory_automation_view_json" '[1,213,5,8,0,0,0]'
 assert_view_result_equals "options factory shout position" "$options_factory_shout_position_view_json" "$(jq -cn --argjson premium "$options_shout_premium_paid" --argjson collateral_locked "$options_shout_collateral_locked" --argjson payout "$options_shout_settled_payout" --argjson notional "$options_shout_notional" '[ 1, 1, 1, $notional, $premium, $collateral_locked, 3, $payout, 1 ]')"
 assert_view_result_equals "options factory outperformance position" "$options_factory_outperformance_position_view_json" "$(jq -cn --argjson premium "$options_outperformance_premium_paid" --argjson collateral_locked "$options_outperformance_collateral_locked" --argjson payout "$options_outperformance_settled_payout" --argjson notional "$options_outperformance_notional" '[ 1, 2, 2, $notional, $premium, $collateral_locked, 3, $payout, 1 ]')"
@@ -2777,8 +2714,13 @@ assert_view_result_equals "options vault shout state" "$options_vault_shout_stat
 assert_view_result_equals "options vault outperformance state" "$options_vault_outperformance_state_view_json" "$(jq -cn --argjson baseline "$options_vault_outperformance_state_before_result" --argjson collateral_delta $(( options_outperformance_collateral_locked - options_outperformance_settled_payout )) --argjson payout_delta "$options_outperformance_settled_payout" '[ ($baseline[0] // 1), (($baseline[1] // 0) + $collateral_delta), ($baseline[2] // 0), (($baseline[3] // 0) + $payout_delta), ($baseline[4] // 0) ]')"
 assert_view_result_equals "options vault shout position" "$options_vault_shout_position_view_json" "$(jq -cn --argjson collateral_locked $(( options_shout_collateral_locked - options_shout_settled_payout )) --argjson payout "$options_shout_settled_payout" '[ 1, 1, $collateral_locked, 0, $payout, 2 ]')"
 assert_view_result_equals "options vault outperformance position" "$options_vault_outperformance_position_view_json" "$(jq -cn --argjson collateral_locked $(( options_outperformance_collateral_locked - options_outperformance_settled_payout )) --argjson payout "$options_outperformance_settled_payout" '[ 1, 2, $collateral_locked, 0, $payout, 2 ]')"
+options_outperformance_product_settlement_slot="$(contract_view_result_json "$options_outperformance_product_view_json" | jq -er '.[1]')"
+if (( options_outperformance_product_settlement_slot < options_outperformance_expiry_slot )); then
+  echo "$public_env smoke options outperformance product settlement slot precedes expiry: settlement=$options_outperformance_product_settlement_slot expiry=$options_outperformance_expiry_slot" >&2
+  exit 1
+fi
 assert_view_result_equals "options shout product" "$options_shout_product_view_json" "$(jq -cn --argjson expiry_slot "$options_shout_expiry_slot" --argjson strike_bps "$options_shout_strike_bps" '[ 1, $expiry_slot, $strike_bps, 1 ]')"
-assert_view_result_equals "options outperformance product" "$options_outperformance_product_view_json" "$(jq -cn --argjson expiry_slot "$options_outperformance_expiry_slot" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" '[ 1, $expiry_slot, $collateral_multiplier_bps, 2 ]')"
+assert_view_result_equals "options outperformance product" "$options_outperformance_product_view_json" "$(jq -cn --argjson settlement_slot "$options_outperformance_product_settlement_slot" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" '[ 1, $settlement_slot, $collateral_multiplier_bps, 2 ]')"
 assert_view_result_equals "options shout product position" "$options_shout_product_position_view_json" "$(jq -cn --argjson notional "$options_shout_notional" --argjson strike_bps "$options_shout_strike_bps" --argjson shout_floor "$options_shout_floor_bps" --argjson last_mark "$options_shout_exercise_mark_bps" --argjson payout "$options_shout_desired_payout" '[ 1, 1, $notional, $strike_bps, $shout_floor, $last_mark, $payout, 2 ]')"
 assert_view_result_equals "options outperformance product position" "$options_outperformance_product_position_view_json" "$(jq -cn --argjson notional "$options_outperformance_notional" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" --argjson final_mark "$options_outperformance_final_mark_bps" --argjson final_quote_mark "$options_outperformance_final_quote_mark_bps" --argjson payout "$options_outperformance_desired_payout" '[ 1, 2, $notional, $collateral_multiplier_bps, $final_mark, $final_quote_mark, $payout, 2 ]')"
 assert_optional_view_result_equals "cover manager config" "$cover_manager_config_view_json" "$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson stale_slots "$cover_oracle_stale_slots" '[ $settlement_asset, $risk_vault, 0, $required_observations, $stale_slots, 301, 3, 10, 0 ]')"
@@ -2826,6 +2768,335 @@ dlmm_remove_position_tx_hash="$(call_contract_and_wait "$config" "$dlmm_pool_con
       shares: $shares
     }'
 )")"
+
+intent_open_payload_json="$(
+  jq -cn \
+    --arg intent_id "$intent_smoke_id" \
+    --arg input_asset "$xor_id" \
+    --arg output_asset "$usdt_id" \
+    --argjson amount_in "$intent_amount_in" \
+    --argjson min_out "$intent_min_out" \
+    --argjson solver_fee_bps "$intent_solver_fee_bps" \
+    --argjson deadline_slot "$intent_deadline_slot" \
+    --argjson nonce "$intent_nonce" \
+    '{
+      intent_id: $intent_id,
+      input_asset: $input_asset,
+      output_asset: $output_asset,
+      amount_in: $amount_in,
+      min_out: $min_out,
+      solver_fee_bps: $solver_fee_bps,
+      deadline_slot: $deadline_slot,
+      nonce: $nonce
+    }'
+)"
+intent_open_tx_hash="$(call_contract_and_wait "$config" "$intents_settlement_router_contract" open_intent "$intent_open_payload_json")"
+intent_replay_rejection="$(expect_contract_call_rejection "intent replay" "$intents_settlement_router_contract" open_intent "$intent_open_payload_json")"
+intent_fill_tx_hash="$(call_contract_and_wait "$config" "$intents_settlement_router_contract" fill_intent "$(
+  jq -cn \
+    --arg intent_id "$intent_smoke_id" \
+    --argjson amount_out "$intent_amount_out" \
+    --argjson fill_slot "$intent_fill_slot" \
+    '{
+      intent_id: $intent_id,
+      amount_out: $amount_out,
+      fill_slot: $fill_slot
+    }'
+)")"
+intent_state_view_json="$(submit_contract_view "$config" "$intents_settlement_router_contract" intent_state "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn --arg intent_id "$intent_smoke_id" '{ intent_id: $intent_id }'
+)")"
+
+vault_register_tx_hash="$(call_contract_and_wait "$config" "$vaults_manager_contract" register_vault "$(
+  jq -cn \
+    --arg vault_id "$vault_smoke_id" \
+    --arg underlying_asset "$n3x_id" \
+    --arg share_asset "$n3x_id" \
+    --argjson strategy_code "$vault_strategy_code" \
+    --argjson async_redeem "$vault_async_redeem" \
+    '{
+      vault_id: $vault_id,
+      underlying_asset: $underlying_asset,
+      share_asset: $share_asset,
+      strategy_code: $strategy_code,
+      async_redeem: $async_redeem
+    }'
+)")"
+vault_deposit_tx_hash="$(call_contract_and_wait "$config" "$vaults_manager_contract" deposit "$(
+  jq -cn \
+    --arg vault_id "$vault_smoke_id" \
+    --arg position_id "$vault_position_id" \
+    --argjson amount "$vault_deposit_amount" \
+    '{
+      vault_id: $vault_id,
+      position_id: $position_id,
+      amount: $amount
+    }'
+)")"
+vault_request_redeem_tx_hash="$(call_contract_and_wait "$config" "$vaults_manager_contract" request_redeem "$(
+  jq -cn \
+    --arg vault_id "$vault_smoke_id" \
+    --arg request_id "$vault_redeem_request_id" \
+    --arg position_id "$vault_position_id" \
+    --argjson shares "$vault_redeem_shares" \
+    --argjson claim_slot "$vault_claim_slot" \
+    '{
+      vault_id: $vault_id,
+      request_id: $request_id,
+      position_id: $position_id,
+      shares: $shares,
+      claim_slot: $claim_slot
+    }'
+)")"
+vault_claim_redeem_tx_hash="$(call_contract_and_wait "$config" "$vaults_manager_contract" claim_redeem "$(
+  jq -cn \
+    --arg request_id "$vault_redeem_request_id" \
+    --argjson current_slot "$vault_claim_slot" \
+    '{
+      request_id: $request_id,
+      current_slot: $current_slot
+    }'
+)")"
+vault_state_view_json="$(submit_contract_view "$config" "$vaults_manager_contract" vault_state "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn --arg vault_id "$vault_smoke_id" '{ vault_id: $vault_id }'
+)")"
+vault_position_view_json="$(submit_contract_view "$config" "$vaults_manager_contract" position_state "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn --arg position_id "$vault_position_id" '{ position_id: $position_id }'
+)")"
+
+operator_unbonded_rejection="$(expect_contract_call_rejection "unregistered operator heartbeat" "$operators_registry_contract" heartbeat "$(
+  jq -cn \
+    --arg service "$operator_unregistered_service" \
+    --argjson slot "$operator_heartbeat_slot" \
+    --argjson health_bps "$operator_health_bps" \
+    --argjson fees_accrued 0 \
+    '{
+      service: $service,
+      slot: $slot,
+      health_bps: $health_bps,
+      fees_accrued: $fees_accrued
+    }'
+)")"
+operator_register_tx_hash="$(call_contract_and_wait "$config" "$operators_registry_contract" register_operator "$(
+  jq -cn \
+    --arg service "$operator_service" \
+    --arg bond_asset "$xor_id" \
+    --argjson min_bond "$operator_min_bond" \
+    '{
+      service: $service,
+      bond_asset: $bond_asset,
+      min_bond: $min_bond
+    }'
+)")"
+operator_bond_tx_hash="$(call_contract_and_wait "$config" "$operators_registry_contract" bond "$(
+  jq -cn \
+    --arg service "$operator_service" \
+    --argjson amount "$operator_bond_amount" \
+    '{
+      service: $service,
+      amount: $amount
+    }'
+)")"
+operator_heartbeat_tx_hash="$(call_contract_and_wait "$config" "$operators_registry_contract" heartbeat "$(
+  jq -cn \
+    --arg service "$operator_service" \
+    --argjson slot "$operator_heartbeat_slot" \
+    --argjson health_bps "$operator_health_bps" \
+    --argjson fees_accrued "$operator_fees_accrued" \
+    '{
+      service: $service,
+      slot: $slot,
+      health_bps: $health_bps,
+      fees_accrued: $fees_accrued
+    }'
+)")"
+operator_claim_fees_tx_hash="$(call_contract_and_wait "$config" "$operators_registry_contract" claim_fees "$(
+  jq -cn --arg service "$operator_service" '{ service: $service }'
+)")"
+operator_state_view_json="$(submit_contract_view "$config" "$operators_registry_contract" operator_state "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn --arg service "$operator_service" '{ service: $service }'
+)")"
+
+margin_register_market_tx_hash="$(call_contract_and_wait "$config" "$margin_portfolio_margin_contract" register_market "$(
+  jq -cn \
+    --arg market_id "$margin_market_id" \
+    --argjson risk_weight_bps "$margin_risk_weight_bps" \
+    --argjson liquidation_threshold_bps "$margin_liquidation_threshold_bps" \
+    '{
+      market_id: $market_id,
+      risk_weight_bps: $risk_weight_bps,
+      liquidation_threshold_bps: $liquidation_threshold_bps
+    }'
+)")"
+margin_deposit_collateral_tx_hash="$(call_contract_and_wait "$config" "$margin_portfolio_margin_contract" deposit_collateral "$(
+  jq -cn \
+    --arg account_key "$margin_account_key" \
+    --argjson amount "$margin_collateral_amount" \
+    '{
+      account_key: $account_key,
+      amount: $amount
+    }'
+)")"
+margin_lock_exposure_tx_hash="$(call_contract_and_wait "$config" "$margin_portfolio_margin_contract" lock_exposure "$(
+  jq -cn \
+    --arg market_id "$margin_market_id" \
+    --arg account_key "$margin_account_key" \
+    --argjson exposure_delta "$margin_exposure_amount" \
+    '{
+      market_id: $market_id,
+      account_key: $account_key,
+      exposure_delta: $exposure_delta
+    }'
+)")"
+margin_unhealthy_withdraw_rejection="$(expect_contract_call_rejection "unhealthy margin withdraw" "$margin_portfolio_margin_contract" withdraw_collateral "$(
+  jq -cn \
+    --arg account_key "$margin_account_key" \
+    --argjson amount "$margin_rejected_withdraw_amount" \
+    '{
+      account_key: $account_key,
+      amount: $amount
+    }'
+)")"
+margin_liquidate_account_tx_hash="$(call_contract_and_wait "$config" "$margin_portfolio_margin_contract" liquidate_account "$(
+  jq -cn --arg account_key "$margin_account_key" '{ account_key: $account_key }'
+)")"
+margin_account_health_view_json="$(submit_contract_view "$config" "$margin_portfolio_margin_contract" account_health "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn --arg account_key "$margin_account_key" '{ account_key: $account_key }'
+)")"
+
+rwa_issue_lot_payload_json="$(
+  jq -cn \
+    --arg market_id "$rwa_market_id" \
+    --arg share_asset "$n3x_id" \
+    --arg nav_asset "$usdt_id" \
+    --argjson initial_nav_per_share "$rwa_initial_nav_per_share" \
+    --argjson total_shares "$rwa_initial_total_shares" \
+    '{
+      market_id: $market_id,
+      share_asset: $share_asset,
+      nav_asset: $nav_asset,
+      initial_nav_per_share: $initial_nav_per_share,
+      total_shares: $total_shares
+    }'
+)"
+rwa_issue_lot_tx_hash="$(call_contract_and_wait "$config" "$rwa_market_contract" issue_lot "$rwa_issue_lot_payload_json")"
+rwa_duplicate_issue_rejection="$(expect_contract_call_rejection "duplicate RWA lot" "$rwa_market_contract" issue_lot "$rwa_issue_lot_payload_json")"
+rwa_bind_share_asset_tx_hash="$(call_contract_and_wait "$config" "$rwa_market_contract" bind_share_asset "$(
+  jq -cn \
+    --arg market_id "$rwa_market_id" \
+    --arg share_asset "$n3x_id" \
+    '{
+      market_id: $market_id,
+      share_asset: $share_asset
+    }'
+)")"
+rwa_report_nav_tx_hash="$(call_contract_and_wait "$config" "$rwa_market_contract" report_nav "$(
+  jq -cn \
+    --arg market_id "$rwa_market_id" \
+    --argjson nav_per_share "$rwa_report_nav_per_share" \
+    --argjson total_shares "$rwa_report_total_shares" \
+    --argjson status 1 \
+    '{
+      market_id: $market_id,
+      nav_per_share: $nav_per_share,
+      total_shares: $total_shares,
+      status: $status
+    }'
+)")"
+rwa_request_redemption_tx_hash="$(call_contract_and_wait "$config" "$rwa_market_contract" request_redemption "$(
+  jq -cn \
+    --arg market_id "$rwa_market_id" \
+    --arg redemption_id "$rwa_redemption_id" \
+    --argjson shares "$rwa_redeem_shares" \
+    '{
+      market_id: $market_id,
+      redemption_id: $redemption_id,
+      shares: $shares
+    }'
+)")"
+rwa_settle_redemption_tx_hash="$(call_contract_and_wait "$config" "$rwa_market_contract" settle_redemption "$(
+  jq -cn --arg redemption_id "$rwa_redemption_id" '{ redemption_id: $redemption_id }'
+)")"
+rwa_market_state_view_json="$(submit_contract_view "$config" "$rwa_market_contract" rwa_market_state "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn --arg market_id "$rwa_market_id" '{ market_id: $market_id }'
+)")"
+
+dlmm_disabled_hook_rejection="$(expect_contract_call_rejection "disabled DLMM hook" "$dlmm_hooks_manager_contract" place_limit_order "$(
+  jq -cn \
+    --arg order_id "${dlmm_limit_order_id}_disabled" \
+    --arg hook_id "$dlmm_disabled_hook_id" \
+    --argjson amount_in "$dlmm_hook_amount_in" \
+    --argjson min_out "$dlmm_hook_min_out" \
+    '{
+      order_id: $order_id,
+      hook_id: $hook_id,
+      amount_in: $amount_in,
+      min_out: $min_out
+    }'
+)")"
+dlmm_configure_hook_tx_hash="$(call_contract_and_wait "$config" "$dlmm_hooks_manager_contract" configure_hook_policy "$(
+  jq -cn \
+    --arg hook_id "$dlmm_hook_id" \
+    --argjson phase "$dlmm_hook_phase" \
+    --argjson max_fee_pips "$dlmm_hook_max_fee_pips" \
+    --argjson enabled 1 \
+    '{
+      hook_id: $hook_id,
+      phase: $phase,
+      max_fee_pips: $max_fee_pips,
+      enabled: $enabled
+    }'
+)")"
+dlmm_place_limit_order_tx_hash="$(call_contract_and_wait "$config" "$dlmm_hooks_manager_contract" place_limit_order "$(
+  jq -cn \
+    --arg order_id "$dlmm_limit_order_id" \
+    --arg hook_id "$dlmm_hook_id" \
+    --argjson amount_in "$dlmm_hook_amount_in" \
+    --argjson min_out "$dlmm_hook_min_out" \
+    '{
+      order_id: $order_id,
+      hook_id: $hook_id,
+      amount_in: $amount_in,
+      min_out: $min_out
+    }'
+)")"
+dlmm_schedule_twamm_tx_hash="$(call_contract_and_wait "$config" "$dlmm_hooks_manager_contract" schedule_twamm "$(
+  jq -cn \
+    --arg order_id "$dlmm_twamm_order_id" \
+    --arg hook_id "$dlmm_hook_id" \
+    --argjson amount_in "$dlmm_hook_amount_in" \
+    --argjson min_out "$dlmm_hook_min_out" \
+    --argjson interval_slots "$dlmm_hook_interval_slots" \
+    '{
+      order_id: $order_id,
+      hook_id: $hook_id,
+      amount_in: $amount_in,
+      min_out: $min_out,
+      interval_slots: $interval_slots
+    }'
+)")"
+dlmm_record_execution_tx_hash="$(call_contract_and_wait "$config" "$dlmm_hooks_manager_contract" record_execution "$(
+  jq -cn \
+    --arg order_id "$dlmm_limit_order_id" \
+    --argjson amount_in "$dlmm_hook_amount_in" \
+    --argjson amount_out "$dlmm_hook_amount_out" \
+    '{
+      order_id: $order_id,
+      amount_in: $amount_in,
+      amount_out: $amount_out
+    }'
+)")"
+dlmm_hook_quote_view_json="$(submit_contract_view "$config" "$dlmm_hooks_manager_contract" quote_hooked_swap "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn --arg order_id "$dlmm_limit_order_id" '{ order_id: $order_id }'
+)")"
+
+assert_view_result_equals "intent state" "$intent_state_view_json" "$(jq -cn --argjson amount_in "$intent_amount_in" --argjson min_out "$intent_min_out" --argjson solver_fee_bps "$intent_solver_fee_bps" --argjson deadline_slot "$intent_deadline_slot" --argjson nonce "$intent_nonce" --argjson amount_out "$intent_amount_out" '[ 1, 2, $amount_in, $min_out, $solver_fee_bps, $deadline_slot, $nonce, 1, $amount_out ]')"
+assert_view_result_equals "vault state" "$vault_state_view_json" "$(jq -cn --argjson strategy_code "$vault_strategy_code" --argjson async_redeem "$vault_async_redeem" --argjson assets "$(( vault_deposit_amount - vault_redeem_shares ))" '[ 1, $strategy_code, $async_redeem, $assets, $assets ]')"
+assert_view_result_equals "vault position" "$vault_position_view_json" "$(( vault_deposit_amount - vault_redeem_shares ))"
+assert_view_result_equals "operator state" "$operator_state_view_json" "$(jq -cn --argjson min_bond "$operator_min_bond" --argjson bonded "$operator_bond_amount" --argjson health "$operator_health_bps" --argjson slot "$operator_heartbeat_slot" '[ 1, $min_bond, $bonded, $health, $slot, 0, 0 ]')"
+assert_view_result_equals "margin account health" "$margin_account_health_view_json" '[0,0,10000,1]'
+assert_view_result_equals "rwa market state" "$rwa_market_state_view_json" "$(jq -cn --argjson nav "$rwa_report_nav_per_share" --argjson shares "$rwa_report_total_shares" '[ 1, $nav, $shares, 1 ]')"
+assert_view_result_equals "dlmm hook quote" "$dlmm_hook_quote_view_json" "$(jq -cn --argjson amount_in "$dlmm_hook_amount_in" --argjson min_out "$dlmm_hook_min_out" --argjson amount_out "$dlmm_hook_amount_out" '[ 1, $amount_in, $min_out, $amount_in, $amount_out ]')"
 
 console_smoke_report_json='null'
 if [[ -f "$(deployments_dir_for_env "$public_env")/contract_console_smoke.latest.json" ]]; then
@@ -2968,6 +3239,34 @@ report_json="$(jq -n \
   --arg refund_sale_contribute_tx_hash "$refund_sale_contribute_tx_hash" \
   --arg refund_sale_close_tx_hash "$refund_sale_close_tx_hash" \
   --arg refund_sale_refund_tx_hash "$refund_sale_refund_tx_hash" \
+  --arg intent_open_tx_hash "$intent_open_tx_hash" \
+  --arg intent_fill_tx_hash "$intent_fill_tx_hash" \
+  --arg intent_replay_rejection "$intent_replay_rejection" \
+  --arg vault_register_tx_hash "$vault_register_tx_hash" \
+  --arg vault_deposit_tx_hash "$vault_deposit_tx_hash" \
+  --arg vault_request_redeem_tx_hash "$vault_request_redeem_tx_hash" \
+  --arg vault_claim_redeem_tx_hash "$vault_claim_redeem_tx_hash" \
+  --arg operator_register_tx_hash "$operator_register_tx_hash" \
+  --arg operator_bond_tx_hash "$operator_bond_tx_hash" \
+  --arg operator_heartbeat_tx_hash "$operator_heartbeat_tx_hash" \
+  --arg operator_claim_fees_tx_hash "$operator_claim_fees_tx_hash" \
+  --arg operator_unbonded_rejection "$operator_unbonded_rejection" \
+  --arg margin_register_market_tx_hash "$margin_register_market_tx_hash" \
+  --arg margin_deposit_collateral_tx_hash "$margin_deposit_collateral_tx_hash" \
+  --arg margin_lock_exposure_tx_hash "$margin_lock_exposure_tx_hash" \
+  --arg margin_liquidate_account_tx_hash "$margin_liquidate_account_tx_hash" \
+  --arg margin_unhealthy_withdraw_rejection "$margin_unhealthy_withdraw_rejection" \
+  --arg rwa_issue_lot_tx_hash "$rwa_issue_lot_tx_hash" \
+  --arg rwa_bind_share_asset_tx_hash "$rwa_bind_share_asset_tx_hash" \
+  --arg rwa_report_nav_tx_hash "$rwa_report_nav_tx_hash" \
+  --arg rwa_request_redemption_tx_hash "$rwa_request_redemption_tx_hash" \
+  --arg rwa_settle_redemption_tx_hash "$rwa_settle_redemption_tx_hash" \
+  --arg rwa_duplicate_issue_rejection "$rwa_duplicate_issue_rejection" \
+  --arg dlmm_configure_hook_tx_hash "$dlmm_configure_hook_tx_hash" \
+  --arg dlmm_place_limit_order_tx_hash "$dlmm_place_limit_order_tx_hash" \
+  --arg dlmm_schedule_twamm_tx_hash "$dlmm_schedule_twamm_tx_hash" \
+  --arg dlmm_record_execution_tx_hash "$dlmm_record_execution_tx_hash" \
+  --arg dlmm_disabled_hook_rejection "$dlmm_disabled_hook_rejection" \
   --argjson n3x_quote_result "$(contract_view_result_json "$n3x_quote_view_json")" \
   --argjson redeem_quote_result "$(contract_view_result_json "$redeem_quote_view_json")" \
   --argjson router_bin_quote_result "$(contract_view_result_json "$router_bin_quote_view_json")" \
@@ -3029,7 +3328,14 @@ report_json="$(jq -n \
   --argjson cover_manager_config_result "$(contract_view_result_json "$cover_manager_config_view_json")" \
   --argjson cover_automation_result "$(contract_view_result_json "$cover_automation_view_json")" \
   --argjson cover_policy_result "$(contract_view_result_json "$cover_policy_view_json")" \
-  --argjson job_mirror_result "$(contract_view_result_json "$job_mirror_view_json")" \
+  --argjson job_mirror_result "$job_mirror_result_json" \
+  --argjson intent_state_result "$(contract_view_result_json "$intent_state_view_json")" \
+  --argjson vault_state_result "$(contract_view_result_json "$vault_state_view_json")" \
+  --argjson vault_position_result "$(contract_view_result_json "$vault_position_view_json")" \
+  --argjson operator_state_result "$(contract_view_result_json "$operator_state_view_json")" \
+  --argjson margin_account_health_result "$(contract_view_result_json "$margin_account_health_view_json")" \
+  --argjson rwa_market_state_result "$(contract_view_result_json "$rwa_market_state_view_json")" \
+  --argjson dlmm_hook_quote_result "$(contract_view_result_json "$dlmm_hook_quote_view_json")" \
   --argjson decoded_state_ints "$decoded_state_ints" \
   '
     def nullable_tx:
@@ -3099,7 +3405,13 @@ report_json="$(jq -n \
       expected_automation_cron_interval_slots: $expected_automation_cron_interval_slots,
       expected_automation_run_count: $expected_automation_run_count,
       expected_n3x_mint_fee: $expected_n3x_mint_fee,
-      expected_n3x_redeem_fees: $expected_n3x_redeem_fees
+      expected_n3x_redeem_fees: $expected_n3x_redeem_fees,
+      expected_intent_state: $intent_state_result,
+      expected_vault_state: $vault_state_result,
+      expected_operator_state: $operator_state_result,
+      expected_margin_account_health: $margin_account_health_result,
+      expected_rwa_market_state: $rwa_market_state_result,
+      expected_dlmm_hook_quote: $dlmm_hook_quote_result
     },
     tx_hashes: {
       n3x_init_only_config: ($n3x_config_tx_hash | nullable_tx),
@@ -3168,7 +3480,37 @@ report_json="$(jq -n \
       automation_resume: ($job_resume_tx_hash | nullable_tx),
       automation_retry: ($job_retry_tx_hash | nullable_tx),
       automation_retry_dispatch: ($job_retry_dispatch_tx_hash | nullable_tx),
-      automation_complete_run: ($job_complete_tx_hash | nullable_tx)
+      automation_complete_run: ($job_complete_tx_hash | nullable_tx),
+      intent_open: ($intent_open_tx_hash | nullable_tx),
+      intent_fill: ($intent_fill_tx_hash | nullable_tx),
+      vault_register: ($vault_register_tx_hash | nullable_tx),
+      vault_deposit: ($vault_deposit_tx_hash | nullable_tx),
+      vault_request_redeem: ($vault_request_redeem_tx_hash | nullable_tx),
+      vault_claim_redeem: ($vault_claim_redeem_tx_hash | nullable_tx),
+      operator_register: ($operator_register_tx_hash | nullable_tx),
+      operator_bond: ($operator_bond_tx_hash | nullable_tx),
+      operator_heartbeat: ($operator_heartbeat_tx_hash | nullable_tx),
+      operator_claim_fees: ($operator_claim_fees_tx_hash | nullable_tx),
+      margin_register_market: ($margin_register_market_tx_hash | nullable_tx),
+      margin_deposit_collateral: ($margin_deposit_collateral_tx_hash | nullable_tx),
+      margin_lock_exposure: ($margin_lock_exposure_tx_hash | nullable_tx),
+      margin_liquidate_account: ($margin_liquidate_account_tx_hash | nullable_tx),
+      rwa_issue_lot: ($rwa_issue_lot_tx_hash | nullable_tx),
+      rwa_bind_share_asset: ($rwa_bind_share_asset_tx_hash | nullable_tx),
+      rwa_report_nav: ($rwa_report_nav_tx_hash | nullable_tx),
+      rwa_request_redemption: ($rwa_request_redemption_tx_hash | nullable_tx),
+      rwa_settle_redemption: ($rwa_settle_redemption_tx_hash | nullable_tx),
+      dlmm_configure_hook: ($dlmm_configure_hook_tx_hash | nullable_tx),
+      dlmm_place_limit_order: ($dlmm_place_limit_order_tx_hash | nullable_tx),
+      dlmm_schedule_twamm: ($dlmm_schedule_twamm_tx_hash | nullable_tx),
+      dlmm_record_hook_execution: ($dlmm_record_execution_tx_hash | nullable_tx)
+    },
+    rejection_evidence: {
+      intent_replay: $intent_replay_rejection,
+      unregistered_operator: $operator_unbonded_rejection,
+      unhealthy_margin_withdraw: $margin_unhealthy_withdraw_rejection,
+      duplicate_rwa_issue: $rwa_duplicate_issue_rejection,
+      disabled_dlmm_hook: $dlmm_disabled_hook_rejection
     },
     view_results: {
       n3x_quote_mint: $n3x_quote_result,
@@ -3232,7 +3574,14 @@ report_json="$(jq -n \
       cover_manager_config: $cover_manager_config_result,
       cover_automation_state: $cover_automation_result,
       cover_policy_state: $cover_policy_result,
-      automation_mirror_job: $job_mirror_result
+      automation_mirror_job: $job_mirror_result,
+      intent_state: $intent_state_result,
+      vault_state: $vault_state_result,
+      vault_position: $vault_position_result,
+      operator_state: $operator_state_result,
+      margin_account_health: $margin_account_health_result,
+      rwa_market_state: $rwa_market_state_result,
+      dlmm_hook_quote: $dlmm_hook_quote_result
     },
     decoded_state_ints: $decoded_state_ints
   }')"

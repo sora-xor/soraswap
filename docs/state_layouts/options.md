@@ -7,6 +7,8 @@ Manager singleton state:
 - `OptMgrGuardian`
 - `OptMgrSettlementAsset`
 - `OptMgrWithdrawalOnly`
+- `OptMgrOraclePublicKey`
+- `OptMgrOracleScheme`
 - `OptMgrAutomationExecutor`
 - `OptMgrExpiryJobId`
 - `OptMgrSettlementJobId`
@@ -39,6 +41,8 @@ Manager series maps:
 - `OptMgrSeriesCollateralMultiplierBps`
 - `OptMgrSeriesStatus`
 - `OptMgrSeriesSettlementSlot`
+- `OptMgrSeriesOracleSlot`
+- `OptMgrSeriesAttestationHash`
 - `OptMgrSeriesFinalMark`
 - `OptMgrSeriesFinalQuoteMark`
 
@@ -55,6 +59,8 @@ Factory singleton state:
 - `OptFactoryContractBound`
 - `OptFactoryContractId`
 - `OptFactoryWithdrawalOnly`
+- `OptFactoryOraclePublicKey`
+- `OptFactoryOracleScheme`
 - `OptFactoryAutomationExecutor`
 - `OptFactoryAutomationJobId`
 - `OptFactoryAutomationCadence`
@@ -77,6 +83,8 @@ Factory series and guard maps:
 - `OptFactorySeriesPauseThresholdBps`
 - `OptFactorySeriesBumpPercentBps`
 - `OptFactorySeriesLastSettlementSlot`
+- `OptFactorySeriesOracleSlot`
+- `OptFactorySeriesAttestationHash`
 - `OptFactorySeriesFinalMark`
 - `OptFactorySeriesFinalQuoteMark`
 - `OptFactorySeriesSettlementReady`
@@ -93,6 +101,8 @@ Factory position maps:
 - `OptFactoryPositionSettlementReady`
 - `OptFactoryPositionShoutFloor`
 - `OptFactoryPositionLastOracleMark`
+- `OptFactoryPositionLastOracleSlot`
+- `OptFactoryPositionLastAttestationHash`
 
 Vault singleton state:
 - `OptVaultInitialized`
@@ -113,6 +123,15 @@ Vault accounting maps:
 - `OptVaultPositionPayoutPaid`
 - `OptVaultPositionStatus`
 
+Shout product singleton state:
+- `ShoutInitialized`
+- `ShoutOwner`
+- `ShoutController`
+- `ShoutGuardian`
+- `ShoutWithdrawalOnly`
+- `ShoutOraclePublicKey`
+- `ShoutOracleScheme`
+
 Shout product maps:
 - `ShoutSeriesExpirySlot`
 - `ShoutSeriesStatus`
@@ -123,11 +142,13 @@ Shout product maps:
 - `ShoutPositionStrikeBps`
 - `ShoutPositionShoutFloor`
 - `ShoutPositionLastOracleMark`
+- `ShoutPositionLastOracleSlot`
+- `ShoutPositionLastAttestationHash`
 - `ShoutPositionPayout`
 - `ShoutPositionStatus`
 
 Outperformance product maps:
-- `OutperfSeriesExpirySlot`
+- `OutperfSeriesExpirySlot` (configured expiry, clamped upward to the verified settlement `block_height()` once settled)
 - `OutperfSeriesCollateralMultiplierBps`
 - `OutperfSeriesStatus`
 - `OutperfSeriesFinalBaseReturnBps`
@@ -145,6 +166,7 @@ Outperformance product maps:
 
 All options contracts use explicit prefixes so manager, factory, vault, and product state cannot collide inside the shared Kotodama dataspace.
 The factory is the only user-facing write surface. `risk_vault` bucket `2` tracks the canonical liability and collateral state, while `OptionsVault` mirrors per-series and per-position premium/collateral/payout accounting only.
+Oracle keys and schemes are stored on the public verifier surfaces: manager/factory for series settlement and factory/shout product for shout marks. Payload domains are `2` for series settlement and `3` for shout marks. Last oracle slot and attestation hash maps enforce monotonic updates and audit-trail state.
 
 Typed view snapshots are exposed separately by contract:
 - manager: `manager_config()`, `template_state()`, `series_state()`, `automation_state()`

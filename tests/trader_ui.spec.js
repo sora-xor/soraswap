@@ -84,6 +84,11 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#module-grid")).toContainText("Launchpad");
   await expect(page.locator("#module-grid")).toContainText("Options");
   await expect(page.locator("#module-grid")).toContainText("Cover");
+  await expect(page.locator("#module-grid")).toContainText("Intents");
+  await expect(page.locator("#module-grid")).toContainText("Vaults");
+  await expect(page.locator("#module-grid")).toContainText("Operators");
+  await expect(page.locator("#module-grid")).toContainText("Margin");
+  await expect(page.locator("#module-grid")).toContainText("RWA");
   await expect(page.locator("#journal-body")).toContainText("Buy Quote");
   await expect(page.locator("#journal-body")).toContainText("Sell Quote");
   await expect(page.locator("#activity-body")).toContainText("Minted n3x");
@@ -120,4 +125,38 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#recent-fills")).toContainText("Bought 83 USDT");
   await expect(page.locator("#journal-body")).toContainText("83 USDT");
   await expect(page.locator("#activity-body")).toContainText("9 -> 83");
+
+  await page.locator("#module-grid").getByRole("button", { name: /Intents/i }).click();
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Fill$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "fill_intent"');
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#trade-result")).toContainText("committed");
+
+  await page.locator("#module-grid").getByRole("button", { name: /Vaults/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "deposit"');
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Redeem$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "request_redeem"');
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#trade-result")).toContainText("committed");
+
+  await page.locator("#module-grid").getByRole("button", { name: /Operators/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "bond"');
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#trade-result")).toContainText("committed");
+
+  await page.locator("#module-grid").getByRole("button", { name: /^Margin/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "deposit_collateral"');
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#trade-result")).toContainText("committed");
+
+  await page.locator("#module-grid").getByRole("button", { name: /RWA/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "issue_lot"');
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Redeem$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "request_redemption"');
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#trade-result")).toContainText("committed");
 });

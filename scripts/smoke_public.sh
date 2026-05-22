@@ -34,6 +34,12 @@ options_vault_contract="$(deployed_contract_id_for_env "$public_env" options.vau
 options_shout_option_contract="$(deployed_contract_id_for_env "$public_env" options.shout_option)"
 options_outperformance_option_contract="$(deployed_contract_id_for_env "$public_env" options.outperformance_option)"
 cover_policy_manager_contract="$(deployed_contract_id_for_env "$public_env" cover.policy_manager)"
+intents_settlement_router_contract="$(deployed_contract_id_for_env "$public_env" intents.settlement_router)"
+vaults_manager_contract="$(deployed_contract_id_for_env "$public_env" vaults.manager)"
+operators_registry_contract="$(deployed_contract_id_for_env "$public_env" operators.registry)"
+margin_portfolio_margin_contract="$(deployed_contract_id_for_env "$public_env" margin.portfolio_margin)"
+rwa_market_contract="$(deployed_contract_id_for_env "$public_env" rwa.market)"
+dlmm_hooks_manager_contract="$(deployed_contract_id_for_env "$public_env" dlmm_hooks.hook_manager)"
 
 report_dir="$(deployments_dir_for_env "$public_env")"
 timestamp="$(env TZ=UTC date '+%Y%m%dT%H%M%SZ')"
@@ -108,6 +114,12 @@ pool_position_base="${SORASWAP_POOL_POSITION_BASE:-500}"
 pool_position_quote="${SORASWAP_POOL_POSITION_QUOTE:-500}"
 router_bin_quote_in="${SORASWAP_ROUTER_BIN_QUOTE_IN:-10}"
 pool_quote_amount_in="${SORASWAP_POOL_SMOKE_SWAP_IN:-1500}"
+soraswap_launch_vault_id="${SORASWAP_LAUNCH_VAULT_ID:-n3x_savings}"
+soraswap_launch_operator_service="${SORASWAP_LAUNCH_OPERATOR_SERVICE:-solver}"
+soraswap_launch_margin_market_id="${SORASWAP_LAUNCH_MARGIN_MARKET_ID:-portfolio}"
+soraswap_launch_margin_account_key="${SORASWAP_LAUNCH_MARGIN_ACCOUNT_KEY:-bootstrap_account}"
+soraswap_launch_rwa_market_id="${SORASWAP_LAUNCH_RWA_MARKET_ID:-tbill_2026}"
+soraswap_launch_dlmm_hook_id="${SORASWAP_LAUNCH_DLMM_HOOK_ID:-dynamic_fee}"
 
 n3x_quote_view_json="$(submit_contract_view "$config" "$n3x_hub_contract" quote_mint "$SORASWAP_SMOKE_GAS_LIMIT" "$(
   jq -cn \
@@ -189,6 +201,12 @@ options_shout_product_view_json="$(view_if_initialized "$options_shout_option_co
 options_outperformance_product_view_json="$(view_if_initialized "$options_outperformance_option_contract" series_state '{"series_id":2}')"
 cover_manager_config_view_json="$(view_if_initialized "$cover_policy_manager_contract" manager_config)"
 cover_automation_view_json="$(view_if_initialized "$cover_policy_manager_contract" automation_state)"
+launch_vault_state_view_json="$(view_if_initialized "$vaults_manager_contract" vault_state "$(jq -cn --arg vault_id "$soraswap_launch_vault_id" '{vault_id:$vault_id}')")"
+launch_operator_state_view_json="$(view_if_initialized "$operators_registry_contract" operator_state "$(jq -cn --arg service "$soraswap_launch_operator_service" '{service:$service}')")"
+launch_margin_market_view_json="$(view_if_initialized "$margin_portfolio_margin_contract" market_state "$(jq -cn --arg market_id "$soraswap_launch_margin_market_id" '{market_id:$market_id}')")"
+launch_margin_account_view_json="$(view_if_initialized "$margin_portfolio_margin_contract" account_health "$(jq -cn --arg account_key "$soraswap_launch_margin_account_key" '{account_key:$account_key}')")"
+launch_rwa_market_view_json="$(view_if_initialized "$rwa_market_contract" rwa_market_state "$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" '{market_id:$market_id}')")"
+launch_dlmm_hook_policy_view_json="$(view_if_initialized "$dlmm_hooks_manager_contract" hook_policy "$(jq -cn --arg hook_id "$soraswap_launch_dlmm_hook_id" '{hook_id:$hook_id}')")"
 
 decoded_state_ints='{}'
 decoded_state_ints="$(jq -c '. + $add' \
@@ -317,6 +335,12 @@ report_json="$(jq -n \
   --argjson options_outperformance_product_result "$(contract_view_result_json "$options_outperformance_product_view_json")" \
   --argjson cover_manager_config_result "$(contract_view_result_json "$cover_manager_config_view_json")" \
   --argjson cover_automation_result "$(contract_view_result_json "$cover_automation_view_json")" \
+  --argjson launch_vault_state_result "$(contract_view_result_json "$launch_vault_state_view_json")" \
+  --argjson launch_operator_state_result "$(contract_view_result_json "$launch_operator_state_view_json")" \
+  --argjson launch_margin_market_result "$(contract_view_result_json "$launch_margin_market_view_json")" \
+  --argjson launch_margin_account_result "$(contract_view_result_json "$launch_margin_account_view_json")" \
+  --argjson launch_rwa_market_result "$(contract_view_result_json "$launch_rwa_market_view_json")" \
+  --argjson launch_dlmm_hook_policy_result "$(contract_view_result_json "$launch_dlmm_hook_policy_view_json")" \
   --argjson decoded_state_ints "$decoded_state_ints" \
   '{
     generated_at: $generated_at,
@@ -360,7 +384,13 @@ report_json="$(jq -n \
       options_shout_product: $options_shout_product_result,
       options_outperformance_product: $options_outperformance_product_result,
       cover_manager_config: $cover_manager_config_result,
-      cover_automation_state: $cover_automation_result
+      cover_automation_state: $cover_automation_result,
+      launch_vault_state: $launch_vault_state_result,
+      launch_operator_state: $launch_operator_state_result,
+      launch_margin_market: $launch_margin_market_result,
+      launch_margin_account: $launch_margin_account_result,
+      launch_rwa_market: $launch_rwa_market_result,
+      launch_dlmm_hook_policy: $launch_dlmm_hook_policy_result
     },
     decoded_state_ints: $decoded_state_ints
   }')"

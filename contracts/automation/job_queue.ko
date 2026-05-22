@@ -29,8 +29,9 @@ seiyaku JobQueue {
     assert(JobOwner[job] == authority(), "job runner mismatch");
   }
 
-  fn mark_running_impl(job: Name, current_slot: int) {
+  fn mark_running_impl(job: Name) {
     assert_job_runner(job);
+    let current_slot = block_height();
     assert(JobStatus.ensure(job, 0) == 1, "job not queued");
     assert(current_slot >= JobNextSlot.ensure(job, 0), "job not ready");
     JobStatus[job] = 2;
@@ -38,8 +39,9 @@ seiyaku JobQueue {
     JobRunCount[job] = JobRunCount.ensure(job, 0) + 1;
   }
 
-  fn retry_impl(job: Name, current_slot: int) {
+  fn retry_impl(job: Name) {
     assert_job_owner(job);
+    let current_slot = block_height();
     let retries = RetryCount.ensure(job, 0);
     let max_retries = JobMaxRetries.ensure(job, 0);
     if max_retries > 0 {
@@ -50,12 +52,10 @@ seiyaku JobQueue {
     JobNextSlot[job] = current_slot + JobRetryDelaySlots.ensure(job, 0);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     return 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn enqueue(job: Name, payload_hash: int) {
     assert(!JobOwner.contains(job), "job exists");
     JobOwner[job] = authority();
@@ -70,13 +70,11 @@ seiyaku JobQueue {
     JobRunCount[job] = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn assign_executor(job: Name, executor: AccountId) {
     assert_job_owner(job);
     JobExecutor[job] = executor;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn configure_job(job: Name,
                            next_slot: int,
                            max_retries: int,
@@ -90,24 +88,20 @@ seiyaku JobQueue {
     JobRetryDelaySlots[job] = retry_delay_slots;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn configure_cron(job: Name, interval_slots: int) {
     assert_job_owner(job);
     assert(interval_slots >= 0, "invalid interval");
     JobCronIntervalSlots[job] = interval_slots;
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn mark_running(job: Name, current_slot: int) {
-    mark_running_impl(job, current_slot);
+  kotoage fn mark_running(job: Name) {
+    mark_running_impl(job);
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn dispatch_job(job: Name, current_slot: int) {
-    mark_running_impl(job, current_slot);
+  kotoage fn dispatch_job(job: Name) {
+    mark_running_impl(job);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn mark_done(job: Name) {
     assert_job_runner(job);
     let status = JobStatus.ensure(job, 0);
@@ -116,9 +110,9 @@ seiyaku JobQueue {
     JobStatus[job] = 3;
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn complete_run(job: Name, current_slot: int) {
+  kotoage fn complete_run(job: Name) {
     assert_job_runner(job);
+    let current_slot = block_height();
     assert(JobStatus.ensure(job, 0) == 2, "job not running");
     assert(current_slot >= JobLastRunSlot.ensure(job, 0), "invalid current slot");
     let interval_slots = JobCronIntervalSlots.ensure(job, 0);
@@ -130,17 +124,10 @@ seiyaku JobQueue {
     }
   }
 
-  #[access(read="*", write="*")]
   kotoage fn retry(job: Name) {
-    retry_impl(job, JobLastRunSlot.ensure(job, 0));
+    retry_impl(job);
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn retry_at(job: Name, current_slot: int) {
-    retry_impl(job, current_slot);
-  }
-
-  #[access(read="*", write="*")]
   kotoage fn pause_job(job: Name) {
     assert_job_owner(job);
     let status = JobStatus.ensure(job, 0);
@@ -148,15 +135,14 @@ seiyaku JobQueue {
     JobStatus[job] = 4;
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn resume_job(job: Name, current_slot: int) {
+  kotoage fn resume_job(job: Name) {
     assert_job_owner(job);
+    let current_slot = block_height();
     assert(JobStatus.ensure(job, 0) == 4, "job not paused");
     JobStatus[job] = 1;
     JobNextSlot[job] = current_slot;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn cancel_job(job: Name) {
     assert_job_owner(job);
     let status = JobStatus.ensure(job, 0);

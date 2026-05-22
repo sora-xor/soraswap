@@ -154,12 +154,10 @@ seiyaku RiskVault {
     }
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     return RiskVaultInitialized;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_vault(collateral_asset: AssetDefinitionId,
                         vault_account: AccountId) {
     assert(RiskVaultInitialized == 0, "vault initialized");
@@ -170,7 +168,6 @@ seiyaku RiskVault {
     RiskVaultWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn configure_bucket(bucket_id: int,
                               controller: AccountId,
                               payout_cap_bps: int,
@@ -198,7 +195,6 @@ seiyaku RiskVault {
     RiskVaultBucketAutomationSafeMode[bucket_id] = RiskVaultBucketAutomationSafeMode.ensure(bucket_id, 0);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_automation(bucket_id: int,
                              executor: AccountId,
                              job_id: int,
@@ -216,7 +212,6 @@ seiyaku RiskVault {
     RiskVaultBucketAutomationSafeMode[bucket_id] = safe_mode;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn report_bucket(bucket_id: int, backlog: int, safe_mode: int) {
     assert_owner_or_controller(bucket_id);
     assert(backlog >= 0, "invalid backlog");
@@ -224,25 +219,21 @@ seiyaku RiskVault {
     RiskVaultBucketAutomationSafeMode[bucket_id] = safe_mode;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn report_bucket_c2c(bucket_id: int, backlog: int, safe_mode: int) -> int {
     report_bucket(bucket_id, backlog, safe_mode);
     return 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn enter_withdrawal_only() {
     assert_owner();
     RiskVaultWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exit_withdrawal_only() {
     assert_owner();
     RiskVaultWithdrawalOnly = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn deposit(bucket_id: int, amount: int) -> int permission(AssetOps) {
     assert_owner_or_controller(bucket_id);
     assert_bucket_configured(bucket_id);
@@ -254,7 +245,6 @@ seiyaku RiskVault {
     return RiskVaultBucketDeposits[bucket_id];
   }
 
-  #[access(read="*", write="*")]
   kotoage fn withdraw_surplus(bucket_id: int, amount: int) permission(AssetOps) {
     assert_owner_or_controller(bucket_id);
     assert_bucket_configured(bucket_id);
@@ -266,7 +256,6 @@ seiyaku RiskVault {
     RiskVaultBucketDeposits[bucket_id] = bucket_deposits_value(bucket_id) - amount;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn lock_liability(bucket_id: int,
                             exposure_id: int,
                             notional: int,
@@ -299,7 +288,6 @@ seiyaku RiskVault {
     return bucket_utilisation_bps(bucket_id, deposits, next_outstanding, next_reserved);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn release_liability(bucket_id: int,
                                exposure_id: int,
                                backlog: int) -> int {
@@ -334,7 +322,6 @@ seiyaku RiskVault {
     );
   }
 
-  #[access(read="*", write="*")]
   kotoage fn settle_payout(bucket_id: int,
                            exposure_id: int,
                            recipient: AccountId,

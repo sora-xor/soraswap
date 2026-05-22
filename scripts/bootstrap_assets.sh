@@ -13,10 +13,22 @@ domain_id="soraswap.universal"
 
 echo "bootstrap domain and helper assets via $config"
 
+if ! public_env_for_config "$config" >/dev/null 2>&1; then
+  local_fee_asset_definition_id="$(localnet_fee_asset_definition_id_for_config "$config" 2>/dev/null || true)"
+  if [[ -n "$local_fee_asset_definition_id" && "$SORASWAP_LOCAL_FEE_ASSET_LABEL" == *"#"* ]]; then
+    ensure_asset_definition_alias "$config" \
+      "$local_fee_asset_definition_id" \
+      "${SORASWAP_LOCAL_FEE_ASSET_LABEL%%#*}" \
+      "$SORASWAP_LOCAL_FEE_ASSET_LABEL" \
+      "$SORASWAP_LOCAL_FEE_ASSET_SCALE"
+    ensure_asset_balance_min "$config" "$SORASWAP_LOCAL_FEE_ASSET_LABEL" "$SORASWAP_AUTHORITY" 1000000
+  fi
+fi
+
 ensure_domain_sns_lease "$config" soraswap
 
 if ! iroha_cli_json --config "$config" ledger domain get --id "$domain_id" >/dev/null 2>&1; then
-  iroha_cli --machine --config "$config" ledger domain register --id "$domain_id"
+  iroha_cli_with_gas_metadata "$config" ledger domain register --id "$domain_id"
 fi
 
 ensure_account_registered "$config" "$treasury_account" "$domain_id"

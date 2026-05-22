@@ -1,0 +1,88 @@
+seiyaku DlmmHookManager {
+  state HookOwner: Map<Name, AccountId>;
+  state HookPhase: Map<Name, int>;
+  state HookMaxFeePips: Map<Name, int>;
+  state HookEnabled: Map<Name, int>;
+  state OrderOwner: Map<Name, AccountId>;
+  state OrderHook: Map<Name, Name>;
+  state OrderAmountIn: Map<Name, int>;
+  state OrderMinOut: Map<Name, int>;
+  state OrderIntervalSlots: Map<Name, int>;
+  state OrderExecutedIn: Map<Name, int>;
+  state OrderExecutedOut: Map<Name, int>;
+
+  fn assert_hook_owner(hook_id: Name) {
+    assert(HookOwner.contains(hook_id), "hook missing");
+    assert(HookOwner[hook_id] == authority(), "hook owner mismatch");
+  }
+
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  kotoage fn configure_hook_policy(hook_id: Name, phase: int, max_fee_pips: int, enabled: int) {
+    assert(max_fee_pips >= 0, "invalid fee");
+    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    if HookOwner.contains(hook_id) {
+      assert_hook_owner(hook_id);
+    } else {
+      HookOwner[hook_id] = authority();
+    }
+    HookPhase[hook_id] = phase;
+    HookMaxFeePips[hook_id] = max_fee_pips;
+    HookEnabled[hook_id] = enabled;
+  }
+
+  kotoage fn place_limit_order(order_id: Name, hook_id: Name, amount_in: int, min_out: int) {
+    assert(HookEnabled.ensure(hook_id, 0) == 1, "hook disabled");
+    assert(!OrderOwner.contains(order_id), "order exists");
+    assert(amount_in > 0, "invalid amount");
+    assert(min_out > 0, "invalid min out");
+    OrderOwner[order_id] = authority();
+    OrderHook[order_id] = hook_id;
+    OrderAmountIn[order_id] = amount_in;
+    OrderMinOut[order_id] = min_out;
+  }
+
+  kotoage fn schedule_twamm(order_id: Name, hook_id: Name, amount_in: int, min_out: int, interval_slots: int) {
+    place_limit_order(order_id, hook_id, amount_in, min_out);
+    assert(interval_slots > 0, "invalid interval");
+    OrderIntervalSlots[order_id] = interval_slots;
+  }
+
+  kotoage fn record_execution(order_id: Name, amount_in: int, amount_out: int) {
+    assert(OrderOwner.contains(order_id), "order missing");
+    let hook_id = OrderHook[order_id];
+    assert_hook_owner(hook_id);
+    assert(amount_out >= OrderMinOut.ensure(order_id, 0), "insufficient output");
+    OrderExecutedIn[order_id] = OrderExecutedIn.ensure(order_id, 0) + amount_in;
+    OrderExecutedOut[order_id] = OrderExecutedOut.ensure(order_id, 0) + amount_out;
+  }
+
+  view fn hook_policy(hook_id: Name) -> (int, int, int, int) {
+    let registered = 0;
+    if HookOwner.contains(hook_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      HookPhase.get_or(hook_id, 0),
+      HookMaxFeePips.get_or(hook_id, 0),
+      HookEnabled.get_or(hook_id, 0)
+    );
+  }
+
+  view fn quote_hooked_swap(order_id: Name) -> (int, int, int, int, int) {
+    let registered = 0;
+    if OrderOwner.contains(order_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      OrderAmountIn.get_or(order_id, 0),
+      OrderMinOut.get_or(order_id, 0),
+      OrderExecutedIn.get_or(order_id, 0),
+      OrderExecutedOut.get_or(order_id, 0)
+    );
+  }
+}

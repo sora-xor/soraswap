@@ -6,6 +6,8 @@ seiyaku PerpsEngine {
   state int PerpsContractBound;
   state AccountId PerpsContractId;
   state int PerpsWithdrawalOnly;
+  state bytes PerpsOraclePublicKey;
+  state int PerpsOracleScheme;
 
   state AccountId PerpsAutomationExecutor;
   state int PerpsFundingJobId;
@@ -34,6 +36,7 @@ seiyaku PerpsEngine {
   state PerpsMarketLastMarkPrice: Map<int, int>;
   state PerpsMarketLastIndexPrice: Map<int, int>;
   state PerpsMarketLastOracleSlot: Map<int, int>;
+  state PerpsMarketLastOracleAttestationHash: Map<int, int>;
   state PerpsMarketGuardFlags: Map<int, int>;
   state PerpsMarketQueuedLiquidations: Map<int, int>;
   state PerpsMarketActivePositionCount: Map<int, int>;
@@ -274,23 +277,39 @@ seiyaku PerpsEngine {
       );
   }
 
-  fn assert_oracle_payload(market_id: int,
-                           mark_price_bps: int,
-                           index_price_bps: int,
-                           confidence_bps: int,
-                           oracle_slot: int,
-                           current_slot: int,
-                           status_flags: int,
-                           attestation_hash: int) {
+  fn perps_oracle_domain() -> int {
+    return 1;
+  }
+
+  fn assert_verified_oracle_payload(market_id: int,
+                                    oracle_payload: bytes,
+                                    oracle_signature: bytes) -> (int, int, int, int, int, int) {
     assert_market_registered(market_id);
+    assert(PerpsOracleScheme > 0, "oracle scheme missing");
+    assert(verify_signature(oracle_payload, oracle_signature, PerpsOraclePublicKey, PerpsOracleScheme), "oracle signature");
+    let payload = decode_json(oracle_payload);
+    assert(payload.get_int(name("domain")) == perps_oracle_domain(), "oracle domain mismatch");
+    assert(payload.get_int(name("market_id")) == market_id, "oracle market mismatch");
+    let mark_price_bps = payload.get_int(name("mark_price_bps"));
+    let index_price_bps = payload.get_int(name("index_price_bps"));
+    let confidence_bps = payload.get_int(name("confidence_bps"));
+    let oracle_slot = payload.get_int(name("oracle_slot"));
+    let status_flags = payload.get_int(name("status_flags"));
+    let attestation_hash = payload.get_int(name("attestation_hash"));
+    let current_slot = block_height();
     assert(mark_price_bps > 0, "invalid mark price");
     assert(index_price_bps > 0, "invalid index price");
     assert(confidence_bps >= 0, "invalid confidence");
     assert(confidence_bps <= 2_500, "confidence too wide");
     assert(attestation_hash > 0, "missing attestation");
     assert(current_slot >= oracle_slot, "invalid oracle slot");
+    let prior_oracle_slot = PerpsMarketLastOracleSlot.get_or(market_id, 0);
+    if prior_oracle_slot > 0 {
+      assert(oracle_slot > prior_oracle_slot, "oracle slot replay");
+    }
     assert(status_flags == 0, "oracle degraded");
     assert(current_slot - oracle_slot <= PerpsMarketOracleStaleSlots.get_or(market_id, 0), "oracle stale");
+    return (mark_price_bps, index_price_bps, confidence_bps, oracle_slot, current_slot, attestation_hash);
   }
 
   fn assert_market_accepts_risk(market_id: int, projected_open_interest: int) {
@@ -327,10 +346,12 @@ seiyaku PerpsEngine {
   fn record_market_oracle(market_id: int,
                           mark_price_bps: int,
                           index_price_bps: int,
-                          oracle_slot: int) {
+                          oracle_slot: int,
+                          attestation_hash: int) {
     PerpsMarketLastMarkPrice[market_id] = mark_price_bps;
     PerpsMarketLastIndexPrice[market_id] = index_price_bps;
     PerpsMarketLastOracleSlot[market_id] = oracle_slot;
+    PerpsMarketLastOracleAttestationHash[market_id] = attestation_hash;
   }
 
   fn append_active_position(market_id: int, position_id: int) {
@@ -477,7 +498,6 @@ seiyaku PerpsEngine {
     return 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     if PerpsInitialized == 1 {
       return 1;
@@ -485,14 +505,18 @@ seiyaku PerpsEngine {
     return 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_engine(collateral_asset: AssetDefinitionId,
-                         risk_vault_contract: bytes) {
+                         risk_vault_contract: bytes,
+                         oracle_public_key: bytes,
+                         oracle_scheme: int) {
     assert(PerpsInitialized == 0, "engine initialized");
+    assert(oracle_scheme > 0, "invalid oracle scheme");
     PerpsInitialized = 1;
     PerpsOwner = authority();
     PerpsCollateralAsset = collateral_asset;
     PerpsRiskVaultContract = risk_vault_contract;
+    PerpsOraclePublicKey = oracle_public_key;
+    PerpsOracleScheme = oracle_scheme;
     PerpsContractBound = 0;
     PerpsContractId = authority();
     PerpsWithdrawalOnly = 1;
@@ -506,7 +530,6 @@ seiyaku PerpsEngine {
     PerpsNextPositionId = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_automation(executor: AccountId,
                              funding_job_id: int,
                              liquidation_job_id: int,
@@ -562,12 +585,13 @@ seiyaku PerpsEngine {
     );
   }
 
-  view fn market_oracle_state(market_id: int) -> (int, int, int) {
+  view fn market_oracle_state(market_id: int) -> (int, int, int, int) {
     assert_market_registered(market_id);
     return (
       PerpsMarketLastMarkPrice.get_or(market_id, 0),
       PerpsMarketLastIndexPrice.get_or(market_id, 0),
-      PerpsMarketLastOracleSlot.get_or(market_id, 0)
+      PerpsMarketLastOracleSlot.get_or(market_id, 0),
+      PerpsMarketLastOracleAttestationHash.get_or(market_id, 0)
     );
   }
 
@@ -645,57 +669,42 @@ seiyaku PerpsEngine {
     );
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_contract(contract_id: AccountId) {
     assert_owner();
     PerpsContractId = contract_id;
     PerpsContractBound = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_risk_vault(risk_vault_contract: bytes) {
     assert_owner();
     PerpsRiskVaultContract = risk_vault_contract;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn enter_withdrawal_only() {
     assert_owner();
     PerpsWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exit_withdrawal_only() {
     assert_owner();
     PerpsWithdrawalOnly = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn open_position(market_id: int,
                            size: int,
                            margin: int,
                            requested_leverage_bps: int,
-                           mark_price_bps: int,
-                           index_price_bps: int,
-                           confidence_bps: int,
-                           oracle_slot: int,
-                           current_slot: int,
-                           status_flags: int,
-                           attestation_hash: int) -> int permission(AssetOps) {
+                           oracle_payload: bytes,
+                           oracle_signature: bytes) -> int permission(AssetOps) {
     assert_initialized();
     assert_risk_on();
     assert(size != 0, "invalid size");
     assert(margin > 0, "invalid margin");
-    assert_oracle_payload(
-      market_id,
-      mark_price_bps,
-      index_price_bps,
-      confidence_bps,
-      oracle_slot,
-      current_slot,
-      status_flags,
-      attestation_hash
-    );
+    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
+    let mark_price_bps = oracle.0;
+    let index_price_bps = oracle.1;
+    let oracle_slot = oracle.3;
+    let attestation_hash = oracle.5;
     let effective_leverage = requested_leverage_bps;
     if effective_leverage <= 0 {
       effective_leverage = PerpsMarketMaxLeverageBps[market_id];
@@ -726,11 +735,10 @@ seiyaku PerpsEngine {
     PerpsPositionLastOwnerResidual[position_id] = 0;
     append_active_position(market_id, position_id);
     PerpsMarketOpenInterest[market_id] = projected_open_interest;
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot);
+    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
     return position_id;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn add_margin(position_id: int, amount: int) -> int permission(AssetOps) {
     assert_initialized();
     assert_risk_on();
@@ -749,31 +757,20 @@ seiyaku PerpsEngine {
     return market_utilisation_bps(market_id, PerpsMarketOpenInterest.get_or(market_id, 0));
   }
 
-  #[access(read="*", write="*")]
   kotoage fn remove_margin(position_id: int,
                            amount: int,
-                           mark_price_bps: int,
-                           index_price_bps: int,
-                           confidence_bps: int,
-                           oracle_slot: int,
-                           current_slot: int,
-                           status_flags: int,
-                           attestation_hash: int) -> int permission(AssetOps) {
+                           oracle_payload: bytes,
+                           oracle_signature: bytes) -> int permission(AssetOps) {
     assert_initialized();
     assert_risk_on();
     assert_position_owner(position_id);
     assert(amount > 0, "invalid amount");
     let market_id = PerpsPositionMarketId[position_id];
-    assert_oracle_payload(
-      market_id,
-      mark_price_bps,
-      index_price_bps,
-      confidence_bps,
-      oracle_slot,
-      current_slot,
-      status_flags,
-      attestation_hash
-    );
+    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
+    let mark_price_bps = oracle.0;
+    let index_price_bps = oracle.1;
+    let oracle_slot = oracle.3;
+    let attestation_hash = oracle.5;
     let next_margin = PerpsPositionMargin[position_id] - amount;
     assert(next_margin >= 0, "insufficient margin");
     let next_equity = next_margin +
@@ -789,62 +786,41 @@ seiyaku PerpsEngine {
     risk_vault_lock_liability(position_id, abs_int(PerpsPositionSize[position_id]), next_margin);
     PerpsPositionMarkPrice[position_id] = mark_price_bps;
     PerpsPositionIndexPrice[position_id] = index_price_bps;
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot);
+    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
     return next_margin;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_funding(market_id: int,
-                          mark_price_bps: int,
-                          index_price_bps: int,
-                          confidence_bps: int,
-                          oracle_slot: int,
-                          current_slot: int,
-                          status_flags: int,
-                          attestation_hash: int) -> int {
+                          oracle_payload: bytes,
+                          oracle_signature: bytes) -> int {
     assert_initialized();
     assert_market_registered(market_id);
-    assert_oracle_payload(
-      market_id,
-      mark_price_bps,
-      index_price_bps,
-      confidence_bps,
-      oracle_slot,
-      current_slot,
-      status_flags,
-      attestation_hash
-    );
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot);
+    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
+    let mark_price_bps = oracle.0;
+    let index_price_bps = oracle.1;
+    let oracle_slot = oracle.3;
+    let attestation_hash = oracle.5;
+    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
     let funding_bps = PerpsMarketFundingBps.get_or(market_id, 0);
     let premium_bps = mark_price_bps - index_price_bps;
     let funding_delta_bps = (funding_bps * premium_bps) / 10_000;
     return funding_delta_bps;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn run_liquidation_pass(market_id: int,
                                   max_positions: int,
-                                  mark_price_bps: int,
-                                  index_price_bps: int,
-                                  confidence_bps: int,
-                                  oracle_slot: int,
-                                  current_slot: int,
-                                  status_flags: int,
-                                  attestation_hash: int) -> int permission(AssetOps) {
+                                  oracle_payload: bytes,
+                                  oracle_signature: bytes) -> int permission(AssetOps) {
     assert_initialized();
     assert_automation_runner();
     assert(max_positions > 0, "invalid scan size");
     assert(max_positions <= 4, "scan size exceeds cap");
-    assert_oracle_payload(
-      market_id,
-      mark_price_bps,
-      index_price_bps,
-      confidence_bps,
-      oracle_slot,
-      current_slot,
-      status_flags,
-      attestation_hash
-    );
+    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
+    let mark_price_bps = oracle.0;
+    let index_price_bps = oracle.1;
+    let oracle_slot = oracle.3;
+    let current_slot = oracle.4;
+    let attestation_hash = oracle.5;
 
     let active_count = PerpsMarketActivePositionCount.get_or(market_id, 0);
     let cursor = normalized_scan_cursor(PerpsMarketScanCursor.get_or(market_id, 0), active_count);
@@ -895,33 +871,22 @@ seiyaku PerpsEngine {
     PerpsMarketLastPassQueued[market_id] = queued;
     PerpsMarketLastPassRecovered[market_id] = recovered;
     PerpsMarketLastPassLiquidated[market_id] = liquidated;
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot);
+    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
     return liquidated;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn close_position(position_id: int,
-                            mark_price_bps: int,
-                            index_price_bps: int,
-                            confidence_bps: int,
-                            oracle_slot: int,
-                            current_slot: int,
-                            status_flags: int,
-                            attestation_hash: int) -> int permission(AssetOps) {
+                            oracle_payload: bytes,
+                            oracle_signature: bytes) -> int permission(AssetOps) {
     assert_initialized();
     assert_risk_on();
     assert_position_owner_manageable(position_id);
     let market_id = PerpsPositionMarketId[position_id];
-    assert_oracle_payload(
-      market_id,
-      mark_price_bps,
-      index_price_bps,
-      confidence_bps,
-      oracle_slot,
-      current_slot,
-      status_flags,
-      attestation_hash
-    );
+    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
+    let mark_price_bps = oracle.0;
+    let index_price_bps = oracle.1;
+    let oracle_slot = oracle.3;
+    let attestation_hash = oracle.5;
 
     let status = PerpsPositionStatus.get_or(position_id, 0);
     let payout = max_int(position_equity(position_id, mark_price_bps), 0);
@@ -950,11 +915,10 @@ seiyaku PerpsEngine {
     PerpsPositionStatus[position_id] = 2;
     PerpsPositionQueuedSlot[position_id] = 0;
     remove_active_position(market_id, position_id);
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot);
+    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
     return settled_payout;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn register_market(asset: AssetDefinitionId,
                              max_leverage_bps: int,
                              maintenance_margin_bps: int,
@@ -991,6 +955,7 @@ seiyaku PerpsEngine {
     PerpsMarketLastMarkPrice[market_id] = 0;
     PerpsMarketLastIndexPrice[market_id] = 0;
     PerpsMarketLastOracleSlot[market_id] = 0;
+    PerpsMarketLastOracleAttestationHash[market_id] = 0;
     PerpsMarketGuardFlags[market_id] = 0;
     PerpsMarketQueuedLiquidations[market_id] = 0;
     PerpsMarketActivePositionCount[market_id] = 0;
@@ -1002,7 +967,6 @@ seiyaku PerpsEngine {
     return market_id;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn update_market(market_id: int,
                            max_leverage_bps: int,
                            maintenance_margin_bps: int,
@@ -1032,7 +996,6 @@ seiyaku PerpsEngine {
     PerpsMarketActive[market_id] = active;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn admin_repair_orphan_position(position_id: int,
                                           mark_price_bps: int,
                                           index_price_bps: int) {
@@ -1063,7 +1026,6 @@ seiyaku PerpsEngine {
     remove_active_position(market_id, position_id);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn heartbeat(market_id: int,
                        current_backlog: int,
                        safe_mode: int) permission(Admin) {
@@ -1075,32 +1037,21 @@ seiyaku PerpsEngine {
     risk_vault_report_bucket();
   }
 
-  #[access(read="*", write="*")]
   kotoage fn modify_position(position_id: int,
                              size_delta: int,
                              margin_delta: int,
                              requested_leverage_bps: int,
-                             mark_price_bps: int,
-                             index_price_bps: int,
-                             confidence_bps: int,
-                             oracle_slot: int,
-                             current_slot: int,
-                             status_flags: int,
-                             attestation_hash: int) -> int permission(AssetOps) {
+                             oracle_payload: bytes,
+                             oracle_signature: bytes) -> int permission(AssetOps) {
     assert_initialized();
     assert_risk_on();
     assert_position_owner(position_id);
     let market_id = PerpsPositionMarketId[position_id];
-    assert_oracle_payload(
-      market_id,
-      mark_price_bps,
-      index_price_bps,
-      confidence_bps,
-      oracle_slot,
-      current_slot,
-      status_flags,
-      attestation_hash
-    );
+    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
+    let mark_price_bps = oracle.0;
+    let index_price_bps = oracle.1;
+    let oracle_slot = oracle.3;
+    let attestation_hash = oracle.5;
     let current_size = PerpsPositionSize[position_id];
     let current_margin = PerpsPositionMargin[position_id];
     let next_size = current_size + size_delta;
@@ -1140,7 +1091,7 @@ seiyaku PerpsEngine {
     PerpsPositionMarkPrice[position_id] = mark_price_bps;
     PerpsPositionIndexPrice[position_id] = index_price_bps;
     PerpsMarketOpenInterest[market_id] = projected_open_interest;
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot);
+    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
     return next_margin;
   }
 

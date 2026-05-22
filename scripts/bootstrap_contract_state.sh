@@ -24,6 +24,12 @@ options_shout_option_contract="$(deployed_contract_id_for_env "$mode" options.sh
 options_outperformance_option_contract="$(deployed_contract_id_for_env "$mode" options.outperformance_option)"
 cover_policy_manager_contract="$(deployed_contract_id_for_env "$mode" cover.policy_manager)"
 automation_job_queue_contract="$(deployed_contract_id_for_env "$mode" automation.job_queue)"
+intents_settlement_router_contract="$(deployed_contract_id_for_env "$mode" intents.settlement_router)"
+vaults_manager_contract="$(deployed_contract_id_for_env "$mode" vaults.manager)"
+operators_registry_contract="$(deployed_contract_id_for_env "$mode" operators.registry)"
+margin_portfolio_margin_contract="$(deployed_contract_id_for_env "$mode" margin.portfolio_margin)"
+rwa_market_contract="$(deployed_contract_id_for_env "$mode" rwa.market)"
+dlmm_hooks_manager_contract="$(deployed_contract_id_for_env "$mode" dlmm_hooks.hook_manager)"
 n3x_hub_contract_subject="$(contract_subject_account_for_literal "$config" "$n3x_hub_contract")"
 dlmm_pool_contract_subject="$(contract_subject_account_for_literal "$config" "$dlmm_pool_contract")"
 launchpad_liquidity_executor_contract_subject="$(contract_subject_account_for_literal "$config" "$launchpad_liquidity_executor_contract")"
@@ -33,6 +39,12 @@ perps_engine_contract_subject="$(contract_subject_account_for_literal "$config" 
 options_factory_contract_subject="$(contract_subject_account_for_literal "$config" "$options_factory_contract")"
 cover_policy_manager_contract_subject="$(contract_subject_account_for_literal "$config" "$cover_policy_manager_contract")"
 dlmm_router_contract_subject="$(contract_subject_account_for_literal "$config" "$dlmm_router_contract")"
+intents_settlement_router_contract_subject="$(contract_subject_account_for_literal "$config" "$intents_settlement_router_contract")"
+vaults_manager_contract_subject="$(contract_subject_account_for_literal "$config" "$vaults_manager_contract")"
+operators_registry_contract_subject="$(contract_subject_account_for_literal "$config" "$operators_registry_contract")"
+margin_portfolio_margin_contract_subject="$(contract_subject_account_for_literal "$config" "$margin_portfolio_margin_contract")"
+rwa_market_contract_subject="$(contract_subject_account_for_literal "$config" "$rwa_market_contract")"
+dlmm_hooks_manager_contract_subject="$(contract_subject_account_for_literal "$config" "$dlmm_hooks_manager_contract")"
 dlmm_pool_contract_blob_hex="0x$(printf '%s' "$dlmm_pool_contract" | xxd -p -c 256 | tr -d '\n')"
 launchpad_liquidity_executor_contract_blob_hex="0x$(printf '%s' "$launchpad_liquidity_executor_contract" | xxd -p -c 256 | tr -d '\n')"
 risk_vault_contract_blob_hex="0x$(printf '%s' "$risk_vault_contract" | xxd -p -c 256 | tr -d '\n')"
@@ -158,6 +170,8 @@ options_factory_pause_threshold_bps="${SORASWAP_OPTIONS_GUARD_PAUSE_THRESHOLD_BP
 options_factory_bump_percent_bps="${SORASWAP_OPTIONS_GUARD_BUMP_PERCENT_BPS:-1500}"
 cover_required_observations="${SORASWAP_COVER_REQUIRED_OBSERVATIONS:-3}"
 cover_oracle_stale_slots="${SORASWAP_COVER_ORACLE_STALE_SLOTS:-4}"
+oracle_public_key_hex="$(soraswap_required_oracle_public_key_hex "$config")"
+oracle_scheme="$SORASWAP_ORACLE_SCHEME"
 if [[ "$mode" == "local" ]]; then
   default_risk_bucket_1_bootstrap_deposit=200
   default_risk_bucket_2_bootstrap_deposit=0
@@ -173,6 +187,7 @@ risk_bucket_3_bootstrap_deposit="${SORASWAP_RISK_BUCKET_3_BOOTSTRAP_DEPOSIT:-$de
 bridge_asset_key="${SORASWAP_BRIDGE_ASSET_KEY:-genesis_bridge_asset}"
 bridge_route="${SORASWAP_BRIDGE_ROUTE:-eth_sora_usdt}"
 bridge_listing_fee_amount="${SORASWAP_BRIDGE_LISTING_FEE_AMOUNT:-0}"
+bridge_proof_authority="${SORASWAP_BRIDGE_PROOF_AUTHORITY:-$SORASWAP_AUTHORITY}"
 bridge_remote_domain="${SORASWAP_BRIDGE_REMOTE_DOMAIN:-1}"
 bridge_asset_home_domain="${SORASWAP_BRIDGE_ASSET_HOME_DOMAIN:-1}"
 bridge_asset_decimals="${SORASWAP_BRIDGE_ASSET_DECIMALS:-6}"
@@ -200,6 +215,23 @@ else
 fi
 launchpad_sale_asset_id="${SORASWAP_LAUNCHPAD_SALE_ASSET_ID:-$default_launchpad_sale_asset_id}"
 launchpad_pool_quote_asset_id="${SORASWAP_LAUNCHPAD_POOL_QUOTE_ASSET_ID:-$usdt_id}"
+soraswap_launch_vault_id="${SORASWAP_LAUNCH_VAULT_ID:-n3x_savings}"
+soraswap_launch_vault_strategy_code="${SORASWAP_LAUNCH_VAULT_STRATEGY_CODE:-1}"
+soraswap_launch_vault_async_redeem="${SORASWAP_LAUNCH_VAULT_ASYNC_REDEEM:-1}"
+soraswap_launch_operator_service="${SORASWAP_LAUNCH_OPERATOR_SERVICE:-solver}"
+soraswap_launch_operator_min_bond="${SORASWAP_LAUNCH_OPERATOR_MIN_BOND:-100}"
+soraswap_launch_operator_bond="${SORASWAP_LAUNCH_OPERATOR_BOND:-100}"
+soraswap_launch_operator_heartbeat_slot="${SORASWAP_LAUNCH_OPERATOR_HEARTBEAT_SLOT:-1}"
+soraswap_launch_operator_health_bps="${SORASWAP_LAUNCH_OPERATOR_HEALTH_BPS:-10000}"
+soraswap_launch_margin_market_id="${SORASWAP_LAUNCH_MARGIN_MARKET_ID:-portfolio}"
+soraswap_launch_margin_risk_weight_bps="${SORASWAP_LAUNCH_MARGIN_RISK_WEIGHT_BPS:-8000}"
+soraswap_launch_margin_liquidation_threshold_bps="${SORASWAP_LAUNCH_MARGIN_LIQUIDATION_THRESHOLD_BPS:-1000}"
+soraswap_launch_rwa_market_id="${SORASWAP_LAUNCH_RWA_MARKET_ID:-tbill_2026}"
+soraswap_launch_rwa_nav="${SORASWAP_LAUNCH_RWA_NAV:-100}"
+soraswap_launch_rwa_shares="${SORASWAP_LAUNCH_RWA_SHARES:-1000}"
+soraswap_launch_dlmm_hook_id="${SORASWAP_LAUNCH_DLMM_HOOK_ID:-dynamic_fee}"
+soraswap_launch_dlmm_hook_phase="${SORASWAP_LAUNCH_DLMM_HOOK_PHASE:-1}"
+soraswap_launch_dlmm_hook_max_fee_pips="${SORASWAP_LAUNCH_DLMM_HOOK_MAX_FEE_PIPS:-5000}"
 
 echo "bootstrap contract state via $config"
 
@@ -207,6 +239,12 @@ ensure_account_registered "$config" "$vault_account" soraswap
 ensure_account_registered "$config" "$n3x_hub_contract_subject" contract-subject
 ensure_account_registered "$config" "$dlmm_pool_contract_subject" contract-subject
 ensure_account_registered "$config" "$dlmm_router_contract_subject" contract-subject
+ensure_account_registered "$config" "$intents_settlement_router_contract_subject" contract-subject
+ensure_account_registered "$config" "$vaults_manager_contract_subject" contract-subject
+ensure_account_registered "$config" "$operators_registry_contract_subject" contract-subject
+ensure_account_registered "$config" "$margin_portfolio_margin_contract_subject" contract-subject
+ensure_account_registered "$config" "$rwa_market_contract_subject" contract-subject
+ensure_account_registered "$config" "$dlmm_hooks_manager_contract_subject" contract-subject
 
 warm_view() {
   local contract_id="$1"
@@ -781,7 +819,7 @@ transfer_asset_balance_between_accounts() {
     return 0
   fi
 
-  iroha_cli --machine --config "$signer_config" ledger asset transfer \
+  iroha_cli_with_gas_metadata "$signer_config" ledger asset transfer \
     --definition "$asset_id" \
     --account "$source_account" \
     --to "$destination_account" \
@@ -1604,6 +1642,16 @@ launchpad_factory_binding_expected_json="$(jq -cn \
   --arg contract_id "$launchpad_sale_factory_contract_subject" \
   --arg executor_contract "$launchpad_liquidity_executor_contract_blob_hex" \
   '[ $contract_id, $executor_contract, 1, 1 ]')"
+launchpad_factory_owner_expected_json="$(jq -cn --arg owner "$SORASWAP_AUTHORITY" '[ 1, $owner ]')"
+
+ensure_init_or_skip \
+  "launchpad sale factory owner" \
+  "$launchpad_sale_factory_contract" \
+  "factory_owner_state" \
+  null \
+  "$launchpad_factory_owner_expected_json" \
+  "init_factory" \
+  null
 
 actual_json="$(view_result_json "$launchpad_sale_factory_contract" "factory_binding_details" null 2>/dev/null || true)"
 if json_value_present "$actual_json" && json_equals "$actual_json" "$launchpad_factory_binding_expected_json"; then
@@ -1981,9 +2029,13 @@ perps_market_expected_json="$(jq -cn \
 engine_init_payload="$(jq -cn \
   --arg collateral_asset "$usdt_id" \
   --arg risk_vault_contract "$risk_vault_contract_blob_hex" \
+  --arg oracle_public_key "$oracle_public_key_hex" \
+  --argjson oracle_scheme "$oracle_scheme" \
   '{
     collateral_asset: $collateral_asset,
-    risk_vault_contract: $risk_vault_contract
+    risk_vault_contract: $risk_vault_contract,
+    oracle_public_key: $oracle_public_key,
+    oracle_scheme: $oracle_scheme
   }')"
 perps_engine_matches_live_state() {
   local engine_json market_state_json automation_state_json
@@ -2291,7 +2343,7 @@ ensure_init_or_skip_with_live_predicate \
   null \
   "$options_manager_expected_json" \
   "init_manager" \
-  "$(jq -cn --arg settlement_asset "$usdt_id" --arg guardian "$vault_account" '{ settlement_asset: $settlement_asset, guardian: $guardian }')" \
+  "$(jq -cn --arg settlement_asset "$usdt_id" --arg guardian "$vault_account" --arg oracle_public_key "$oracle_public_key_hex" --argjson oracle_scheme "$oracle_scheme" '{ settlement_asset: $settlement_asset, guardian: $guardian, oracle_public_key: $oracle_public_key, oracle_scheme: $oracle_scheme }')" \
   '$actual[0] == $expected[0]
    and (($actual[2] // 0) >= ($expected[2] // 0))
    and (($actual[3] // 0) >= ($expected[3] // 0))'
@@ -2371,7 +2423,7 @@ ensure_init_or_skip_with_live_predicate \
   null \
   "$options_factory_init_expected_json" \
   "init_factory" \
-  "$(jq -cn --arg settlement_asset "$usdt_id" --arg guardian "$vault_account" '{ settlement_asset: $settlement_asset, guardian: $guardian }')" \
+  "$(jq -cn --arg settlement_asset "$usdt_id" --arg guardian "$vault_account" --arg oracle_public_key "$oracle_public_key_hex" --argjson oracle_scheme "$oracle_scheme" '{ settlement_asset: $settlement_asset, guardian: $guardian, oracle_public_key: $oracle_public_key, oracle_scheme: $oracle_scheme }')" \
   '$actual[0] == $expected[0]
    and (($actual[2] // 0) >= ($expected[2] // 0))'
 echo "bootstrap apply: options factory bind manager"
@@ -2484,7 +2536,7 @@ if ! call_contract_and_wait \
   "$config" \
   "$options_shout_option_contract" \
   "init_product" \
-  "$(jq -cn --arg guardian "$vault_account" '{ guardian: $guardian }')" \
+  "$(jq -cn --arg guardian "$vault_account" --arg oracle_public_key "$oracle_public_key_hex" --argjson oracle_scheme "$oracle_scheme" '{ guardian: $guardian, oracle_public_key: $oracle_public_key, oracle_scheme: $oracle_scheme }')" \
   >/dev/null 2>&1; then
   echo "bootstrap skip: options shout product init already applied"
 fi
@@ -2606,7 +2658,7 @@ if [[ "$mode" == "local" ]]; then
     null \
     "$cover_manager_init_json" \
     "init_manager" \
-    "$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson oracle_stale_slots "$cover_oracle_stale_slots" '{ settlement_asset: $settlement_asset, risk_vault_contract: $risk_vault_contract, required_observations: $required_observations, oracle_stale_slots: $oracle_stale_slots }')" \
+    "$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson oracle_stale_slots "$cover_oracle_stale_slots" --arg oracle_public_key "$oracle_public_key_hex" --argjson oracle_scheme "$oracle_scheme" '{ settlement_asset: $settlement_asset, risk_vault_contract: $risk_vault_contract, required_observations: $required_observations, oracle_stale_slots: $oracle_stale_slots, oracle_public_key: $oracle_public_key, oracle_scheme: $oracle_scheme }')" \
     '$actual[0] == $expected[0]
      and $actual[3] == $expected[3]
      and $actual[4] == $expected[4]'
@@ -2650,7 +2702,7 @@ else
       "$config" \
       "$cover_policy_manager_contract" \
       "init_manager" \
-      "$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson oracle_stale_slots "$cover_oracle_stale_slots" '{ settlement_asset: $settlement_asset, risk_vault_contract: $risk_vault_contract, required_observations: $required_observations, oracle_stale_slots: $oracle_stale_slots }')" \
+      "$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson oracle_stale_slots "$cover_oracle_stale_slots" --arg oracle_public_key "$oracle_public_key_hex" --argjson oracle_scheme "$oracle_scheme" '{ settlement_asset: $settlement_asset, risk_vault_contract: $risk_vault_contract, required_observations: $required_observations, oracle_stale_slots: $oracle_stale_slots, oracle_public_key: $oracle_public_key, oracle_scheme: $oracle_scheme }')" \
       >/dev/null 2>&1; then
       echo "bootstrap note: cover manager init returned a non-fatal live-state error; continuing with bind/sync checks" >&2
     fi
@@ -2756,11 +2808,13 @@ if [[ -n "$sccp_bridge_contract" ]]; then
   bridge_listing_init_payload="$(jq -cn \
     --arg listing_fee_asset "$xor_id" \
     --arg treasury "$vault_account" \
+    --arg proof_authority "$bridge_proof_authority" \
     --argjson listing_fee_amount "$bridge_listing_fee_amount" \
     '{
       listing_fee_asset: $listing_fee_asset,
       treasury: $treasury,
-      listing_fee_amount: $listing_fee_amount
+      listing_fee_amount: $listing_fee_amount,
+      proof_authority: $proof_authority
     }')"
   ensure_init_or_skip \
     "bridge listing config" \
@@ -2770,6 +2824,24 @@ if [[ -n "$sccp_bridge_contract" ]]; then
     "$bridge_listing_expected_json" \
     "init_bridge" \
     "$bridge_listing_init_payload"
+
+  bridge_authorities_expected_json="$(jq -cn --arg owner "$SORASWAP_AUTHORITY" --arg proof_authority "$bridge_proof_authority" '[ $owner, $proof_authority ]')"
+  actual_json="$(view_result_json "$sccp_bridge_contract" "bridge_authorities" null 2>/dev/null || true)"
+  if json_value_present "$actual_json" && json_equals "$actual_json" "$bridge_authorities_expected_json"; then
+    echo "bootstrap skip: bridge authorities already match expected state"
+  else
+    echo "bootstrap apply: bridge proof authority"
+    call_contract_and_wait \
+      "$config" \
+      "$sccp_bridge_contract" \
+      "set_proof_authority" \
+      "$(jq -cn --arg proof_authority "$bridge_proof_authority" '{ proof_authority: $proof_authority }')" \
+      >/dev/null
+    actual_json="$(view_result_json "$sccp_bridge_contract" "bridge_authorities" null)"
+    if ! json_equals "$actual_json" "$bridge_authorities_expected_json"; then
+      fail_bootstrap_diff "bridge authorities" "$bridge_authorities_expected_json" "$actual_json"
+    fi
+  fi
 
   bridge_asset_view_payload="$(jq -cn --arg asset_key "$bridge_asset_key" '{asset_key: $asset_key}')"
   bridge_asset_mirror_prior_json='[0,0,0,0]'
@@ -2908,5 +2980,87 @@ if [[ -n "$sccp_bridge_contract" ]]; then
       "$bridge_route_activate_payload"
   fi
 fi
+
+launch_vault_view_payload="$(jq -cn --arg vault_id "$soraswap_launch_vault_id" '{vault_id: $vault_id}')"
+ensure_step_from_prior_or_skip \
+  "soraswap launch vault" \
+  "$vaults_manager_contract" \
+  "vault_state" \
+  "$launch_vault_view_payload" \
+  '[0,0,0,0,0]' \
+  "$(jq -cn --argjson strategy "$soraswap_launch_vault_strategy_code" --argjson async_redeem "$soraswap_launch_vault_async_redeem" '[1,$strategy,$async_redeem,0,0]')" \
+  "register_vault" \
+  "$(jq -cn \
+    --arg vault_id "$soraswap_launch_vault_id" \
+    --arg underlying_asset "$n3x_id" \
+    --arg share_asset "$n3x_id" \
+    --argjson strategy_code "$soraswap_launch_vault_strategy_code" \
+    --argjson async_redeem "$soraswap_launch_vault_async_redeem" \
+    '{vault_id:$vault_id, underlying_asset:$underlying_asset, share_asset:$share_asset, strategy_code:$strategy_code, async_redeem:$async_redeem}')"
+
+launch_operator_view_payload="$(jq -cn --arg service "$soraswap_launch_operator_service" '{service: $service}')"
+launch_operator_registered_json="$(jq -cn --argjson min_bond "$soraswap_launch_operator_min_bond" '[1,$min_bond,0,10000,0,0,0]')"
+launch_operator_bonded_json="$(jq -cn --argjson min_bond "$soraswap_launch_operator_min_bond" --argjson bonded "$soraswap_launch_operator_bond" '[1,$min_bond,$bonded,10000,0,0,0]')"
+launch_operator_heartbeat_json="$(jq -cn --argjson min_bond "$soraswap_launch_operator_min_bond" --argjson bonded "$soraswap_launch_operator_bond" --argjson slot "$soraswap_launch_operator_heartbeat_slot" --argjson health "$soraswap_launch_operator_health_bps" '[1,$min_bond,$bonded,$health,$slot,0,0]')"
+ensure_step_from_prior_or_skip \
+  "soraswap launch operator registration" \
+  "$operators_registry_contract" \
+  "operator_state" \
+  "$launch_operator_view_payload" \
+  '[0,0,0,0,0,0,0]' \
+  "$launch_operator_registered_json" \
+  "register_operator" \
+  "$(jq -cn --arg service "$soraswap_launch_operator_service" --arg bond_asset "$xor_id" --argjson min_bond "$soraswap_launch_operator_min_bond" '{service:$service, bond_asset:$bond_asset, min_bond:$min_bond}')"
+ensure_step_from_prior_or_skip \
+  "soraswap launch operator bond" \
+  "$operators_registry_contract" \
+  "operator_state" \
+  "$launch_operator_view_payload" \
+  "$launch_operator_registered_json" \
+  "$launch_operator_bonded_json" \
+  "bond" \
+  "$(jq -cn --arg service "$soraswap_launch_operator_service" --argjson amount "$soraswap_launch_operator_bond" '{service:$service, amount:$amount}')"
+ensure_step_from_prior_or_skip \
+  "soraswap launch operator heartbeat" \
+  "$operators_registry_contract" \
+  "operator_state" \
+  "$launch_operator_view_payload" \
+  "$launch_operator_bonded_json" \
+  "$launch_operator_heartbeat_json" \
+  "heartbeat" \
+  "$(jq -cn --arg service "$soraswap_launch_operator_service" --argjson slot "$soraswap_launch_operator_heartbeat_slot" --argjson health_bps "$soraswap_launch_operator_health_bps" '{service:$service, slot:$slot, health_bps:$health_bps, fees_accrued:0}')"
+
+launch_margin_view_payload="$(jq -cn --arg market_id "$soraswap_launch_margin_market_id" '{market_id: $market_id}')"
+ensure_step_from_prior_or_skip \
+  "soraswap launch margin market" \
+  "$margin_portfolio_margin_contract" \
+  "market_state" \
+  "$launch_margin_view_payload" \
+  '[0,0,0]' \
+  "$(jq -cn --argjson risk "$soraswap_launch_margin_risk_weight_bps" --argjson threshold "$soraswap_launch_margin_liquidation_threshold_bps" '[1,$risk,$threshold]')" \
+  "register_market" \
+  "$(jq -cn --arg market_id "$soraswap_launch_margin_market_id" --argjson risk_weight_bps "$soraswap_launch_margin_risk_weight_bps" --argjson liquidation_threshold_bps "$soraswap_launch_margin_liquidation_threshold_bps" '{market_id:$market_id, risk_weight_bps:$risk_weight_bps, liquidation_threshold_bps:$liquidation_threshold_bps}')"
+
+launch_rwa_view_payload="$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" '{market_id: $market_id}')"
+ensure_step_from_prior_or_skip \
+  "soraswap launch rwa market" \
+  "$rwa_market_contract" \
+  "rwa_market_state" \
+  "$launch_rwa_view_payload" \
+  '[0,0,0,0]' \
+  "$(jq -cn --argjson nav "$soraswap_launch_rwa_nav" --argjson shares "$soraswap_launch_rwa_shares" '[1,$nav,$shares,1]')" \
+  "issue_lot" \
+  "$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" --arg share_asset "$n3x_id" --arg nav_asset "$usdt_id" --argjson initial_nav_per_share "$soraswap_launch_rwa_nav" --argjson total_shares "$soraswap_launch_rwa_shares" '{market_id:$market_id, share_asset:$share_asset, nav_asset:$nav_asset, initial_nav_per_share:$initial_nav_per_share, total_shares:$total_shares}')"
+
+launch_hook_view_payload="$(jq -cn --arg hook_id "$soraswap_launch_dlmm_hook_id" '{hook_id: $hook_id}')"
+ensure_step_from_prior_or_skip \
+  "soraswap launch dlmm hook policy" \
+  "$dlmm_hooks_manager_contract" \
+  "hook_policy" \
+  "$launch_hook_view_payload" \
+  '[0,0,0,0]' \
+  "$(jq -cn --argjson phase "$soraswap_launch_dlmm_hook_phase" --argjson max_fee "$soraswap_launch_dlmm_hook_max_fee_pips" '[1,$phase,$max_fee,1]')" \
+  "configure_hook_policy" \
+  "$(jq -cn --arg hook_id "$soraswap_launch_dlmm_hook_id" --argjson phase "$soraswap_launch_dlmm_hook_phase" --argjson max_fee_pips "$soraswap_launch_dlmm_hook_max_fee_pips" '{hook_id:$hook_id, phase:$phase, max_fee_pips:$max_fee_pips, enabled:1}')"
 
 echo "post-deploy contract state initialized"

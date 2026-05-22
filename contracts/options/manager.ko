@@ -5,6 +5,8 @@ seiyaku OptionsManager {
   state AccountId OptMgrGuardian;
   state AssetDefinitionId OptMgrSettlementAsset;
   state int OptMgrWithdrawalOnly;
+  state bytes OptMgrOraclePublicKey;
+  state int OptMgrOracleScheme;
 
   state AccountId OptMgrAutomationExecutor;
   state int OptMgrExpiryJobId;
@@ -37,6 +39,8 @@ seiyaku OptionsManager {
   state OptMgrSeriesCollateralMultiplierBps: Map<int, int>;
   state OptMgrSeriesStatus: Map<int, int>;
   state OptMgrSeriesSettlementSlot: Map<int, int>;
+  state OptMgrSeriesOracleSlot: Map<int, int>;
+  state OptMgrSeriesAttestationHash: Map<int, int>;
   state OptMgrSeriesFinalMark: Map<int, int>;
   state OptMgrSeriesFinalQuoteMark: Map<int, int>;
 
@@ -75,19 +79,79 @@ seiyaku OptionsManager {
     return 0;
   }
 
-  #[access(read="*", write="*")]
+  fn options_series_oracle_domain() -> int {
+    return 2;
+  }
+
+  fn assert_verified_series_payload(series_id: int,
+                                    oracle_payload: bytes,
+                                    oracle_signature: bytes) -> (int, int, int, int, int) {
+    assert_series_exists(series_id);
+    assert(OptMgrOracleScheme > 0, "oracle scheme missing");
+    assert(verify_signature(oracle_payload, oracle_signature, OptMgrOraclePublicKey, OptMgrOracleScheme), "oracle signature");
+    let payload = decode_json(oracle_payload);
+    assert(payload.get_int(name("domain")) == options_series_oracle_domain(), "oracle domain mismatch");
+    assert(payload.get_int(name("series_id")) == series_id, "oracle series mismatch");
+    let final_mark = payload.get_int(name("final_mark"));
+    let final_quote_mark = payload.get_int(name("final_quote_mark"));
+    let oracle_slot = payload.get_int(name("oracle_slot"));
+    let status_flags = payload.get_int(name("status_flags"));
+    let attestation_hash = payload.get_int(name("attestation_hash"));
+    let current_slot = block_height();
+    assert(final_mark >= 0, "invalid final mark");
+    assert(final_quote_mark >= 0, "invalid final quote mark");
+    assert(attestation_hash > 0, "missing attestation");
+    assert(current_slot >= oracle_slot, "invalid oracle slot");
+    let prior_oracle_slot = OptMgrSeriesOracleSlot.get_or(series_id, 0);
+    if prior_oracle_slot > 0 {
+      assert(oracle_slot > prior_oracle_slot, "oracle slot replay");
+    }
+    assert(current_slot >= OptMgrSeriesExpirySlot.get_or(series_id, 0), "series live");
+    assert(status_flags == 0, "oracle degraded");
+    return (final_mark, final_quote_mark, oracle_slot, current_slot, attestation_hash);
+  }
+
+  fn settle_series_values(series_id: int,
+                          final_mark: int,
+                          final_quote_mark: int,
+                          settlement_slot: int,
+                          oracle_slot: int,
+                          attestation_hash: int) {
+    assert_owner_or_controller();
+    assert_series_exists(series_id);
+    assert(final_mark >= 0, "invalid final mark");
+    assert(final_quote_mark >= 0, "invalid final quote mark");
+    assert(attestation_hash > 0, "missing attestation");
+    assert(settlement_slot >= OptMgrSeriesExpirySlot.get_or(series_id, 0), "series live");
+    let prior_oracle_slot = OptMgrSeriesOracleSlot.get_or(series_id, 0);
+    if prior_oracle_slot > 0 {
+      assert(oracle_slot > prior_oracle_slot, "oracle slot replay");
+    }
+    OptMgrSeriesStatus[series_id] = 3;
+    OptMgrSeriesSettlementSlot[series_id] = settlement_slot;
+    OptMgrSeriesOracleSlot[series_id] = oracle_slot;
+    OptMgrSeriesAttestationHash[series_id] = attestation_hash;
+    OptMgrSeriesFinalMark[series_id] = final_mark;
+    OptMgrSeriesFinalQuoteMark[series_id] = final_quote_mark;
+  }
+
   kotoage fn main() -> int {
     return OptMgrInitialized;
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn init_manager(settlement_asset: AssetDefinitionId, guardian: AccountId) {
+  kotoage fn init_manager(settlement_asset: AssetDefinitionId,
+                          guardian: AccountId,
+                          oracle_public_key: bytes,
+                          oracle_scheme: int) {
     assert(OptMgrInitialized == 0, "manager initialized");
+    assert(oracle_scheme > 0, "invalid oracle scheme");
     OptMgrInitialized = 1;
     OptMgrOwner = authority();
     OptMgrController = authority();
     OptMgrGuardian = guardian;
     OptMgrSettlementAsset = settlement_asset;
+    OptMgrOraclePublicKey = oracle_public_key;
+    OptMgrOracleScheme = oracle_scheme;
     OptMgrWithdrawalOnly = 1;
     OptMgrExpiryJobId = 0;
     OptMgrSettlementJobId = 0;
@@ -99,7 +163,6 @@ seiyaku OptionsManager {
     OptMgrNextSeriesId = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_automation(executor: AccountId,
                              expiry_job_id: int,
                              settlement_job_id: int,
@@ -119,25 +182,21 @@ seiyaku OptionsManager {
     OptMgrAutomationSafeMode = safe_mode;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn enter_withdrawal_only() {
     assert_owner();
     OptMgrWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exit_withdrawal_only() {
     assert_owner();
     OptMgrWithdrawalOnly = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_controller(controller: AccountId) {
     assert_owner();
     OptMgrController = controller;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn register_template(option_kind: int,
                                underlying_asset: AssetDefinitionId,
                                quote_asset: AssetDefinitionId,
@@ -164,7 +223,6 @@ seiyaku OptionsManager {
     return template_id;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn update_template(template_id: int,
                              strike_bps: int,
                              collateral_multiplier_bps: int,
@@ -181,7 +239,6 @@ seiyaku OptionsManager {
     OptMgrTemplateActive[template_id] = active;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn create_series(template_id: int,
                            expiry_slot: int,
                            max_notional: int,
@@ -205,12 +262,13 @@ seiyaku OptionsManager {
     OptMgrSeriesCollateralMultiplierBps[series_id] = OptMgrTemplateCollateralMultiplierBps[template_id];
     OptMgrSeriesStatus[series_id] = 1;
     OptMgrSeriesSettlementSlot[series_id] = 0;
+    OptMgrSeriesOracleSlot[series_id] = 0;
+    OptMgrSeriesAttestationHash[series_id] = 0;
     OptMgrSeriesFinalMark[series_id] = 0;
     OptMgrSeriesFinalQuoteMark[series_id] = 0;
     return series_id;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn close_series(series_id: int, settlement_slot: int) {
     assert_owner();
     assert_series_exists(series_id);
@@ -219,39 +277,20 @@ seiyaku OptionsManager {
     OptMgrSeriesSettlementSlot[series_id] = settlement_slot;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn settle_series(series_id: int,
-                           final_mark: int,
-                           final_quote_mark: int,
-                           settlement_slot: int,
-                           oracle_slot: int,
-                           current_slot: int,
-                           status_flags: int,
-                           attestation_hash: int) {
-    assert_owner_or_controller();
-    assert_series_exists(series_id);
-    assert(final_mark >= 0, "invalid final mark");
-    assert(final_quote_mark >= 0, "invalid final quote mark");
-    assert(attestation_hash > 0, "missing attestation");
-    assert(current_slot >= oracle_slot, "invalid oracle slot");
-    assert(current_slot >= OptMgrSeriesExpirySlot.get_or(series_id, 0), "series live");
-    assert(status_flags == 0, "oracle degraded");
-    OptMgrSeriesStatus[series_id] = 3;
-    OptMgrSeriesSettlementSlot[series_id] = settlement_slot;
-    OptMgrSeriesFinalMark[series_id] = final_mark;
-    OptMgrSeriesFinalQuoteMark[series_id] = final_quote_mark;
+                           oracle_payload: bytes,
+                           oracle_signature: bytes) {
+    let oracle = assert_verified_series_payload(series_id, oracle_payload, oracle_signature);
+    settle_series_values(series_id, oracle.0, oracle.1, oracle.3, oracle.2, oracle.4);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn settle_series_c2c(series_id: int,
                                final_mark: int,
                                final_quote_mark: int,
                                settlement_slot: int,
                                oracle_slot: int,
-                               current_slot: int,
-                               status_flags: int,
                                attestation_hash: int) -> int {
-    settle_series(series_id, final_mark, final_quote_mark, settlement_slot, oracle_slot, current_slot, status_flags, attestation_hash);
+    settle_series_values(series_id, final_mark, final_quote_mark, settlement_slot, oracle_slot, attestation_hash);
     return 1;
   }
 

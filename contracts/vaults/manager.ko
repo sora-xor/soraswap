@@ -1,0 +1,95 @@
+seiyaku VaultManager {
+  state VaultOwner: Map<Name, AccountId>;
+  state VaultUnderlyingAsset: Map<Name, AssetDefinitionId>;
+  state VaultShareAsset: Map<Name, AssetDefinitionId>;
+  state VaultStrategyCode: Map<Name, int>;
+  state VaultAsyncRedeem: Map<Name, int>;
+  state VaultTotalAssets: Map<Name, int>;
+  state VaultTotalShares: Map<Name, int>;
+  state PositionShares: Map<Name, int>;
+  state RequestOwner: Map<Name, AccountId>;
+  state RequestVault: Map<Name, Name>;
+  state RequestShares: Map<Name, int>;
+  state RequestClaimSlot: Map<Name, int>;
+  state RequestStatus: Map<Name, int>;
+
+  fn assert_vault_exists(vault_id: Name) {
+    assert(VaultOwner.contains(vault_id), "vault missing");
+  }
+
+  fn assert_request_owner(request_id: Name) {
+    assert(RequestOwner.contains(request_id), "request missing");
+    assert(RequestOwner[request_id] == authority(), "request owner mismatch");
+  }
+
+  kotoage fn main() -> int {
+    return 1;
+  }
+
+  kotoage fn register_vault(vault_id: Name,
+                            underlying_asset: AssetDefinitionId,
+                            share_asset: AssetDefinitionId,
+                            strategy_code: int,
+                            async_redeem: int) {
+    assert(!VaultOwner.contains(vault_id), "vault exists");
+    assert(strategy_code >= 0, "invalid strategy");
+    assert(async_redeem == 0 || async_redeem == 1, "invalid async flag");
+    VaultOwner[vault_id] = authority();
+    VaultUnderlyingAsset[vault_id] = underlying_asset;
+    VaultShareAsset[vault_id] = share_asset;
+    VaultStrategyCode[vault_id] = strategy_code;
+    VaultAsyncRedeem[vault_id] = async_redeem;
+    VaultTotalAssets[vault_id] = 0;
+    VaultTotalShares[vault_id] = 0;
+  }
+
+  kotoage fn deposit(vault_id: Name, position_id: Name, amount: int) permission(AssetOps) {
+    assert_vault_exists(vault_id);
+    assert(amount > 0, "invalid deposit");
+    VaultTotalAssets[vault_id] = VaultTotalAssets.ensure(vault_id, 0) + amount;
+    VaultTotalShares[vault_id] = VaultTotalShares.ensure(vault_id, 0) + amount;
+    PositionShares[position_id] = PositionShares.ensure(position_id, 0) + amount;
+  }
+
+  kotoage fn request_redeem(vault_id: Name, request_id: Name, position_id: Name, shares: int, claim_slot: int) {
+    assert_vault_exists(vault_id);
+    assert(!RequestOwner.contains(request_id), "request exists");
+    assert(shares > 0, "invalid shares");
+    assert(PositionShares.ensure(position_id, 0) >= shares, "insufficient shares");
+    PositionShares[position_id] = PositionShares.ensure(position_id, 0) - shares;
+    RequestOwner[request_id] = authority();
+    RequestVault[request_id] = vault_id;
+    RequestShares[request_id] = shares;
+    RequestClaimSlot[request_id] = claim_slot;
+    RequestStatus[request_id] = 1;
+  }
+
+  kotoage fn claim_redeem(request_id: Name, current_slot: int) permission(AssetOps) {
+    assert_request_owner(request_id);
+    assert(RequestStatus.ensure(request_id, 0) == 1, "request not open");
+    assert(current_slot >= RequestClaimSlot.ensure(request_id, 0), "claim not ready");
+    let vault_id = RequestVault[request_id];
+    let shares = RequestShares.ensure(request_id, 0);
+    VaultTotalAssets[vault_id] = VaultTotalAssets.ensure(vault_id, 0) - shares;
+    VaultTotalShares[vault_id] = VaultTotalShares.ensure(vault_id, 0) - shares;
+    RequestStatus[request_id] = 2;
+  }
+
+  view fn vault_state(vault_id: Name) -> (int, int, int, int, int) {
+    let registered = 0;
+    if VaultOwner.contains(vault_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      VaultStrategyCode.get_or(vault_id, 0),
+      VaultAsyncRedeem.get_or(vault_id, 0),
+      VaultTotalAssets.get_or(vault_id, 0),
+      VaultTotalShares.get_or(vault_id, 0)
+    );
+  }
+
+  view fn position_state(position_id: Name) -> int {
+    return PositionShares.get_or(position_id, 0);
+  }
+}

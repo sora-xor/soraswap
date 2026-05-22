@@ -2,6 +2,7 @@ const DEFAULT_VISIBLE_FILL_LIMIT = 120;
 const DEFAULT_GAS_LIMIT = 100000;
 const DEFAULT_UNIFIED_ACTIVITY_LIMIT = 28;
 const DEFAULT_CANDLE_LIMIT = 96;
+const DEFAULT_MODULE_ACTIVITY_LIMIT = 12;
 const LIVE_FALLBACK_REFRESH_INTERVAL_MS = 15000;
 const LIVE_EVENT_REFRESH_DEBOUNCE_MS = 1500;
 const LIVE_RECONNECT_DELAY_MS = 2500;
@@ -22,6 +23,12 @@ const PRODUCT_DEFINITIONS = [
   { key: "launchpad", label: "Launchpad", contractKey: "launchpad.sale_factory" },
   { key: "options", label: "Options", contractKey: "options.factory" },
   { key: "cover", label: "Cover", contractKey: "cover.policy_manager" },
+  { key: "intents", label: "Intents", contractKey: "intents.settlement_router" },
+  { key: "vaults", label: "Vaults", contractKey: "vaults.manager" },
+  { key: "operators", label: "Operators", contractKey: "operators.registry" },
+  { key: "margin", label: "Margin", contractKey: "margin.portfolio_margin" },
+  { key: "rwa", label: "RWA", contractKey: "rwa.market" },
+  { key: "dlmmHooks", label: "DLMM Hooks", contractKey: "dlmm_hooks.hook_manager" },
 ];
 const ACTION_RAILS = {
   swaps: {
@@ -390,6 +397,222 @@ const ACTION_RAILS = {
         buildPayload: (draft) => ({
           policy_id: normalizeInteger(draft.policy_id),
           payout_amount: normalizeInteger(draft.payout_amount),
+        }),
+      },
+    ],
+  },
+  intents: {
+    title: "Intent Rails",
+    copy: "Open, cancel, and fill solver intents from the trader cockpit.",
+    actions: [
+      {
+        key: "intent_open",
+        label: "Open",
+        submitLabel: "Open Intent",
+        entrypoint: "open_intent",
+        fields: [
+          { key: "intent_id", label: "Intent ID", type: "text", defaultValue: "intent-1" },
+          { key: "amount_in", label: "Amount In", type: "number", min: 1, step: 1, defaultValue: 100 },
+          { key: "min_out", label: "Minimum Out", type: "number", min: 1, step: 1, defaultValue: 97 },
+          { key: "solver_fee_bps", label: "Solver Fee BPS", type: "number", min: 0, step: 1, defaultValue: 25 },
+        ],
+        buildPayload: (draft) => ({
+          intent_id: String(draft.intent_id || "intent-1"),
+          input_asset: "xor#universal",
+          output_asset: "usdt#soraswap.universal",
+          amount_in: normalizeInteger(draft.amount_in),
+          min_out: normalizeInteger(draft.min_out),
+          solver_fee_bps: normalizeInteger(draft.solver_fee_bps),
+          deadline_slot: 100,
+          nonce: 1,
+        }),
+      },
+      {
+        key: "intent_fill",
+        label: "Fill",
+        submitLabel: "Fill Intent",
+        entrypoint: "fill_intent",
+        fields: [
+          { key: "intent_id", label: "Intent ID", type: "text", defaultValue: "intent-1" },
+          { key: "amount_out", label: "Amount Out", type: "number", min: 1, step: 1, defaultValue: 99 },
+        ],
+        buildPayload: (draft) => ({
+          intent_id: String(draft.intent_id || "intent-1"),
+          amount_out: normalizeInteger(draft.amount_out),
+          fill_slot: 1,
+        }),
+      },
+    ],
+  },
+  vaults: {
+    title: "Vault Rails",
+    copy: "Register vaults, deposit, and claim async redemptions.",
+    actions: [
+      {
+        key: "vault_deposit",
+        label: "Deposit",
+        submitLabel: "Deposit",
+        entrypoint: "deposit",
+        fields: [
+          { key: "vault_id", label: "Vault ID", type: "text", defaultValue: "n3x-savings" },
+          { key: "position_id", label: "Position ID", type: "text", defaultValue: "pos-1" },
+          { key: "amount", label: "Amount", type: "number", min: 1, step: 1, defaultValue: 250 },
+        ],
+        buildPayload: (draft) => ({
+          vault_id: String(draft.vault_id || "n3x-savings"),
+          position_id: String(draft.position_id || "pos-1"),
+          amount: normalizeInteger(draft.amount),
+        }),
+      },
+      {
+        key: "vault_redeem",
+        label: "Redeem",
+        submitLabel: "Request Redeem",
+        entrypoint: "request_redeem",
+        fields: [
+          { key: "vault_id", label: "Vault ID", type: "text", defaultValue: "n3x-savings" },
+          { key: "request_id", label: "Request ID", type: "text", defaultValue: "redeem-1" },
+          { key: "position_id", label: "Position ID", type: "text", defaultValue: "pos-1" },
+          { key: "shares", label: "Shares", type: "number", min: 1, step: 1, defaultValue: 40 },
+        ],
+        buildPayload: (draft) => ({
+          vault_id: String(draft.vault_id || "n3x-savings"),
+          request_id: String(draft.request_id || "redeem-1"),
+          position_id: String(draft.position_id || "pos-1"),
+          shares: normalizeInteger(draft.shares),
+          claim_slot: 1,
+        }),
+      },
+    ],
+  },
+  operators: {
+    title: "Operator Rails",
+    copy: "Register bonded operators, post bond, heartbeat, and claim fees.",
+    actions: [
+      {
+        key: "operator_bond",
+        label: "Bond",
+        submitLabel: "Post Bond",
+        entrypoint: "bond",
+        fields: [
+          { key: "service", label: "Service", type: "text", defaultValue: "solver" },
+          { key: "amount", label: "Amount", type: "number", min: 1, step: 1, defaultValue: 1000 },
+        ],
+        buildPayload: (draft) => ({
+          service: String(draft.service || "solver"),
+          amount: normalizeInteger(draft.amount),
+        }),
+      },
+      {
+        key: "operator_heartbeat",
+        label: "Heartbeat",
+        submitLabel: "Heartbeat",
+        entrypoint: "heartbeat",
+        fields: [
+          { key: "service", label: "Service", type: "text", defaultValue: "solver" },
+          { key: "health_bps", label: "Health BPS", type: "number", min: 0, step: 1, defaultValue: 9700 },
+        ],
+        buildPayload: (draft) => ({
+          service: String(draft.service || "solver"),
+          slot: 1,
+          health_bps: normalizeInteger(draft.health_bps),
+          fees_accrued: 0,
+        }),
+      },
+    ],
+  },
+  margin: {
+    title: "Margin Rails",
+    copy: "Deposit collateral, lock exposure, and route liquidation checks.",
+    actions: [
+      {
+        key: "margin_deposit",
+        label: "Deposit",
+        submitLabel: "Deposit Collateral",
+        entrypoint: "deposit_collateral",
+        fields: [
+          { key: "account_key", label: "Account Key", type: "text", defaultValue: "alice" },
+          { key: "amount", label: "Amount", type: "number", min: 1, step: 1, defaultValue: 500 },
+        ],
+        buildPayload: (draft) => ({
+          account_key: String(draft.account_key || "alice"),
+          amount: normalizeInteger(draft.amount),
+        }),
+      },
+      {
+        key: "margin_liquidate",
+        label: "Liquidate",
+        submitLabel: "Liquidate",
+        entrypoint: "liquidate_account",
+        fields: [
+          { key: "account_key", label: "Account Key", type: "text", defaultValue: "alice" },
+        ],
+        buildPayload: (draft) => ({
+          account_key: String(draft.account_key || "alice"),
+        }),
+      },
+    ],
+  },
+  rwa: {
+    title: "RWA Rails",
+    copy: "Issue markets, report NAV, request redemptions, and settle controller actions.",
+    actions: [
+      {
+        key: "rwa_issue",
+        label: "Issue",
+        submitLabel: "Issue Lot",
+        entrypoint: "issue_lot",
+        fields: [
+          { key: "market_id", label: "Market ID", type: "text", defaultValue: "tbill-1" },
+          { key: "initial_nav_per_share", label: "NAV", type: "number", min: 1, step: 1, defaultValue: 101 },
+          { key: "total_shares", label: "Shares", type: "number", min: 1, step: 1, defaultValue: 10000 },
+        ],
+        buildPayload: (draft) => ({
+          market_id: String(draft.market_id || "tbill-1"),
+          share_asset: "rwa_tbill#soraswap.universal",
+          nav_asset: "usdt#soraswap.universal",
+          initial_nav_per_share: normalizeInteger(draft.initial_nav_per_share),
+          total_shares: normalizeInteger(draft.total_shares),
+        }),
+      },
+      {
+        key: "rwa_redeem",
+        label: "Redeem",
+        submitLabel: "Request Redemption",
+        entrypoint: "request_redemption",
+        fields: [
+          { key: "market_id", label: "Market ID", type: "text", defaultValue: "tbill-1" },
+          { key: "redemption_id", label: "Redemption ID", type: "text", defaultValue: "r-1" },
+          { key: "shares", label: "Shares", type: "number", min: 1, step: 1, defaultValue: 250 },
+        ],
+        buildPayload: (draft) => ({
+          market_id: String(draft.market_id || "tbill-1"),
+          redemption_id: String(draft.redemption_id || "r-1"),
+          shares: normalizeInteger(draft.shares),
+        }),
+      },
+    ],
+  },
+  dlmmHooks: {
+    title: "DLMM Hook Rails",
+    copy: "Configure hooks and place limit/TWAMM orders for the DLMM surface.",
+    actions: [
+      {
+        key: "hook_limit",
+        label: "Limit",
+        submitLabel: "Place Limit",
+        entrypoint: "place_limit_order",
+        fields: [
+          { key: "order_id", label: "Order ID", type: "text", defaultValue: "order-1" },
+          { key: "hook_id", label: "Hook ID", type: "text", defaultValue: "limit" },
+          { key: "amount_in", label: "Amount In", type: "number", min: 1, step: 1, defaultValue: 100 },
+          { key: "min_out", label: "Min Out", type: "number", min: 1, step: 1, defaultValue: 99 },
+        ],
+        buildPayload: (draft) => ({
+          order_id: String(draft.order_id || "order-1"),
+          hook_id: String(draft.hook_id || "limit"),
+          amount_in: normalizeInteger(draft.amount_in),
+          min_out: normalizeInteger(draft.min_out),
         }),
       },
     ],
@@ -2238,6 +2461,39 @@ async function loadCoverModule(environment, authority) {
   }
 }
 
+async function loadGenericProductModule(environment, authority, moduleKey) {
+  const definition = PRODUCT_DEFINITIONS.find((item) => item.key === moduleKey);
+  const contract = resolveEnvironmentContract(environment, definition.contractKey);
+  if (!contract) {
+    return buildMissingModule(definition);
+  }
+
+  try {
+    const activities = normalizeActivityItems(
+      await listContractActivity(environment.name, contract.contract_address, authority, {
+        limit: DEFAULT_MODULE_ACTIVITY_LIMIT,
+      }),
+    );
+    const latest = activities[0];
+    const description = latest ? describeContractActivity(definition, latest) : null;
+    return buildModuleCard(definition, contract, {
+      statusTone: latest ? "live" : "watch",
+      statusLabel: latest ? "Live" : "Watching",
+      hero: description?.exposure || "No recent wallet activity",
+      blurb: description ? `${description.action} - ${description.context}` : "Deployed and ready for signed trader actions.",
+      metrics: [
+        createMetric("Contract", truncateMiddle(contract.contract_address, 10, 8)),
+        createMetric("Latest", description?.action || "None yet"),
+        createMetric("Events", formatCount(activities.length)),
+      ],
+      radarValue: description?.action || "Watching",
+      rawActivities: activities,
+    });
+  } catch (error) {
+    return buildErrorModule(definition, contract, error);
+  }
+}
+
 async function loadProductModules(environment, authority, fills, metrics, symbols) {
   const routerContract = resolveEnvironmentContract(environment, moduleContractKey("swaps"));
   const modules = [
@@ -2247,9 +2503,14 @@ async function loadProductModules(environment, authority, fills, metrics, symbol
       loadPerpsModule(environment, authority),
       loadFarmsModule(environment, authority),
       loadLaunchpadModule(environment, authority),
-      loadOptionsManagerModule(environment, authority),
-      loadOptionsFactoryModule(environment, authority),
+      loadGenericProductModule(environment, authority, "options"),
       loadCoverModule(environment, authority),
+      loadGenericProductModule(environment, authority, "intents"),
+      loadGenericProductModule(environment, authority, "vaults"),
+      loadGenericProductModule(environment, authority, "operators"),
+      loadGenericProductModule(environment, authority, "margin"),
+      loadGenericProductModule(environment, authority, "rwa"),
+      loadGenericProductModule(environment, authority, "dlmmHooks"),
     ])),
   ];
 
@@ -2393,6 +2654,80 @@ function describeContractActivity(module, activity) {
           payout !== null ? `${formatAmount(payout)} payout` : null,
         ]) || "Policy action",
         context: policyId !== null ? `Policy #${policyId}` : "Cover policy",
+      };
+    }
+    case "intents": {
+      const intentId = findPayloadString(payload, ["intent_id", "intentId"]);
+      const amountIn = findPayloadInteger(payload, ["amount_in", "amountIn"]);
+      const amountOut = findPayloadInteger(payload, ["amount_out", "amountOut"]);
+      return {
+        action: humanizeEntrypoint(entrypoint),
+        exposure: joinCompact([
+          amountIn !== null ? `${formatAmount(amountIn)} in` : null,
+          amountOut !== null ? `${formatAmount(amountOut)} out` : null,
+        ]) || "Intent action",
+        context: intentId ? `Intent ${intentId}` : "Solver intent",
+      };
+    }
+    case "vaults": {
+      const vaultId = findPayloadString(payload, ["vault_id", "vaultId"]);
+      const positionId = findPayloadString(payload, ["position_id", "positionId"]);
+      const amount = findPayloadInteger(payload, ["amount", "shares"]);
+      return {
+        action: humanizeEntrypoint(entrypoint),
+        exposure: amount !== null ? formatAmount(amount) : "Vault action",
+        context: joinCompact([vaultId, positionId]) || "Vault position",
+      };
+    }
+    case "operators": {
+      const service = findPayloadString(payload, ["service"]);
+      const amount = findPayloadInteger(payload, ["amount", "min_bond", "fees_accrued"]);
+      const health = findPayloadInteger(payload, ["health_bps", "healthBps"]);
+      return {
+        action: humanizeEntrypoint(entrypoint),
+        exposure: joinCompact([
+          amount !== null ? formatAmount(amount) : null,
+          health !== null ? `${formatBasisPoints(health)} health` : null,
+        ]) || "Operator action",
+        context: service ? `Service ${service}` : "Bonded operator",
+      };
+    }
+    case "margin": {
+      const marketId = findPayloadString(payload, ["market_id", "marketId"]);
+      const accountKey = findPayloadString(payload, ["account_key", "accountKey"]);
+      const amount = findPayloadInteger(payload, ["amount", "exposure_delta", "exposureDelta"]);
+      return {
+        action: humanizeEntrypoint(entrypoint),
+        exposure: amount !== null ? formatAmount(amount) : "Margin action",
+        context: joinCompact([marketId, accountKey]) || "Portfolio margin",
+      };
+    }
+    case "rwa": {
+      const marketId = findPayloadString(payload, ["market_id", "marketId"]);
+      const redemptionId = findPayloadString(payload, ["redemption_id", "redemptionId"]);
+      const shares = findPayloadInteger(payload, ["shares", "total_shares", "totalShares"]);
+      const nav = findPayloadInteger(payload, ["nav_per_share", "initial_nav_per_share"]);
+      return {
+        action: humanizeEntrypoint(entrypoint),
+        exposure: joinCompact([
+          shares !== null ? `${formatAmount(shares)} shares` : null,
+          nav !== null ? `${formatAmount(nav)} NAV` : null,
+        ]) || "RWA action",
+        context: joinCompact([marketId, redemptionId]) || "RWA market",
+      };
+    }
+    case "dlmmHooks": {
+      const hookId = findPayloadString(payload, ["hook_id", "hookId"]);
+      const orderId = findPayloadString(payload, ["order_id", "orderId"]);
+      const amountIn = findPayloadInteger(payload, ["amount_in", "amountIn"]);
+      const minOut = findPayloadInteger(payload, ["min_out", "minOut", "amount_out", "amountOut"]);
+      return {
+        action: humanizeEntrypoint(entrypoint),
+        exposure: joinCompact([
+          amountIn !== null ? `${formatAmount(amountIn)} in` : null,
+          minOut !== null ? `${formatAmount(minOut)} out` : null,
+        ]) || "Hook action",
+        context: joinCompact([hookId, orderId]) || "DLMM hook",
       };
     }
     default:
@@ -3245,12 +3580,30 @@ async function refreshWorkspace(options = {}) {
       baseAssetId: accountPayload?.assets?.baseAssetId || fillsPayload.base_asset_id || "xor#universal",
       quoteAssetId: accountPayload?.assets?.quoteAssetId || fillsPayload.quote_asset_id || "quote",
     };
+    const symbols = {
+      baseAssetId: assets.baseAssetId,
+      quoteAssetId: assets.quoteAssetId,
+      baseSymbol: assetTicker(assets.baseAssetId),
+      quoteSymbol: assetTicker(assets.quoteAssetId),
+    };
     const fills = normalizeRollupFills(fillsPayload.items);
     const candles = normalizeRollupCandles(candlesPayload.items);
     const metrics = accountPayload?.metrics && typeof accountPayload.metrics === "object"
       ? accountPayload.metrics
       : computeAnalytics(fills);
-    const modules = normalizeModuleCards(accountPayload.modules);
+    let modules = normalizeModuleCards(accountPayload.modules);
+    const missingModuleKeys = PRODUCT_DEFINITIONS
+      .map((definition) => definition.key)
+      .filter((key) => !modules.some((module) => module.key === key));
+    if (missingModuleKeys.length) {
+      const fallbackModules = await loadProductModules(environment, authority, fills, metrics, symbols);
+      const fallbackByKey = new Map(fallbackModules.map((module) => [module.key, module]));
+      modules = modules.concat(
+        missingModuleKeys
+          .map((key) => fallbackByKey.get(key))
+          .filter(Boolean),
+      );
+    }
     const unifiedActivities = normalizeTraderActivityItems(activityPayload.items);
     const historyHead = normalizeInteger(accountPayload.historyHead ?? fillsPayload.history_head) ?? 0;
 

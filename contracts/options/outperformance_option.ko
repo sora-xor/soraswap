@@ -70,12 +70,10 @@ seiyaku OutperformanceOption {
     return b;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     return OutperfInitialized;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_product(guardian: AccountId) {
     assert(OutperfInitialized == 0, "product initialized");
     OutperfInitialized = 1;
@@ -85,25 +83,21 @@ seiyaku OutperformanceOption {
     OutperfWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_controller(controller: AccountId) {
     assert_owner();
     OutperfController = controller;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn enter_withdrawal_only() {
     assert_owner();
     OutperfWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exit_withdrawal_only() {
     assert_owner();
     OutperfWithdrawalOnly = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_series(series_id: int,
                          expiry_slot: int,
                          collateral_multiplier_bps: int) {
@@ -118,7 +112,6 @@ seiyaku OutperformanceOption {
     OutperfSeriesSettlementReady[series_id] = OutperfSeriesSettlementReady.ensure(series_id, 0);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_series_c2c(series_id: int,
                              expiry_slot: int,
                              collateral_multiplier_bps: int) -> int {
@@ -126,7 +119,6 @@ seiyaku OutperformanceOption {
     return 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn register_position(position_id: int,
                                series_id: int,
                                owner: AccountId,
@@ -148,7 +140,6 @@ seiyaku OutperformanceOption {
     OutperfPositionStatus[position_id] = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn register_position_c2c(position_id: int,
                                    series_id: int,
                                    owner: AccountId,
@@ -158,7 +149,6 @@ seiyaku OutperformanceOption {
     return 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn settle_series(series_id: int,
                            base_return_bps: int,
                            quote_return_bps: int,
@@ -172,7 +162,6 @@ seiyaku OutperformanceOption {
     OutperfSeriesExpirySlot[series_id] = max_int(OutperfSeriesExpirySlot.get_or(series_id, 0), settlement_slot);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn settle_series_c2c(series_id: int,
                                base_return_bps: int,
                                quote_return_bps: int,
@@ -181,7 +170,6 @@ seiyaku OutperformanceOption {
     return 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exercise_position(position_id: int) -> int {
     assert_initialized();
     assert_position_operator(position_id);
@@ -203,10 +191,10 @@ seiyaku OutperformanceOption {
     return payout;
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn expire_series(series_id: int, current_slot: int) {
+  kotoage fn expire_series(series_id: int) {
     assert_owner_or_controller();
     assert(OutperfSeriesExpirySlot.contains(series_id), "series missing");
+    let current_slot = block_height();
     assert(current_slot >= OutperfSeriesExpirySlot[series_id], "series live");
     OutperfSeriesStatus[series_id] = 3;
   }

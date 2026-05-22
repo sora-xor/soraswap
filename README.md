@@ -6,7 +6,7 @@ The repo now also carries an SCCP bridge contract at `contracts/bridge/sccp_brid
 
 Current status:
 - Repo scaffold is in place.
-- Initial Kotodama contracts are present for `n3x`, DLMM, launchpad, referral, automation, farms, perps, options, and cover.
+- Initial Kotodama contracts are present for `n3x`, DLMM, launchpad, referral, automation, farms, perps, options, cover, solver intents, vaults, bonded operators, portfolio margin, tokenized RWA markets, and DLMM hooks.
 - The derivatives stack is being rebuilt as a launch-gated multi-contract graph: `contracts/risk/risk_vault.ko`, `contracts/perps/perps_engine.ko`, `contracts/options/{manager,factory,vault,shout_option,outperformance_option}.ko`, and `contracts/cover/policy_manager.ko`.
 - The derivatives graph now depends on sibling `../iroha` support for same-transaction ABI v1 contract-to-contract `call_contract(...)` execution. Product contracts store deployed contract address literals as UTF-8 `bytes` routing fields for nested calls, while nested `authority()` inside the callee still resolves to the caller contract subject account.
 - DLMM is treated as the deployable AMM surface.
@@ -18,6 +18,7 @@ Current status:
 - Derivatives now route user collateral, liability, and payout state through `risk_vault` instead of direct product-owned custody transfers. The shared risk-vault custody account is the deployed contract subject itself, so nested product calls settle against contract-owned collateral on chain. Local acceptance and the signed Taira smoke lane both exercise active write paths for perps/options/cover.
 - Perps/options/cover plus `risk_vault` remain one shared rollout surface behind the combined `lint + compile + simulate + isolated local smoke` gate rather than independent per-module acceptance.
 - The current DLMM LP surface is a single-contract scaffold, not the final helper/NFT wrapper layout.
+- The 2026 DeFi primitive launch uses generic metadata-backed native `DeFiInstructionBox` records in `../iroha` for intents, vaults, operators, AMM hooks, margin, and RWA markets, with SoraSwap product adapters in `contracts/{intents,vaults,operators,margin,rwa,dlmm_hooks}`.
 - `xor#universal` is the canonical base asset for routing and pool pricing.
 - [`docs/parity/migration_register.md`](./docs/parity/migration_register.md) is the canonical release ledger. Modules must be `ported`, `blocked`, `stub`, or `reference-only`; `adapted` is treated as an intermediate non-release state only.
 
@@ -44,6 +45,11 @@ Current status:
 
 ## Commands
 ```bash
+make dev-doctor
+make dev-build
+make dev-check
+make dev-test
+make dev-schema
 make lint
 make compile
 make simulate-smoke
@@ -73,10 +79,11 @@ make test-contract-console-production
 make testnet-nested-call-probe
 make production-nested-call-probe
 make test-public-env-helpers
+make release-taira
 make release-checklist
 ```
 
-`make compile` and the deploy/smoke entrypoints emit stripped `.to` artifacts by default. Runtime deployments therefore use the same compact bytecode shape that the release evidence set records, while manifests remain under `artifacts/compiled/`.
+`iroha.contracts.toml` is the source of truth for contract sources, aliases, profile client configs, signer/default gas/fee asset settings, test files, and smoke declarations. `make lint` and `make compile` are now thin aliases for `iroha contract dev check` and `iroha contract dev build`; generated `.to`, manifest JSON, interface JSON, source maps, and budget reports are emitted under `artifacts/compiled/`. `make dev-schema` regenerates the profile/interface summary from the same manifest into `docs/interface_specs/generated.md`, and `make dev-smoke` runs the native manifest smoke declarations against the selected profile client config. The SoraSwap wrapper forwards that profile config to the top-level `iroha` CLI automatically when the file exists, so local doctor/smoke calls use the same signer and Torii endpoint as deploy/smoke flows.
 
 ## Simulations
 The repo now includes a root Node/TypeScript/Jest workspace for derivatives simulation and cross-product stress runs.
@@ -115,7 +122,7 @@ The backend resolves Torii targets from the checked-in deployment record for the
 Mutation policy is environment-aware:
 - `local` permits signed mutations by default.
 - `testnet` public environments, including Taira, permit signed mutations only when the console was started with `SORASWAP_ALLOW_TESTNET_MUTATIONS=1`.
-- bridge-message submission for proof-managed bridge entrypoints rejects caller-supplied `settlement.payload`; the release path must stay proof-driven.
+- bridge-message submission for proof-managed bridge entrypoints rejects caller-supplied `settlement.payload`; the release path must stay proof-driven and must be signed by the configured bridge proof authority.
 
 It now also auto-discovers the standard signer configs when they exist and are not placeholder templates:
 - `tmp/iroha-localnet/client.toml` for `local` (or `$SORASWAP_LOCALNET_DIR/client.toml` when that env var is set)
@@ -291,13 +298,19 @@ make soak-contract-console
 `make test-contract-console-testnet` first auto-discovers the newest unconsumed SORA-targeted bridge transfer for the configured route. When live SCCP discovery is unavailable, the latest saved console evidence already points at a consumed bridge message, or recent live inventory only exposes consumed SORA-targeted transfers, it reuses the newest matching saved console report from `deployments/testnet/` or `deployments/testnet/archive/` and verifies the duplicate/replay rejection path instead of silently skipping the bridge gate. `SORASWAP_TESTNET_BRIDGE_MESSAGE_ID` remains available as an explicit debug override when you need to force a specific message id.
 
 ## Environment Variables
+The default contract workflow is profile based. Prefer editing or selecting profiles in `iroha.contracts.toml`, then run `make dev-schema` to refresh the generated profile/interface summary. Environment variables are kept for local paths, signer secrets, public rollout gates, and scenario-specific smoke fixtures that should not live in the manifest.
+
 - `SORASWAP_IROHA_ROOT` - defaults to `../iroha`
+- `SORASWAP_PROFILE` - selects the `iroha.contracts.toml` profile used by `make dev-*`, `make lint`, and `make compile`; defaults to `local`
+- `SORASWAP_CONTRACTS_MANIFEST` - optional manifest override for wrappers; defaults to `iroha.contracts.toml`
+- `SORASWAP_IROHA_CLI_BIN` - optional explicit `iroha` binary used by `scripts/dev_iroha.sh`
+- `SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD` - set to `1` to reuse existing `iroha`, `koto_compile`, `koto_lint`, and `koto_test` binaries
 - `SORASWAP_CLIENT_CONFIG` - CLI config path; defaults per script
 - `SORASWAP_AUTHORITY` - optional canonical I105 override; otherwise derived from the client config public key
 - `SORASWAP_BASE_ASSET_ALIAS` - defaults to `xor#universal`
 - `SORASWAP_XOR_ASSET_DEFINITION_ID` - defaults to the repo-local `xor` asset definition id used for `xor#universal`
 - `SORASWAP_USDT_ASSET_DEFINITION_ID`, `SORASWAP_USDC_ASSET_DEFINITION_ID`, `SORASWAP_KUSD_ASSET_DEFINITION_ID`, `SORASWAP_N3X_ASSET_DEFINITION_ID` - optional public helper-asset definition overrides used by `bootstrap_assets.sh`; set these before `make deploy-production` when the parallel public chain uses different helper asset ids than Taira
-- `SORASWAP_SMOKE_GAS_LIMIT` - defaults to `100000`
+- `SORASWAP_SMOKE_GAS_LIMIT` - defaults to `500000`
 - `SORASWAP_SKIP_IROHA_CLI_BUILD` - set to `1` to reuse an existing `../iroha/target/debug/iroha` binary even when the sibling tree is newer than the binary
 - `SORASWAP_SORAFS_CLI_BIN` - optional explicit `sorafs_cli` path used by `make publish-trader-api`; otherwise the script reuses or builds `../iroha/target/debug/sorafs_cli`
 - `SORASWAP_SKIP_KOTO_TOOL_BUILD` - set to `1` to reuse existing `../iroha/target/debug/{koto_compile,koto_lint}` binaries instead of rebuilding them
@@ -313,7 +326,9 @@ make soak-contract-console
 - `SORASWAP_PRODUCTION_CLIENT_CONFIG` - optional default config path used by `make deploy-production`, `make smoke-production`, `make smoke-production-readonly`, and `make test-contract-console-production` when `SORASWAP_CLIENT_CONFIG` is not set
 - `SORASWAP_PRODUCTION_CHAIN_ID` - optional production chain-id override used when the production client config is copied from another environment or otherwise carries the wrong `chain` value
 - `SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT` - optional network-prefix override for the parallel production environment; falls back to `SORASWAP_CHAIN_DISCRIMINANT` when omitted
+- `SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID`, `SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID` - fee-asset definition ids inserted into ledger transaction metadata for local/testnet bootstrap commands that run outside the contract-call wrapper
 - `SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID`, `SORASWAP_PRODUCTION_FEE_ASSET_LABEL` - optional production fee-asset overrides for deploy/bootstrap/smoke preflight when the production fee asset is not query-visible through `SORASWAP_FEE_ASSET_ALIAS`
+- `SORASWAP_LEDGER_GAS_LIMIT` - optional gas limit for metadata-backed ledger/SNS bootstrap transactions; defaults to `2000000`
 - `SORASWAP_PUBLIC_RUN_SUFFIX`, `SORASWAP_PUBLIC_BRIDGE_ROUTE`, `SORASWAP_PUBLIC_BRIDGE_RECENT_LIMIT`, `SORASWAP_PUBLIC_BRIDGE_MESSAGE_ID` - optional shared public-env overrides used by the generic public smoke and contract-console wrappers before their built-in defaults
 - `SORASWAP_TESTNET_BRIDGE_MESSAGE_ID` - optional debug override for `make test-contract-console-testnet` when you want to force a specific live SCCP message id instead of using chain-derived recent-message discovery
 - `SORASWAP_TESTNET_BRIDGE_ROUTE` - optional bridge route override for testnet console smoke when the looked-up message bundle cannot derive the route
@@ -327,6 +342,7 @@ make soak-contract-console
 - `SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP` - defaults to `1048576`; deploy scripts warn when live Taira is below this frame-cap budget
 - `SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS` - defaults to `45`; max request time for the public `/v1/contracts/deploy` wrapper before deploy recovery/fallback logic takes over
 - `SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS` - defaults to `600`; max request time for the multi-contract `contract app deploy` bundle path before the local/public deploy wrapper gives up
+- `SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS` - defaults to `180`; max wait for each bundle alias to resolve to its planned contract address before materializing deployment evidence
 - `SORASWAP_DEPLOY_PIPELINE_WAIT_SECS`, `SORASWAP_DEPLOY_COMMITTED_WAIT_SECS`, `SORASWAP_DEPLOY_MANIFEST_WAIT_SECS` - default to `300`, `120`, and `180`; control live deploy revalidation windows for pipeline status, committed transaction lookup, and manifest visibility during deploy recovery plus post-deploy bootstrap
 - `SORASWAP_CONTRACT_CALL_MAX_TIME_SECS` - defaults to `120`; max request time for signed `/v1/contracts/call` mutations before the wrapper fails the request
 - `SORASWAP_CONTRACT_CALL_RETRY_COUNT` - defaults to `1`; mutating `/v1/contracts/call` requests are not retried by default because a transport timeout can still submit the first transaction and make a blind retry duplicate a non-idempotent action
@@ -335,7 +351,7 @@ make soak-contract-console
 - `SORASWAP_LOCALNET_BASE_API_PORT` - optional localnet API port root override; useful when another local Nexus already occupies `8080-8082`
 - `SORASWAP_LOCALNET_BASE_P2P_PORT` - optional localnet P2P port root override; useful when another local Nexus already occupies `1337+`
 - `SORASWAP_LOCALNET_CONSENSUS_MODE` - optional localnet consensus override; defaults to `npos` for `local_up.sh` and `permissioned` for `tests/isolated_e2e.sh`
-- `SORASWAP_LOCALNET_BLOCK_TIME_MS`, `SORASWAP_LOCALNET_COMMIT_TIME_MS` - optional Kagami timing overrides passed through by `local_up.sh`; `tests/isolated_e2e.sh` defaults both to `5000` on the isolated permissioned debug path
+- `SORASWAP_LOCALNET_BLOCK_TIME_MS`, `SORASWAP_LOCALNET_COMMIT_TIME_MS` - optional Kagami timing overrides passed through by `local_up.sh`; the isolated local smoke leaves them unset by default so Kagami's fast localnet defaults are used
 - `SORASWAP_LOCALNET_COMMIT_INFLIGHT_TIMEOUT_MS` - optional override for `[sumeragi.persistence].commit_inflight_timeout_ms` in generated local peer configs; SoraSwap defaults it to `60000` so cold DLMM deploy blocks do not stall behind Kagami's tighter localnet cap
 - `SORASWAP_WARM_VIEW_TIMEOUT_SECS` - optional per-view timeout used only by bootstrap prewarm calls; defaults to `5` so a cold diagnostic view cannot stall the whole isolated bootstrap
 - `SORASWAP_LOCALNET_GUEST_STACK_BYTES` - optional localnet guest stack override; defaults to `8388608` so DLMM swap smoke has an `8 MiB` guest stack budget
@@ -346,6 +362,10 @@ make soak-contract-console
 - `SORASWAP_BOOTSTRAP_SCOPE` - defaults to `full`; set to `foundation` to stop post-deploy initialization after `n3x` plus DLMM setup
 - `SORASWAP_SMOKE_SCOPE` - defaults to `full`; set to `foundation` to skip launchpad, referral, farms, perps, options, cover, and automation smoke mutations
 - `SORASWAP_TREASURY_ACCOUNT` - optional override for the treasury/vault account used during post-deploy init
+- `SORASWAP_BRIDGE_PROOF_AUTHORITY` - optional bridge proof authority; bootstrap defaults it to the deployment authority and enforces it through `bridge_authorities()`
+- `SORASWAP_ORACLE_PUBLIC_KEY_HEX` - required for full bootstrap; raw 32-byte Ed25519 public keys and Iroha `ed0120...` public keys are accepted and normalized before contract init
+- `SORASWAP_ORACLE_PRIVATE_KEY_HEX` - optional local/test smoke signer key for `scripts/oracle_payload.py`; raw seed, seed+public, and Iroha `802620...` private keys are accepted
+- `SORASWAP_ORACLE_SCHEME` - defaults to `1` for Ed25519 signatures over the exact raw UTF-8 JSON oracle payload bytes
 - `SORASWAP_POOL_SEED_NEXT_BASE`, `SORASWAP_POOL_SEED_NEXT_QUOTE`, `SORASWAP_POOL_SEED_FAR_BASE`, `SORASWAP_POOL_SEED_FAR_QUOTE` - optional adjacent-bin bootstrap liquidity overrides
 - `SORASWAP_POOL_POSITION_ID`, `SORASWAP_POOL_POSITION_BASE`, `SORASWAP_POOL_POSITION_QUOTE`, `SORASWAP_POOL_POSITION_REMOVE_SHARES` - optional local DLMM smoke position controls
 - `SORASWAP_POOL_IMPACT_CAP_BPS`, `SORASWAP_POOL_MIN_RESERVE_BASE`, `SORASWAP_POOL_MIN_RESERVE_QUOTE`, `SORASWAP_POOL_MAX_BINS_PER_SWAP`, `SORASWAP_POOL_BIN_LIQUIDITY_CAP` - optional DLMM risk guard overrides
@@ -362,7 +382,7 @@ make soak-contract-console
 - `SORASWAP_OPTIONS_SHOUT_TENOR_SLOTS`, `SORASWAP_OPTIONS_OUTPERFORMANCE_TENOR_SLOTS`, `SORASWAP_OPTIONS_SHOUT_STRIKE_BPS`, `SORASWAP_OPTIONS_OUTPERFORMANCE_STRIKE_BPS`, `SORASWAP_OPTIONS_COLLATERAL_MULTIPLIER_BPS`, `SORASWAP_OPTIONS_SHOUT_BASE_PREMIUM_BPS`, `SORASWAP_OPTIONS_OUTPERFORMANCE_BASE_PREMIUM_BPS`, `SORASWAP_OPTIONS_SHOUT_EXPIRY_SLOT`, `SORASWAP_OPTIONS_OUTPERFORMANCE_EXPIRY_SLOT`, `SORASWAP_OPTIONS_SHOUT_MAX_NOTIONAL`, `SORASWAP_OPTIONS_OUTPERFORMANCE_MAX_NOTIONAL` - optional options template and series bootstrap overrides
 - `SORASWAP_OPTIONS_GUARD_BUMP_ACTIVATE_BPS`, `SORASWAP_OPTIONS_GUARD_BUMP_DEACTIVATE_BPS`, `SORASWAP_OPTIONS_GUARD_PAUSE_THRESHOLD_BPS`, `SORASWAP_OPTIONS_GUARD_BUMP_PERCENT_BPS` - optional options factory utilisation-guard overrides
 - `SORASWAP_OPTIONS_SHOUT_SMOKE_NOTIONAL`, `SORASWAP_OPTIONS_SHOUT_SMOKE_PREMIUM_PAID`, `SORASWAP_OPTIONS_SHOUT_SMOKE_COLLATERAL_LOCKED`, `SORASWAP_OPTIONS_SHOUT_SMOKE_RECORD_MARK_BPS`, `SORASWAP_OPTIONS_SHOUT_SMOKE_EXERCISE_MARK_BPS`, `SORASWAP_OPTIONS_OUTPERFORMANCE_SMOKE_NOTIONAL`, `SORASWAP_OPTIONS_OUTPERFORMANCE_SMOKE_PREMIUM_PAID`, `SORASWAP_OPTIONS_OUTPERFORMANCE_SMOKE_COLLATERAL_LOCKED`, `SORASWAP_OPTIONS_OUTPERFORMANCE_FINAL_MARK_BPS`, `SORASWAP_OPTIONS_OUTPERFORMANCE_FINAL_QUOTE_MARK_BPS` - optional local active options smoke controls for shout and outperformance buy/settle/exercise flows
-- `SORASWAP_COVER_REQUIRED_OBSERVATIONS`, `SORASWAP_COVER_ORACLE_STALE_SLOTS`, `SORASWAP_COVER_SMOKE_NOTIONAL`, `SORASWAP_COVER_SMOKE_PAYOUT_AMOUNT`, `SORASWAP_COVER_SMOKE_PREMIUM_PAID`, `SORASWAP_COVER_SMOKE_LOWER_BOUND`, `SORASWAP_COVER_SMOKE_UPPER_BOUND`, `SORASWAP_COVER_SMOKE_TRIGGER_PRICE`, `SORASWAP_COVER_SMOKE_WINDOW_SLOTS`, `SORASWAP_COVER_SMOKE_POLICY_REQUIRED_OBSERVATIONS`, `SORASWAP_COVER_SMOKE_REGISTRATION_SLOT` - optional cover bootstrap and active local smoke controls, including the stale-oracle reset drill
+- `SORASWAP_COVER_REQUIRED_OBSERVATIONS`, `SORASWAP_COVER_ORACLE_STALE_SLOTS`, `SORASWAP_COVER_SMOKE_NOTIONAL`, `SORASWAP_COVER_SMOKE_PAYOUT_AMOUNT`, `SORASWAP_COVER_SMOKE_PREMIUM_PAID`, `SORASWAP_COVER_SMOKE_LOWER_BOUND`, `SORASWAP_COVER_SMOKE_UPPER_BOUND`, `SORASWAP_COVER_SMOKE_TRIGGER_PRICE`, `SORASWAP_COVER_SMOKE_WINDOW_SLOTS`, `SORASWAP_COVER_SMOKE_POLICY_REQUIRED_OBSERVATIONS` - optional cover bootstrap and active local smoke controls, including the degraded-oracle reset drill
 - `SORASWAP_RISK_BUCKET_1_BOOTSTRAP_DEPOSIT`, `SORASWAP_RISK_BUCKET_2_BOOTSTRAP_DEPOSIT`, `SORASWAP_RISK_BUCKET_3_BOOTSTRAP_DEPOSIT` - optional shared risk-vault bootstrap funding overrides for buckets `1=perps`, `2=options`, `3=cover`; the signed Taira flow now seeds bucket `1` with `200` by default so the live perps smoke uses the same funded baseline as the local rehearsal
 - `SORASWAP_AUTOMATION_SMOKE_JOB`, `SORASWAP_AUTOMATION_SMOKE_EXECUTOR`, `SORASWAP_AUTOMATION_SMOKE_NEXT_SLOT`, `SORASWAP_AUTOMATION_SMOKE_RESUME_SLOT`, `SORASWAP_AUTOMATION_SMOKE_RETRY_DELAY_SLOTS`, `SORASWAP_AUTOMATION_SMOKE_MAX_RETRIES`, `SORASWAP_AUTOMATION_SMOKE_CRON_INTERVAL_SLOTS` - optional automation smoke scheduler overrides
 
@@ -376,9 +396,9 @@ tmp/iroha-localnet/client.toml
 
 Local bootstrap also acquires the `soraswap` SNS domain-name lease before registering the on-ledger `soraswap` domain, which is now required by current Nexus core. It then binds and tops up `xor#universal` as the base asset alongside the repo helper assets.
 
-`iroha.app.toml` is the repo's canonical SoraSwap bundle manifest. `make deploy-local` compiles the listed contracts, then hands the full bundle to `../iroha` via `iroha contract app deploy --manifest iroha.app.toml` so address planning, alias binding, deploy receipts, and recovery semantics live in the platform instead of repo shell logic. The wrapper still runs `scripts/bootstrap_contract_state.sh` after activation so the foundational contracts have usable local state before smoke calls. The bootstrap is skip-and-verify: singleton init/config writes are skipped when their typed config views already match, and the DLMM seed block is only replayed when the current bin and position snapshots are still pristine. Each deploy now writes both the platform bundle receipt to `deployments/local/soraswap.bundle.deploy.json` and the materialized per-contract `deployments/local/<contract>.deploy.json` evidence used by the smoke/bootstrap flows, plus a timestamped `deployments/local/contracts.<utc>.json` snapshot of the whole local deployment set.
+`iroha.contracts.toml` is the repo's canonical SoraSwap bundle manifest. `make deploy-local` compiles the listed contracts through `iroha contract dev build`, then hands the full bundle to `../iroha` via `iroha contract app deploy --manifest iroha.contracts.toml` so address planning, alias binding, deploy receipts, and recovery semantics live in the platform instead of repo shell logic. The wrapper still runs `scripts/bootstrap_contract_state.sh` after activation so the foundational contracts have usable local state before smoke calls. Full bootstrap requires an oracle public key, initializes derivatives with the configured signer, binds the bridge proof authority, and verifies those singleton settings through typed views. The bootstrap is skip-and-verify: singleton init/config writes are skipped when their typed config views already match, and the DLMM seed block is only replayed when the current bin and position snapshots are still pristine. Each deploy now writes both the platform bundle receipt to `deployments/local/soraswap.bundle.deploy.json` and the materialized per-contract `deployments/local/<contract>.deploy.json` evidence used by the smoke/bootstrap flows, plus a timestamped `deployments/local/contracts.<utc>.json` snapshot of the whole local deployment set.
 
-`make smoke-local` now writes a machine-readable report to `deployments/local/smoke.latest.json` and a timestamped copy. That report separates committed mutation transaction hashes from typed `/v1/contracts/view` results and records decoded integer snapshots for the `n3x`, deployable DLMM, launchpad, referral, farms, risk vault, perps, options, cover, and automation surfaces. The `n3x` section includes init-time fee and target state, the launchpad section includes both sale-level claim/seed aggregates plus allocation refund state, and the referral section includes routed child-plus-parent settlement state. The derivatives section now includes committed local write-path coverage for perps open/funding/margin/close plus queue/recover/requeue/liquidate, shout buy/record/exercise, outperformance buy/series settlement/exercise, and cover register/stale-reset/claim, all routed through `risk_vault`.
+`make dev-smoke` first checks that generated artifacts are not stale, then runs the declarative `[[smoke]]` views/calls from `iroha.contracts.toml` through `iroha contract dev smoke`; it requires the selected profile client config, so run `make local-up` before using the default local profile. `make smoke-local` remains the domain-heavy integration rehearsal and writes a machine-readable report to `deployments/local/smoke.latest.json` plus a timestamped copy. That report separates committed mutation transaction hashes from typed `/v1/contracts/view` results and records decoded integer snapshots for the `n3x`, deployable DLMM, launchpad, referral, farms, risk vault, perps, options, cover, and automation surfaces. The `n3x` section includes basket backing plus per-asset fee reserves, the launchpad section includes both sale-level claim/seed aggregates plus allocation refund state, and the referral section includes routed child-plus-parent settlement state. The derivatives section now signs raw UTF-8 JSON oracle payloads with `SORASWAP_ORACLE_PRIVATE_KEY_HEX`, uses contract `block_height()` for price-sensitive current-slot checks, and includes committed local write-path coverage for perps open/funding/margin/close plus queue/recover/requeue/liquidate, shout buy/record/exercise, outperformance buy/series settlement/exercise, and cover register/degraded-reset/claim, all routed through `risk_vault`.
 
 ## Public Testnet
 The public testnet template lives at:
@@ -391,17 +411,21 @@ Use a fully qualified account domain in the copied config, for example `wonderla
 
 As observed on March 25, 2026, live `taira.sora.org` still uses chain id `809574f5-fee7-5e69-bfcf-52451e42d50f`. If Taira is redeployed with a new chain id, either update your copied client config or set `SORASWAP_TESTNET_CHAIN_ID` before running any deploy or smoke flow.
 
-`make deploy-testnet` now treats public deployment as a permissionless `universal` dataspace bundle flow. Before deploying it fingerprints the live chain using `chain id + block 1 hash`, writes `deployments/testnet/chain.latest.json`, and archives stale `deployments/testnet` evidence under `deployments/testnet/archive/<utc>-<block1-hash>/` whenever Taira has been redeployed without changing the chain id. The observed `torii_url` is still recorded in that snapshot as metadata, but endpoint URL is not part of chain identity. The wrapper compiles `iroha.app.toml`, submits it through `iroha contract app deploy`, persists the first-class platform receipt to `deployments/testnet/soraswap.bundle.deploy.json`, then materializes the per-contract `*.deploy.json` records that the readonly and mutable smoke flows already consume. `deployments/testnet/nested_call_probe.latest.json` still records both a persisted `bytes` state round-trip check and the minimal no-arg live `call_contract(...)` probe that must pass before bootstrap proceeds.
+`make deploy-testnet` now treats public deployment as a permissionless `universal` dataspace bundle flow. Before deploying it fingerprints the live chain using `chain id + block 1 hash`, writes `deployments/testnet/chain.latest.json`, and archives stale `deployments/testnet` evidence under `deployments/testnet/archive/<utc>-<block1-hash>/` whenever Taira has been redeployed without changing the chain id. The observed `torii_url` is still recorded in that snapshot as metadata, but endpoint URL is not part of chain identity. The wrapper compiles `iroha.contracts.toml`, submits it through `iroha contract app deploy`, persists the first-class platform receipt to `deployments/testnet/soraswap.bundle.deploy.json`, then materializes the per-contract `*.deploy.json` records that the readonly and mutable smoke flows already consume. `deployments/testnet/nested_call_probe.latest.json` still records both a persisted `bytes` state round-trip check and the minimal no-arg live `call_contract(...)` probe that must pass before bootstrap proceeds.
 
 `scripts/fund_testnet_signer.sh` is the operator helper for public Taira funding. `make deploy-testnet` will auto-claim faucet funds when the signer is missing or unfunded, solve the faucet PoW puzzle, and wait for a positive `xor#universal` balance before deploying. Post-deploy init now runs by default there, and `SORASWAP_BOOTSTRAP_SCOPE=foundation|full` still narrows the init surface when needed.
 
 Public bootstrap now targets the current `n3x_hub` and DLMM pool contract subjects on `testnet|production` and migrates seeded balances forward from previous contract-subject custody after upgrades. `local` still defaults `n3x` custody to the `n3x_hub` contract subject, and `SORASWAP_N3X_VAULT_ACCOUNT` remains the explicit override when an operator wants to force a different custody account during repair or migration drills.
 
-`make smoke-testnet` is now the canonical signed Taira rehearsal for the mutable DeFi surface. It requires `SORASWAP_ALLOW_TESTNET_MUTATIONS=1`, reuses the readonly compatibility lane for deployment-record and manifest revalidation, rechecks the saved `nested_call_probe.latest.json` evidence against the current chain, then executes the same active router, launchpad, farms, automation, and derivatives write paths that the local smoke uses, including the perps queue/recover/requeue/liquidate path, before writing `deployments/testnet/smoke.latest.json`.
+`make smoke-testnet` is now the canonical signed Taira rehearsal for the mutable DeFi surface. It requires `SORASWAP_ALLOW_TESTNET_MUTATIONS=1`, reuses the readonly compatibility lane for deployment-record and manifest revalidation, rechecks the saved `nested_call_probe.latest.json` evidence against the current chain, signs oracle payloads when derivative write paths are enabled, then executes the same active router, launchpad, farms, automation, and derivatives write paths that the local smoke uses, including the perps queue/recover/requeue/liquidate path, before writing `deployments/testnet/smoke.latest.json`.
 
 The bridge proof lane stays in the same release gate, but it runs as its own target: `make test-contract-console-testnet` records `deployments/testnet/contract_console_smoke.latest.json` separately so the bridge message is not consumed twice by a single rehearsal. A green release gate therefore requires both the signed `make smoke-testnet` evidence and the signed `make test-contract-console-testnet` evidence.
 
 `make smoke-testnet-readonly` preserves the older non-destructive compatibility lane. It revalidates each saved `*.deploy.json` record on the current chain, rebuilds missing records from live aliases plus local manifests when possible, compares live code manifests against any saved deployment manifests, and records typed readonly view evidence under the same `deployments/testnet/` directory.
+
+`make release-taira` is the full public release runner. It requires a real untracked `config/testnet/taira.client.toml` or `SORASWAP_CLIENT_CONFIG`, rejects the checked-in example and placeholder credentials, requires `SORASWAP_ALLOW_TESTNET_MUTATIONS=1`, and requires explicit `SORASWAP_ORACLE_PUBLIC_KEY_HEX` plus `SORASWAP_ORACLE_PRIVATE_KEY_HEX` before any public mutation. It runs the release sequence in order: nested-call probe, deploy, readonly smoke, mutating smoke, contract-console smoke, trader readonly, trader mutating, trader API publish, and `release-checklist`.
+
+`deployments/testnet/rwa_compliance.latest.json` is a required release artifact. The repo validates the evidence hook only; issuer approval, legal review, compliance policy, NAV source, and redemption terms remain external artifacts referenced by non-empty ids or URLs in that JSON.
 
 The release flow no longer depends on a separate staging environment. The repo now also carries a parallel production wrapper family:
 

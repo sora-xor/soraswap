@@ -50,11 +50,7 @@ seiyaku SaleFactory {
   }
 
   fn ensure_factory_admin() {
-    if FactoryOwnerSet == 0 {
-      FactoryOwner = authority();
-      FactoryOwnerSet = 1;
-      return;
-    }
+    assert(FactoryOwnerSet == 1, "factory not initialized");
     assert(FactoryOwner == authority(), "factory owner mismatch");
   }
 
@@ -115,10 +111,11 @@ seiyaku SaleFactory {
     return (total_amount * vested_slots) / total_slots;
   }
 
-  fn claim_amount_for(allocation: Name, sale: Name, current_slot: int) -> int {
+  fn claim_amount_for(allocation: Name, sale: Name) -> int {
     assert(Closed.get_or(sale, 0) == 1, "sale open");
     assert(Successful.get_or(sale, 0) == 1, "sale failed");
     assert(AllocationRefunded[allocation] == 0, "allocation refunded");
+    let current_slot = block_height();
     let total_sale = AllocationSaleAmount[allocation];
     let claimable = vested_claimable(
       total_sale,
@@ -141,12 +138,16 @@ seiyaku SaleFactory {
     }
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
-    return 1;
+    return FactoryOwnerSet;
   }
 
-  #[access(read="*", write="*")]
+  kotoage fn init_factory() {
+    assert(FactoryOwnerSet == 0, "factory initialized");
+    FactoryOwner = authority();
+    FactoryOwnerSet = 1;
+  }
+
   view fn mirror_sale(sale: Name) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
     assert_sale_exists(sale);
     let raised = Raised.get_or(sale, 0);
@@ -182,7 +183,6 @@ seiyaku SaleFactory {
     );
   }
 
-  #[access(read="*", write="*")]
   view fn sale_config(sale: Name) -> (AssetDefinitionId, AssetDefinitionId, AccountId, int, int, int, int, int) {
     assert_sale_exists(sale);
     return (
@@ -197,7 +197,6 @@ seiyaku SaleFactory {
     );
   }
 
-  #[access(read="*", write="*")]
   view fn mirror_sale_accounting(sale: Name) -> (int, int, int, int) {
     assert_sale_exists(sale);
     return (
@@ -208,7 +207,6 @@ seiyaku SaleFactory {
     );
   }
 
-  #[access(read="*", write="*")]
   view fn factory_binding_state() -> (int, int) {
     return (
       FactoryContractBound,
@@ -216,7 +214,13 @@ seiyaku SaleFactory {
     );
   }
 
-  #[access(read="*", write="*")]
+  view fn factory_owner_state() -> (int, AccountId) {
+    return (
+      FactoryOwnerSet,
+      FactoryOwner
+    );
+  }
+
   view fn factory_binding_details() -> (AccountId, bytes, int, int) {
     return (
       FactoryContractId,
@@ -226,7 +230,6 @@ seiyaku SaleFactory {
     );
   }
 
-  #[access(read="*", write="*")]
   view fn activation_state(sale: Name) -> (int, int) {
     assert_sale_exists(sale);
     return (
@@ -235,7 +238,6 @@ seiyaku SaleFactory {
     );
   }
 
-  #[access(read="*", write="*")]
   view fn mirror_allocation(allocation: Name) -> (int, int, int, int, int) {
     if AllocationSale.contains(allocation) {
       return (
@@ -249,7 +251,6 @@ seiyaku SaleFactory {
     return (0, 0, 0, 0, 0);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_sale(sale: Name,
                        sale_asset: AssetDefinitionId,
                        payment_asset: AssetDefinitionId,
@@ -286,39 +287,25 @@ seiyaku SaleFactory {
     SeedActivationValue[sale] = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_contract(contract_id: AccountId) {
     ensure_factory_admin();
     FactoryContractId = contract_id;
     FactoryContractBound = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_executor(executor_contract: bytes) {
     ensure_factory_admin();
     SeedExecutorContract = executor_contract;
     SeedExecutorBound = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn contribute(sale: Name, payment_amount: int) -> int permission(AssetOps) {
-    let buyer = authority();
     assert_sale_exists(sale);
     assert(payment_amount > 0, "invalid payment");
-    assert(Closed.get_or(sale, 0) == 0, "sale closed");
-    let raised = Raised.get_or(sale, 0);
-    let next = raised + payment_amount;
-    assert(next <= HardCap.get_or(sale, 0), "hard cap");
-    let minted = payment_amount / UnitPrice.get_or(sale, 1);
-    assert(minted > 0, "zero sale output");
-    move_asset_if_needed(buyer, Treasury[sale], PaymentAsset[sale], payment_amount);
-    mint_asset(buyer, SaleAsset[sale], minted);
-    Raised[sale] = next;
-    Sold[sale] = Sold.get_or(sale, 0) + minted;
-    return minted;
+    assert(false, "use contribute_recorded");
+    return 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn contribute_recorded(sale: Name,
                                  allocation: Name,
                                  payment_amount: int) -> int permission(AssetOps) {
@@ -345,13 +332,11 @@ seiyaku SaleFactory {
     return sale_amount;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn close_sale(sale: Name) {
     assert_sale_owner(sale);
     close_sale_impl(sale);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn deposit_seed_inventory(sale: Name, amount: int) -> int permission(AssetOps) {
     assert_sale_exists(sale);
     assert(amount > 0, "invalid amount");
@@ -361,7 +346,6 @@ seiyaku SaleFactory {
     return amount;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn deposit_claim_inventory(sale: Name, amount: int) -> int permission(AssetOps) {
     assert_sale_exists(sale);
     assert(amount > 0, "invalid amount");
@@ -370,7 +354,6 @@ seiyaku SaleFactory {
     return amount;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn register_seed_liquidity(sale: Name,
                                      position_id: Name,
                                      vault_account: AccountId,
@@ -420,12 +403,10 @@ seiyaku SaleFactory {
     return seeded_value;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn seed_liquidity(sale: Name) -> int permission(AssetOps) {
     return activate_seed_with_executor(sale);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn finalize_sale_activation(sale: Name,
                                       claim_inventory_amount: int) -> int permission(AssetOps) {
     assert_sale_owner(sale);
@@ -443,13 +424,12 @@ seiyaku SaleFactory {
     return SeedActivationValue.get_or(sale, 0);
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn claim_allocation(allocation: Name, current_slot: int) -> int permission(AssetOps) {
+  kotoage fn claim_allocation(allocation: Name) -> int permission(AssetOps) {
     let buyer = authority();
     assert_allocation_exists(allocation);
     let sale = AllocationSale[allocation];
     assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
-    let amount = claim_amount_for(allocation, sale, current_slot);
+    let amount = claim_amount_for(allocation, sale);
     let claim_inventory = ClaimInventory.get_or(sale, 0);
     assert(claim_inventory >= amount, "insufficient claim inventory");
     move_asset_if_needed(Treasury[sale], buyer, SaleAsset[sale], amount);
@@ -459,7 +439,6 @@ seiyaku SaleFactory {
     return amount;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn refund_allocation(allocation: Name) -> int permission(AssetOps) {
     let buyer = authority();
     assert_allocation_exists(allocation);
@@ -477,7 +456,6 @@ seiyaku SaleFactory {
     return amount;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn mark_seeded(sale: Name) permission(AssetOps) {
     activate_seed_with_executor(sale);
   }

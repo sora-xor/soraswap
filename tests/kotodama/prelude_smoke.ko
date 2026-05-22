@@ -1,0 +1,88 @@
+fixture actors {
+  actor("owner", account_id("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+  actor("attacker", account_id("ed0120BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"));
+}
+
+seiyaku PreludeSmoke {
+  kotoage fn fee_quote() -> int {
+    return checked_sub_amount(checked_add_amount(bps_fee(10000, 25), 10), 5);
+  }
+
+  kotoage fn reject_negative_fee_amount() -> int {
+    return bps_fee(-1, 25);
+  }
+
+  kotoage fn reject_negative_fee_bps() -> int {
+    return bps_fee(100, -1);
+  }
+
+  kotoage fn reject_negative_checked_add() -> int {
+    return checked_add_amount(-1, 1);
+  }
+
+  kotoage fn reject_negative_checked_add_right() -> int {
+    return checked_add_amount(1, -1);
+  }
+
+  kotoage fn reject_checked_sub_underflow() -> int {
+    return checked_sub_amount(1, 2);
+  }
+
+  kotoage fn reject_negative_checked_sub_left() -> int {
+    return checked_sub_amount(-1, 0);
+  }
+
+  kotoage fn reject_negative_checked_sub_right() -> int {
+    return checked_sub_amount(1, -1);
+  }
+
+  kotoage fn require_authority_payload(expected: AccountId) -> int {
+    require_authority(expected);
+    return 1;
+  }
+
+  kotoage fn require_owner_payload(expected: AccountId) -> int {
+    require_owner(expected);
+    return 1;
+  }
+
+  kotoage fn current_block_height() -> int {
+    return block_height();
+  }
+
+  #[test]
+  fn first_release_prelude_math_helpers() {
+    assert(fee_quote() == 30, "prelude math");
+    assert(current_block_height() == 0, "block height default");
+  }
+
+  #[test(fixture="actors")]
+  fn first_release_prelude_owner_checks_use_actor_authority() {
+    let owner_payload = json("{}");
+    let owner_payload = json_set_account_id(owner_payload, name("expected"), actor_account("owner"));
+    invoke_entrypoint_as("owner", "require_owner_payload", owner_payload);
+    invoke_entrypoint_as("owner", "require_authority_payload", owner_payload);
+    expect_reject_as("attacker", "require_owner_payload", owner_payload);
+    expect_reject_as("attacker", "require_authority_payload", owner_payload);
+    expect_reject_as("owner", "require_owner_payload", json("{}"));
+    expect_reject_as("owner", "require_authority_payload", json("{}"));
+
+    let attacker_payload = json("{}");
+    let attacker_payload = json_set_account_id(attacker_payload, name("expected"), actor_account("attacker"));
+    expect_reject_as("owner", "require_owner_payload", attacker_payload);
+    expect_reject_as("owner", "require_authority_payload", attacker_payload);
+    invoke_entrypoint_as("attacker", "require_owner_payload", attacker_payload);
+    invoke_entrypoint_as("attacker", "require_authority_payload", attacker_payload);
+  }
+
+  #[test(fixture="actors")]
+  fn first_release_prelude_rejects_bad_amounts() {
+    expect_reject_as("owner", "reject_negative_fee_amount", json("{}"));
+    expect_reject_as("owner", "reject_negative_fee_bps", json("{}"));
+    expect_reject_as("owner", "reject_negative_checked_add", json("{}"));
+    expect_reject_as("owner", "reject_negative_checked_add_right", json("{}"));
+    expect_reject_as("owner", "reject_checked_sub_underflow", json("{}"));
+    expect_reject_as("owner", "reject_negative_checked_sub_left", json("{}"));
+    expect_reject_as("owner", "reject_negative_checked_sub_right", json("{}"));
+  }
+}

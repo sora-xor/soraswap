@@ -38,12 +38,10 @@ seiyaku LaunchpadLiquidityExecutor {
     }
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     return ExecutorInitialized;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_executor(pool_contract: bytes,
                            base_asset: AssetDefinitionId,
                            quote_asset: AssetDefinitionId) {
@@ -59,21 +57,18 @@ seiyaku LaunchpadLiquidityExecutor {
     SaleFactoryContractId = authority();
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_contract(contract_id: AccountId) {
     assert_owner();
     ExecutorContractId = contract_id;
     ExecutorContractBound = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_sale_factory(factory_contract: AccountId) {
     assert_owner();
     SaleFactoryContractId = factory_contract;
     SaleFactoryBound = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_pool_contract(pool_contract: bytes) {
     assert_owner();
     PoolContract = pool_contract;
@@ -89,7 +84,6 @@ seiyaku LaunchpadLiquidityExecutor {
     );
   }
 
-  #[access(read="*", write="*")]
   view fn executor_binding_details() -> (bytes, AccountId, AccountId, int, int) {
     assert_initialized();
     return (
@@ -101,7 +95,6 @@ seiyaku LaunchpadLiquidityExecutor {
     );
   }
 
-  #[access(read="*", write="*")]
   kotoage fn seed_liquidity(funding_account: AccountId,
                             bin_id: int,
                             base_amount: int,

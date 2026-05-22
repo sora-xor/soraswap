@@ -6,6 +6,8 @@ seiyaku PolicyManager {
   state int CoverContractBound;
   state AccountId CoverContractId;
   state int CoverWithdrawalOnly;
+  state bytes CoverOraclePublicKey;
+  state int CoverOracleScheme;
   state int CoverDefaultRequiredObservations;
   state int CoverOracleStaleSlots;
 
@@ -32,6 +34,7 @@ seiyaku PolicyManager {
   state CoverPolicyBreachElapsedSlots: Map<int, int>;
   state CoverPolicyObservationCount: Map<int, int>;
   state CoverPolicyLastObservationSlot: Map<int, int>;
+  state CoverPolicyLastOracleSlot: Map<int, int>;
   state CoverPolicyLastObservedPrice: Map<int, int>;
   state CoverPolicyClaimPayout: Map<int, int>;
   state CoverPolicyClaimCount: Map<int, int>;
@@ -63,6 +66,34 @@ seiyaku PolicyManager {
     CoverPolicyBreachStartSlot[policy_id] = 0;
     CoverPolicyBreachElapsedSlots[policy_id] = 0;
     CoverPolicyObservationCount[policy_id] = 0;
+  }
+
+  fn cover_oracle_domain() -> int {
+    return 4;
+  }
+
+  fn assert_verified_observation(policy_id: int,
+                                 oracle_payload: bytes,
+                                 oracle_signature: bytes) -> (int, int, int, int, int) {
+    assert_policy_exists(policy_id);
+    assert(CoverOracleScheme > 0, "oracle scheme missing");
+    assert(verify_signature(oracle_payload, oracle_signature, CoverOraclePublicKey, CoverOracleScheme), "oracle signature");
+    let payload = decode_json(oracle_payload);
+    assert(payload.get_int(name("domain")) == cover_oracle_domain(), "oracle domain mismatch");
+    assert(payload.get_int(name("policy_id")) == policy_id, "oracle policy mismatch");
+    let observed_price = payload.get_int(name("observed_price"));
+    let oracle_slot = payload.get_int(name("oracle_slot"));
+    let status_flags = payload.get_int(name("status_flags"));
+    let attestation_hash = payload.get_int(name("attestation_hash"));
+    let current_slot = block_height();
+    assert(observed_price >= 0, "invalid observed price");
+    assert(attestation_hash > 0, "missing attestation");
+    assert(current_slot >= oracle_slot, "invalid oracle slot");
+    let prior_oracle_slot = CoverPolicyLastOracleSlot.get_or(policy_id, 0);
+    if prior_oracle_slot > 0 {
+      assert(oracle_slot > prior_oracle_slot, "oracle slot replay");
+    }
+    return (observed_price, oracle_slot, current_slot, status_flags, attestation_hash);
   }
 
   fn move_asset_if_needed(from: AccountId,
@@ -125,19 +156,20 @@ seiyaku PolicyManager {
     assert(decode_int(result) == 1, "risk bucket report failed");
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     return CoverInitialized;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_manager(settlement_asset: AssetDefinitionId,
                           risk_vault_contract: bytes,
                           required_observations: int,
-                          oracle_stale_slots: int) {
+                          oracle_stale_slots: int,
+                          oracle_public_key: bytes,
+                          oracle_scheme: int) {
     assert(CoverInitialized == 0, "cover manager initialized");
     assert(required_observations > 0, "invalid required observations");
     assert(oracle_stale_slots >= 0, "invalid stale slots");
+    assert(oracle_scheme > 0, "invalid oracle scheme");
     CoverInitialized = 1;
     CoverOwner = authority();
     CoverSettlementAsset = settlement_asset;
@@ -145,6 +177,8 @@ seiyaku PolicyManager {
     CoverContractBound = 0;
     CoverContractId = authority();
     CoverWithdrawalOnly = 1;
+    CoverOraclePublicKey = oracle_public_key;
+    CoverOracleScheme = oracle_scheme;
     CoverDefaultRequiredObservations = required_observations;
     CoverOracleStaleSlots = oracle_stale_slots;
     CoverObservationJobId = 0;
@@ -155,7 +189,6 @@ seiyaku PolicyManager {
     CoverNextPolicyId = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_automation(executor: AccountId,
                              job_id: int,
                              cadence_slots: int,
@@ -172,7 +205,6 @@ seiyaku PolicyManager {
     CoverAutomationSafeMode = safe_mode;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn heartbeat(current_backlog: int,
                        safe_mode: int) permission(Admin) {
     assert_owner();
@@ -182,40 +214,34 @@ seiyaku PolicyManager {
     risk_vault_report_bucket();
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_contract(contract_id: AccountId) {
     assert_owner();
     CoverContractId = contract_id;
     CoverContractBound = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_risk_vault(risk_vault_contract: bytes) {
     assert_owner();
     CoverRiskVaultContract = risk_vault_contract;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn enter_withdrawal_only() {
     assert_owner();
     CoverWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exit_withdrawal_only() {
     assert_owner();
     CoverWithdrawalOnly = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn register_policy(lower_bound: int,
                              upper_bound: int,
                              payout_amount: int,
                              monitoring_window_slots: int,
                              required_observations: int,
                              covered_notional: int,
-                             premium_paid: int,
-                             registration_slot: int) -> int permission(AssetOps) {
+                             premium_paid: int) -> int permission(AssetOps) {
     assert_initialized();
     assert(CoverWithdrawalOnly == 0, "withdrawal only");
     assert(CoverAutomationSafeMode == 0, "automation safe mode");
@@ -223,7 +249,7 @@ seiyaku PolicyManager {
     assert(payout_amount > 0, "invalid payout");
     assert(monitoring_window_slots > 0, "invalid monitoring window");
     assert(covered_notional > 0, "invalid covered notional");
-    assert(registration_slot >= 0, "invalid registration slot");
+    let registration_slot = block_height();
     let policy_id = CoverNextPolicyId;
     CoverNextPolicyId = policy_id + 1;
     if premium_paid > 0 {
@@ -250,28 +276,28 @@ seiyaku PolicyManager {
     CoverPolicyBreachElapsedSlots[policy_id] = 0;
     CoverPolicyObservationCount[policy_id] = 0;
     CoverPolicyLastObservationSlot[policy_id] = 0;
+    CoverPolicyLastOracleSlot[policy_id] = 0;
     CoverPolicyLastObservedPrice[policy_id] = 0;
     CoverPolicyClaimPayout[policy_id] = 0;
     CoverPolicyClaimCount[policy_id] = 0;
     return policy_id;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn record_observation(policy_id: int,
-                                observed_price: int,
-                                oracle_slot: int,
-                                current_slot: int,
-                                status_flags: int,
-                                attestation_hash: int) {
+                                oracle_payload: bytes,
+                                oracle_signature: bytes) {
     assert_initialized();
     assert_policy_exists(policy_id);
-    assert(observed_price >= 0, "invalid observed price");
-    assert(current_slot >= oracle_slot, "invalid oracle slot");
-    assert(attestation_hash > 0, "missing attestation");
     assert(CoverPolicyStatus.get_or(policy_id, 0) != 4, "policy already claimed");
+    let oracle = assert_verified_observation(policy_id, oracle_payload, oracle_signature);
+    let observed_price = oracle.0;
+    let oracle_slot = oracle.1;
+    let current_slot = oracle.2;
+    let status_flags = oracle.3;
 
     let prior_slot = CoverPolicyLastObservationSlot.get_or(policy_id, 0);
     CoverPolicyLastObservationSlot[policy_id] = current_slot;
+    CoverPolicyLastOracleSlot[policy_id] = oracle_slot;
     CoverPolicyLastObservedPrice[policy_id] = observed_price;
 
     if status_flags != 0 || CoverAutomationSafeMode != 0 || current_slot - oracle_slot > CoverOracleStaleSlots {
@@ -305,7 +331,6 @@ seiyaku PolicyManager {
     reset_breach(policy_id);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn route_claim(policy_id: int) -> int permission(AssetOps) {
     assert_initialized();
     assert_policy_owner(policy_id);
@@ -319,13 +344,12 @@ seiyaku PolicyManager {
     return settled_payout;
   }
 
-  #[access(read="*", write="*")]
-  kotoage fn expire_policy(policy_id: int, current_slot: int) permission(Admin) {
-    assert_owner();
+  kotoage fn expire_policy(policy_id: int) permission(AssetOps) {
     assert_policy_exists(policy_id);
     assert(CoverPolicyStatus.get_or(policy_id, 0) == 1, "policy not active");
     let expiry_slot = CoverPolicyRegistrationSlot.get_or(policy_id, 0) +
       CoverPolicyMonitoringWindowSlots.get_or(policy_id, 0);
+    let current_slot = block_height();
     assert(current_slot >= expiry_slot, "policy live");
     risk_vault_release_liability(policy_id);
     CoverPolicyStatus[policy_id] = 5;

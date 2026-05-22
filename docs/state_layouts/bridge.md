@@ -2,6 +2,8 @@
 
 Scalar state:
 - `BridgeInitialized`
+- `BridgeOwner`
+- `BridgeProofAuthority`
 - `RegistryEnabled`
 - `ListingFeeAsset`
 - `TreasuryAccount`
@@ -12,12 +14,15 @@ Map state:
 - `AssetHomeDomain[asset_key] -> int`
 - `AssetDecimals[asset_key] -> int`
 - `AssetListingPaid[asset_key] -> int`
+- `AssetVaultAccount[asset_key] -> AccountId`
 - `RouteOwner[route] -> AccountId`
 - `RouteAssetKey[route] -> Name`
 - `RouteRemoteDomain[route] -> int`
 - `RouteLocalAsset[route] -> AssetDefinitionId`
 - `RouteVaultAccount[route] -> AccountId`
 - `RouteEnabled[route] -> int`
+- `RouteGoverned[route] -> int`
+- `RouteGovernanceMessage[route] -> Name`
 - `NextOutboundNonce[route] -> int`
 - `OutboundRoute[transfer] -> Name`
 - `OutboundSender[transfer] -> AccountId`
@@ -32,6 +37,10 @@ View tuple fields returned by `listing_config()`:
 - `soraswap_bridge_treasury_account`
 - `soraswap_bridge_listing_fee_amount`
 - `soraswap_bridge_registry_enabled`
+
+View tuple fields returned by `bridge_authorities()`:
+- `soraswap_bridge_owner`
+- `soraswap_bridge_proof_authority`
 
 View tuple fields returned by `mirror_asset(asset_key)`:
 - `soraswap_bridge_asset_registered`
@@ -54,4 +63,5 @@ View tuple fields returned by `mirror_outbound(transfer)`:
 Notes:
 - Asset keys and route ids are logical names in the Kotodama surface. The byte-level SCCP asset id, route id, sender, and recipient codecs are defined in `../iroha`.
 - `ListingFeeAmount` records the one-time Nexus registry listing fee paid in `xor#universal`.
-- `ConsumedInbound` is the replay/nullifier map for inbound messages. The current bridge contract records replay-safe finalization, but proof-driven relay verification is still blocked on the upstream `../iroha` SCCP relay path.
+- `ConsumedInbound` is the replay/nullifier map for inbound messages.
+- `BridgeProofAuthority` gates proof-managed route activation and inbound settlement. Bootstrap defaults it to the deployment authority unless `SORASWAP_BRIDGE_PROOF_AUTHORITY` is set.

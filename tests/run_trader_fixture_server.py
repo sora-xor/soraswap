@@ -38,6 +38,12 @@ FIXTURE_LAUNCHPAD_ADDRESS = "tairac1fixturelaunchpad0000000000000000000000000000
 FIXTURE_OPTIONS_MANAGER_ADDRESS = "tairac1fixtureoptmgr000000000000000000000000000000"
 FIXTURE_OPTIONS_FACTORY_ADDRESS = "tairac1fixtureoptfactory000000000000000000000000000"
 FIXTURE_COVER_ADDRESS = "tairac1fixturecover000000000000000000000000000000000"
+FIXTURE_INTENTS_ADDRESS = "tairac1fixtureintents000000000000000000000000000000"
+FIXTURE_VAULTS_ADDRESS = "tairac1fixturevaults0000000000000000000000000000000"
+FIXTURE_OPERATORS_ADDRESS = "tairac1fixtureoperators0000000000000000000000000000"
+FIXTURE_MARGIN_ADDRESS = "tairac1fixturemargin00000000000000000000000000000"
+FIXTURE_RWA_ADDRESS = "tairac1fixturerwa0000000000000000000000000000000"
+FIXTURE_DLMM_HOOKS_ADDRESS = "tairac1fixturehooks000000000000000000000000000000"
 
 FIXTURE_AUTHORITY = "i105fixturetrader@universal"
 OTHER_AUTHORITY = "i105othertrader@universal"
@@ -97,6 +103,42 @@ CONTRACTS = [
         "contract_address": FIXTURE_COVER_ADDRESS,
         "deploy_nonce": 11,
     },
+    {
+        "contract_key": "intents.settlement_router",
+        "contract_source": "contracts/intents/settlement_router.ko",
+        "contract_address": FIXTURE_INTENTS_ADDRESS,
+        "deploy_nonce": 12,
+    },
+    {
+        "contract_key": "vaults.manager",
+        "contract_source": "contracts/vaults/manager.ko",
+        "contract_address": FIXTURE_VAULTS_ADDRESS,
+        "deploy_nonce": 13,
+    },
+    {
+        "contract_key": "operators.registry",
+        "contract_source": "contracts/operators/registry.ko",
+        "contract_address": FIXTURE_OPERATORS_ADDRESS,
+        "deploy_nonce": 14,
+    },
+    {
+        "contract_key": "margin.portfolio_margin",
+        "contract_source": "contracts/margin/portfolio_margin.ko",
+        "contract_address": FIXTURE_MARGIN_ADDRESS,
+        "deploy_nonce": 15,
+    },
+    {
+        "contract_key": "rwa.market",
+        "contract_source": "contracts/rwa/market.ko",
+        "contract_address": FIXTURE_RWA_ADDRESS,
+        "deploy_nonce": 16,
+    },
+    {
+        "contract_key": "dlmm_hooks.hook_manager",
+        "contract_source": "contracts/dlmm_hooks/hook_manager.ko",
+        "contract_address": FIXTURE_DLMM_HOOKS_ADDRESS,
+        "deploy_nonce": 17,
+    },
 ]
 
 ALIAS_TO_ADDRESS = {contract["contract_key"]: contract["contract_address"] for contract in CONTRACTS}
@@ -109,6 +151,12 @@ MODULE_TO_CONTRACT_KEY = {
     "launchpad": "launchpad.sale_factory",
     "options": "options.factory",
     "cover": "cover.policy_manager",
+    "intents": "intents.settlement_router",
+    "vaults": "vaults.manager",
+    "operators": "operators.registry",
+    "margin": "margin.portfolio_margin",
+    "rwa": "rwa.market",
+    "dlmmHooks": "dlmm_hooks.hook_manager",
 }
 MODULE_LABELS = {
     "swaps": "Swaps",
@@ -118,8 +166,28 @@ MODULE_LABELS = {
     "launchpad": "Launchpad",
     "options": "Options",
     "cover": "Cover",
+    "intents": "Intents",
+    "vaults": "Vaults",
+    "operators": "Operators",
+    "margin": "Margin",
+    "rwa": "RWA",
+    "dlmmHooks": "DLMM Hooks",
 }
-MODULE_ORDER = ["swaps", "n3x", "perps", "farms", "launchpad", "options", "cover"]
+MODULE_ORDER = [
+    "swaps",
+    "n3x",
+    "perps",
+    "farms",
+    "launchpad",
+    "options",
+    "cover",
+    "intents",
+    "vaults",
+    "operators",
+    "margin",
+    "rwa",
+    "dlmmHooks",
+]
 ALIAS_TO_MODULE = {
     "dlmm.dlmm_router": "swaps",
     "n3x.n3x_hub": "n3x",
@@ -129,6 +197,12 @@ ALIAS_TO_MODULE = {
     "options.manager": "options",
     "options.factory": "options",
     "cover.policy_manager": "cover",
+    "intents.settlement_router": "intents",
+    "vaults.manager": "vaults",
+    "operators.registry": "operators",
+    "margin.portfolio_margin": "margin",
+    "rwa.market": "rwa",
+    "dlmm_hooks.hook_manager": "dlmmHooks",
 }
 ENTRYPOINT_TO_EVENT_KIND = {
     "route_swap": "swap_executed",
@@ -159,6 +233,31 @@ ENTRYPOINT_TO_EVENT_KIND = {
     "record_observation": "cover_observation_recorded",
     "route_claim": "cover_claim_routed",
     "expire_policy": "cover_policy_expired",
+    "open_intent": "intent_opened",
+    "cancel_intent": "intent_cancelled",
+    "fill_intent": "intent_filled",
+    "register_vault": "vault_registered",
+    "deposit": "vault_deposited",
+    "request_redeem": "vault_redeem_requested",
+    "claim_redeem": "vault_redeem_claimed",
+    "register_operator": "operator_registered",
+    "bond": "operator_bonded",
+    "heartbeat": "operator_heartbeat",
+    "claim_fees": "operator_fees_claimed",
+    "register_market": "margin_market_registered",
+    "deposit_collateral": "margin_collateral_deposited",
+    "withdraw_collateral": "margin_collateral_withdrawn",
+    "lock_exposure": "margin_exposure_locked",
+    "liquidate_account": "margin_account_liquidated",
+    "issue_lot": "rwa_lot_issued",
+    "bind_share_asset": "rwa_share_asset_bound",
+    "report_nav": "rwa_nav_reported",
+    "request_redemption": "rwa_redemption_requested",
+    "settle_redemption": "rwa_redemption_settled",
+    "configure_hook_policy": "dlmm_hook_configured",
+    "place_limit_order": "dlmm_hook_limit_order_placed",
+    "schedule_twamm": "dlmm_hook_twamm_scheduled",
+    "record_execution": "dlmm_hook_execution_recorded",
 }
 SUPPORTED_ENTRYPOINTS = set(ENTRYPOINT_TO_EVENT_KIND)
 DEFAULT_BUCKET_MS = 900_000
@@ -786,6 +885,72 @@ class MockToriiState:
                 if part
             ) or "Policy action"
             context = f"Policy #{policy_id}" if isinstance(policy_id, int) else "Cover"
+        elif module == "intents":
+            intent_id = payload.get("intent_id")
+            amount_in = payload.get("amount_in")
+            amount_out = payload.get("amount_out")
+            exposure = " · ".join(
+                part
+                for part in [
+                    f"{format_amount(float(amount_in), 0)} in" if isinstance(amount_in, (int, float)) else "",
+                    f"{format_amount(float(amount_out), 0)} out" if isinstance(amount_out, (int, float)) else "",
+                ]
+                if part
+            ) or "Intent action"
+            context = f"Intent {intent_id}" if isinstance(intent_id, str) and intent_id else "Solver intent"
+        elif module == "vaults":
+            vault_id = payload.get("vault_id")
+            position_id = payload.get("position_id")
+            amount = payload.get("amount", payload.get("shares"))
+            exposure = format_amount(float(amount), 0) if isinstance(amount, (int, float)) else "Vault action"
+            context = " · ".join(part for part in [vault_id, position_id] if isinstance(part, str) and part) or "Vault position"
+        elif module == "operators":
+            service = payload.get("service")
+            amount = payload.get("amount", payload.get("min_bond", payload.get("fees_accrued")))
+            health = payload.get("health_bps")
+            exposure = " · ".join(
+                part
+                for part in [
+                    format_amount(float(amount), 0) if isinstance(amount, (int, float)) else "",
+                    f"{format_amount(float(health) / 100, 2)}% health" if isinstance(health, (int, float)) else "",
+                ]
+                if part
+            ) or "Operator action"
+            context = f"Service {service}" if isinstance(service, str) and service else "Bonded operator"
+        elif module == "margin":
+            market_id = payload.get("market_id")
+            account_key = payload.get("account_key")
+            amount = payload.get("amount", payload.get("exposure_delta"))
+            exposure = format_amount(float(amount), 0) if isinstance(amount, (int, float)) else "Margin action"
+            context = " · ".join(part for part in [market_id, account_key] if isinstance(part, str) and part) or "Portfolio margin"
+        elif module == "rwa":
+            market_id = payload.get("market_id")
+            redemption_id = payload.get("redemption_id")
+            shares = payload.get("shares", payload.get("total_shares"))
+            nav = payload.get("nav_per_share", payload.get("initial_nav_per_share"))
+            exposure = " · ".join(
+                part
+                for part in [
+                    f"{format_amount(float(shares), 0)} shares" if isinstance(shares, (int, float)) else "",
+                    f"{format_amount(float(nav), 0)} NAV" if isinstance(nav, (int, float)) else "",
+                ]
+                if part
+            ) or "RWA action"
+            context = " · ".join(part for part in [market_id, redemption_id] if isinstance(part, str) and part) or "RWA market"
+        elif module == "dlmmHooks":
+            hook_id = payload.get("hook_id")
+            order_id = payload.get("order_id")
+            amount_in = payload.get("amount_in")
+            amount_out = payload.get("amount_out", payload.get("min_out"))
+            exposure = " · ".join(
+                part
+                for part in [
+                    f"{format_amount(float(amount_in), 0)} in" if isinstance(amount_in, (int, float)) else "",
+                    f"{format_amount(float(amount_out), 0)} out" if isinstance(amount_out, (int, float)) else "",
+                ]
+                if part
+            ) or "Hook action"
+            context = " · ".join(part for part in [hook_id, order_id] if isinstance(part, str) and part) or "DLMM hook"
 
         return {
             "moduleKey": module,
@@ -804,6 +969,21 @@ class MockToriiState:
         module = parse_str(query, "module")
         items, total = self.trader_activity_items(authority, limit, offset, module)
         return {"ok": True, "items": items, "total": total}
+
+    def module_rollup(self, query: dict[str, list[str]], module: str, rollup_kind: str) -> dict[str, Any]:
+        authority = parse_str(query, "authority") or FIXTURE_AUTHORITY
+        limit = max(1, parse_int(query, "limit", 64))
+        offset = max(0, parse_int(query, "offset", 0))
+        items, total = self.trader_activity_items(authority, limit, offset, module)
+        return {
+            "ok": True,
+            "module": module,
+            "moduleLabel": MODULE_LABELS[module],
+            "rollupKind": rollup_kind,
+            "contractKey": MODULE_TO_CONTRACT_KEY[module],
+            "items": items,
+            "total": total,
+        }
 
     def compute_swap_metrics(self, authority: str) -> dict[str, Any]:
         fills = [record for record in reversed(self.swap_records) if record["authority"] == authority]
@@ -1050,6 +1230,88 @@ class MockToriiState:
         elif entrypoint == "route_claim":
             normalized.setdefault("policy_id", 5)
             normalized.setdefault("payout_amount", 180)
+        elif entrypoint == "open_intent":
+            normalized.setdefault("intent_id", "intent-1")
+            normalized.setdefault("amount_in", 100)
+            normalized.setdefault("min_out", 97)
+            normalized.setdefault("solver_fee_bps", 25)
+        elif entrypoint == "fill_intent":
+            normalized.setdefault("intent_id", "intent-1")
+            normalized.setdefault("amount_out", 99)
+        elif entrypoint == "cancel_intent":
+            normalized.setdefault("intent_id", "intent-1")
+        elif entrypoint == "register_vault":
+            normalized.setdefault("vault_id", "n3x-savings")
+            normalized.setdefault("strategy_code", 1)
+        elif entrypoint == "deposit":
+            normalized.setdefault("vault_id", "n3x-savings")
+            normalized.setdefault("position_id", "pos-1")
+            normalized.setdefault("amount", 250)
+        elif entrypoint == "request_redeem":
+            normalized.setdefault("vault_id", "n3x-savings")
+            normalized.setdefault("request_id", "redeem-1")
+            normalized.setdefault("position_id", "pos-1")
+            normalized.setdefault("shares", 40)
+        elif entrypoint == "claim_redeem":
+            normalized.setdefault("request_id", "redeem-1")
+        elif entrypoint == "register_operator":
+            normalized.setdefault("service", "solver")
+            normalized.setdefault("min_bond", 1000)
+        elif entrypoint == "bond":
+            normalized.setdefault("service", "solver")
+            normalized.setdefault("amount", 1000)
+        elif entrypoint == "heartbeat":
+            normalized.setdefault("service", "solver")
+            normalized.setdefault("health_bps", 9700)
+            normalized.setdefault("fees_accrued", 0)
+        elif entrypoint == "claim_fees":
+            normalized.setdefault("service", "solver")
+            normalized.setdefault("fees_accrued", 12)
+        elif entrypoint == "deposit_collateral":
+            normalized.setdefault("account_key", "alice")
+            normalized.setdefault("amount", 500)
+        elif entrypoint == "withdraw_collateral":
+            normalized.setdefault("account_key", "alice")
+            normalized.setdefault("amount", 100)
+        elif entrypoint == "lock_exposure":
+            normalized.setdefault("market_id", "perps-btc")
+            normalized.setdefault("account_key", "alice")
+            normalized.setdefault("exposure_delta", 300)
+        elif entrypoint == "liquidate_account":
+            normalized.setdefault("account_key", "alice")
+        elif entrypoint == "issue_lot":
+            normalized.setdefault("market_id", "tbill-1")
+            normalized.setdefault("initial_nav_per_share", 101)
+            normalized.setdefault("total_shares", 10000)
+        elif entrypoint == "report_nav":
+            normalized.setdefault("market_id", "tbill-1")
+            normalized.setdefault("nav_per_share", 101)
+            normalized.setdefault("total_shares", 10000)
+        elif entrypoint == "request_redemption":
+            normalized.setdefault("market_id", "tbill-1")
+            normalized.setdefault("redemption_id", "r-1")
+            normalized.setdefault("shares", 250)
+        elif entrypoint == "settle_redemption":
+            normalized.setdefault("redemption_id", "r-1")
+        elif entrypoint == "configure_hook_policy":
+            normalized.setdefault("hook_id", "limit")
+            normalized.setdefault("phase", 3)
+            normalized.setdefault("max_fee_pips", 25)
+            normalized.setdefault("enabled", 1)
+        elif entrypoint == "place_limit_order":
+            normalized.setdefault("order_id", "order-1")
+            normalized.setdefault("hook_id", "limit")
+            normalized.setdefault("amount_in", 100)
+            normalized.setdefault("min_out", 99)
+        elif entrypoint == "schedule_twamm":
+            normalized.setdefault("order_id", "twamm-1")
+            normalized.setdefault("hook_id", "twamm")
+            normalized.setdefault("amount_in", 1000)
+            normalized.setdefault("min_out", 990)
+        elif entrypoint == "record_execution":
+            normalized.setdefault("order_id", "order-1")
+            normalized.setdefault("amount_in", 100)
+            normalized.setdefault("amount_out", 101)
         return normalized
 
     def submit_call(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -1143,6 +1405,24 @@ class MockToriiHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/v1/contracts/rollups/trader/account":
                 json_response(self, HTTPStatus.OK, self.state.trader_account_rollup(query))
+                return
+            if parsed.path == "/v1/contracts/rollups/intents":
+                json_response(self, HTTPStatus.OK, self.state.module_rollup(query, "intents", "intent_lifecycle"))
+                return
+            if parsed.path == "/v1/contracts/rollups/vaults/positions":
+                json_response(self, HTTPStatus.OK, self.state.module_rollup(query, "vaults", "vault_positions"))
+                return
+            if parsed.path == "/v1/contracts/rollups/operators/status":
+                json_response(self, HTTPStatus.OK, self.state.module_rollup(query, "operators", "operator_status"))
+                return
+            if parsed.path == "/v1/contracts/rollups/margin/health":
+                json_response(self, HTTPStatus.OK, self.state.module_rollup(query, "margin", "margin_health"))
+                return
+            if parsed.path == "/v1/contracts/rollups/rwa/lots":
+                json_response(self, HTTPStatus.OK, self.state.module_rollup(query, "rwa", "rwa_lots"))
+                return
+            if parsed.path == "/v1/contracts/rollups/dlmm/hooks":
+                json_response(self, HTTPStatus.OK, self.state.module_rollup(query, "dlmmHooks", "dlmm_hooks"))
                 return
             if parsed.path == "/v1/pipeline/transactions/status":
                 tx_hash_hex = parse_str(query, "hash")

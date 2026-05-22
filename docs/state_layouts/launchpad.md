@@ -90,6 +90,16 @@ View tuple fields returned by `factory_binding_state()`:
 - `soraswap_launchpad_factory_contract_bound`
 - `soraswap_launchpad_seed_executor_bound`
 
+View tuple fields returned by `factory_owner_state()`:
+- `soraswap_launchpad_factory_owner_set`
+- `soraswap_launchpad_factory_owner`
+
+View tuple fields returned by `factory_binding_details()`:
+- `soraswap_launchpad_factory_owner`
+- `soraswap_launchpad_factory_contract_id`
+- `soraswap_launchpad_factory_contract_bound`
+- `soraswap_launchpad_seed_executor_bound`
+
 View tuple fields returned by `activation_state(sale)`:
 - `soraswap_launchpad_seed_executor_bound`
 - `soraswap_launchpad_seed_activation_value`
@@ -112,3 +122,5 @@ Notes:
 - `ClaimInventory` tracks remaining sale-token inventory available for contributor claims, while `ClaimedSupply` records the amount already settled out to buyers.
 - `SeedInventory` tracks remaining sale-token inventory available for DLMM seeding, while `SeedSaleUsed` records the committed amount.
 - `SeedPositionId`, `SeedVault`, `SeedBinId`, `SeedPaymentAmount`, and `SeedSaleAmount` form the registered DLMM seed plan for a sale, while `SeedActivationValue` records the on-chain executor result for the canonical activation path.
+- `FactoryOwnerSet` is explicit and is written only by `init_factory()`. Admin flows no longer lazily capture the first caller as owner.
+- `claim_allocation(...)` uses `block_height()` internally for claim-window enforcement, and direct `contribute(...)` is a hard-rejecting trap; only `contribute_recorded(...)` creates allocations.

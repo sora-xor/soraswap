@@ -341,7 +341,6 @@ seiyaku DlmmPool {
     PositionFeeDebtQuote[position_id] = growth_quote;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     if PoolInitialized == 1 {
       return ActiveBin;
@@ -349,11 +348,9 @@ seiyaku DlmmPool {
     return 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn warm_write() {
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_pool(base_asset: AssetDefinitionId,
                        quote_asset: AssetDefinitionId,
                        vault_account: AccountId,
@@ -423,7 +420,6 @@ seiyaku DlmmPool {
     BinLiquidityCap = bin_liquidity_cap;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn seed_bin(bin_id: int,
                       base_amount: int,
                       quote_amount: int) permission(AssetOps) {
@@ -438,7 +434,6 @@ seiyaku DlmmPool {
     );
   }
 
-  #[access(read="*", write="*")]
   kotoage fn seed_bin_c2c(bin_id: int,
                           base_amount: int,
                           quote_amount: int) -> int permission(AssetOps) {
@@ -480,7 +475,6 @@ seiyaku DlmmPool {
     BinShareSupply[bin_id] = bin_share_supply_value(bin_id) + minted_shares;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn add_position_liquidity(position_id: Name,
                                     bin_id: int,
                                     base_amount: int,
@@ -559,7 +553,6 @@ seiyaku DlmmPool {
     return minted_shares;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn remove_position_liquidity(position_id: Name,
                                        shares: int) -> int permission(AssetOps) {
     return remove_position_liquidity_impl(
@@ -610,7 +603,6 @@ seiyaku DlmmPool {
     return base_out + quote_out;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn collect_position_fees(position_id: Name) -> int permission(AssetOps) {
     return collect_position_fees_impl(
       position_id,
@@ -685,13 +677,11 @@ seiyaku DlmmPool {
     return (BaseAsset, QuoteAsset, VaultAccount, FeePips, BinStep, ActiveBin);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_custody_account(vault_account: AccountId) {
     assert_vault_operator();
     VaultAccount = vault_account;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn repair_active_bin(active_bin: int) {
     assert_vault_operator();
     assert_valid_bin_id(active_bin);
@@ -1110,7 +1100,8 @@ seiyaku DlmmPool {
                                        base_asset: AssetDefinitionId,
                                        quote_asset: AssetDefinitionId,
                                        amount_in: int,
-                                       min_out: int) -> int {
+                                       min_out: int,
+                                       require_full_fill: int) -> int {
     let fee_pips = FeePips;
     let bin_step = BinStep;
     let start_bin = spot_realign_active_bin_base_side();
@@ -1206,6 +1197,9 @@ seiyaku DlmmPool {
     }
 
     assert(amount_used > 0, "insufficient input used");
+    if require_full_fill == 1 {
+      assert(amount_used == amount_in, "partial fill");
+    }
     assert(amount_out >= min_out, "slippage");
     spot_move_asset_if_needed(funding_account, vault, base_asset, amount_used);
     spot_move_asset_if_needed(vault, recipient, quote_asset, amount_out);
@@ -1218,7 +1212,8 @@ seiyaku DlmmPool {
                                         base_asset: AssetDefinitionId,
                                         quote_asset: AssetDefinitionId,
                                         amount_in: int,
-                                        min_out: int) -> int {
+                                        min_out: int,
+                                        require_full_fill: int) -> int {
     let fee_pips = FeePips;
     let bin_step = BinStep;
     let start_bin = spot_realign_active_bin_quote_side();
@@ -1314,13 +1309,15 @@ seiyaku DlmmPool {
     }
 
     assert(amount_used > 0, "insufficient input used");
+    if require_full_fill == 1 {
+      assert(amount_used == amount_in, "partial fill");
+    }
     assert(amount_out >= min_out, "slippage");
     spot_move_asset_if_needed(funding_account, vault, quote_asset, amount_used);
     spot_move_asset_if_needed(vault, recipient, base_asset, amount_out);
     return amount_out;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn swap_exact_in(input_asset: AssetDefinitionId,
                            amount_in: int,
                            min_out: int) -> int permission(AssetOps) {
@@ -1332,11 +1329,11 @@ seiyaku DlmmPool {
       BaseAsset,
       QuoteAsset,
       amount_in,
-      min_out
+      min_out,
+      0
     );
   }
 
-  #[access(read="*", write="*")]
   kotoage fn swap_exact_in_base(amount_in: int,
                                 min_out: int) -> int permission(AssetOps) {
     return swap_exact_in_impl(
@@ -1347,11 +1344,11 @@ seiyaku DlmmPool {
       BaseAsset,
       QuoteAsset,
       amount_in,
-      min_out
+      min_out,
+      0
     );
   }
 
-  #[access(read="*", write="*")]
   kotoage fn swap_exact_in_quote(amount_in: int,
                                  min_out: int) -> int permission(AssetOps) {
     return swap_exact_in_impl(
@@ -1362,11 +1359,11 @@ seiyaku DlmmPool {
       BaseAsset,
       QuoteAsset,
       amount_in,
-      min_out
+      min_out,
+      0
     );
   }
 
-  #[access(read="*", write="*")]
   kotoage fn swap_exact_in_base_for(recipient: AccountId,
                                     amount_in: int,
                                     min_out: int) -> int permission(AssetOps) {
@@ -1378,11 +1375,11 @@ seiyaku DlmmPool {
       BaseAsset,
       QuoteAsset,
       amount_in,
-      min_out
+      min_out,
+      1
     );
   }
 
-  #[access(read="*", write="*")]
   kotoage fn swap_exact_in_quote_for(recipient: AccountId,
                                      amount_in: int,
                                      min_out: int) -> int permission(AssetOps) {
@@ -1394,7 +1391,8 @@ seiyaku DlmmPool {
       BaseAsset,
       QuoteAsset,
       amount_in,
-      min_out
+      min_out,
+      1
     );
   }
 
@@ -1405,7 +1403,8 @@ seiyaku DlmmPool {
                         base_asset: AssetDefinitionId,
                         quote_asset: AssetDefinitionId,
                         amount_in: int,
-                        min_out: int) -> int {
+                        min_out: int,
+                        require_full_fill: int) -> int {
     spot_assert_pool_initialized();
     if amount_in <= 0 {
       return 0;
@@ -1431,7 +1430,8 @@ seiyaku DlmmPool {
         base_asset,
         quote_asset,
         amount_in,
-        min_out
+        min_out,
+        require_full_fill
       );
     }
 
@@ -1443,7 +1443,8 @@ seiyaku DlmmPool {
       base_asset,
       quote_asset,
       amount_in,
-      min_out
+      min_out,
+      require_full_fill
     );
   }
 }

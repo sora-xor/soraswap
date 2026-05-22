@@ -11,6 +11,9 @@ This checklist is the repo-wide release gate for SoraSwap. Taira is the canonica
 - `make test-local-isolated`
 
 ## Required Taira Gate
+- `SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make release-taira`
+
+Equivalent expanded sequence:
 - `make deploy-testnet`
 - `make smoke-testnet-trader-readonly`
 - `SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make smoke-testnet-trader`
@@ -33,6 +36,7 @@ This checklist is the repo-wide release gate for SoraSwap. Taira is the canonica
 - `deployments/testnet/trader.latest.json` exists, matches the current Taira fingerprint, references the current `contracts.latest.json` plus `deploy.latest.json` metadata, proves that the same trader routes are live on public Taira, and records a committed signed trader mutation.
 - `deployments/testnet/smoke.latest.json` exists and matches the current Taira fingerprint.
 - `deployments/testnet/contract_console_smoke.latest.json` exists and matches the current Taira fingerprint.
+- `deployments/testnet/rwa_compliance.latest.json` exists, matches the current Taira fingerprint, has `status: "completed"`, and includes non-empty external references for `issuer_approval_ref`, `legal_review_ref`, `compliance_policy_ref`, `nav_source_ref`, and `redemption_terms_ref`.
 - `trader_readonly.latest.json.generated_at >= contracts.latest.json.generated_at`.
 - `trader.latest.json.generated_at >= contracts.latest.json.generated_at`.
 - `smoke.latest.json` references the current `nested_call_probe.latest.json`, `contracts.latest.json`, and `deploy.latest.json` metadata.
@@ -42,6 +46,7 @@ This checklist is the repo-wide release gate for SoraSwap. Taira is the canonica
 - Trader evidence must stop the gate when any required trader route still returns `404` on the public node.
 - Testnet smoke evidence includes router execution, launchpad executor activation, farms slot accrual, and the active derivatives write-path suite, including perps queue/recover/requeue/liquidate coverage with recorded keeper reward and owner residual.
 - Contract-console evidence includes proof submit plus bridge message submit through the deployed `bridge.sccp_bridge` contract.
+- RWA legal and issuer artifacts remain outside this repository; the release gate enforces the evidence hook and chain fingerprint, not the legal process itself.
 - `contract_console_smoke.latest.json.bridge.submission_expectation == "apply"` is acceptable when proof/message both reach `Applied|Committed`.
 - `contract_console_smoke.latest.json.bridge.submission_expectation == "replay_reject"` is acceptable when cached SCCP evidence proves the governed route and the deployed bridge rejects the replay path with decoded replay/duplicate/consumed/proof-overlap semantics, or with the current generic bridge-contract `assertion failed (constraint violation)` rejection when Taira does not preserve the original contract string.
 - Bridge evidence must prove governed route provenance (`route_provenance[0] == 1`) before any production claim.

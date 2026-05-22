@@ -46,12 +46,10 @@ seiyaku OptionsVault {
     assert(OptVaultPositionOwner[position_id] == authority(), "position owner mismatch");
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     return OptVaultInitialized;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_vault(settlement_asset: AssetDefinitionId,
                         risk_vault_contract: bytes) {
     assert(OptVaultInitialized == 0, "vault initialized");
@@ -63,25 +61,21 @@ seiyaku OptionsVault {
     OptVaultWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_controller(controller: AccountId) {
     assert_owner();
     OptVaultController = controller;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn enter_withdrawal_only() {
     assert_owner();
     OptVaultWithdrawalOnly = 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn exit_withdrawal_only() {
     assert_owner();
     OptVaultWithdrawalOnly = 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_series(series_id: int) {
     assert_owner_or_controller();
     OptVaultSeriesCollateralLocked[series_id] = OptVaultSeriesCollateralLocked.ensure(series_id, 0);
@@ -89,13 +83,11 @@ seiyaku OptionsVault {
     OptVaultSeriesPayoutPaid[series_id] = OptVaultSeriesPayoutPaid.ensure(series_id, 0);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn sync_series_c2c(series_id: int) -> int {
     sync_series(series_id);
     return 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn record_position(position_id: int,
                              series_id: int,
                              owner: AccountId,
@@ -118,7 +110,6 @@ seiyaku OptionsVault {
     OptVaultSeriesPayoutPaid[series_id] = OptVaultSeriesPayoutPaid.ensure(series_id, 0);
   }
 
-  #[access(read="*", write="*")]
   kotoage fn record_position_c2c(position_id: int,
                                  series_id: int,
                                  owner: AccountId,
@@ -128,7 +119,6 @@ seiyaku OptionsVault {
     return 1;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn release_position(position_id: int, collateral_release: int) {
     assert_owner_or_controller();
     assert_position_exists(position_id);
@@ -140,7 +130,6 @@ seiyaku OptionsVault {
     OptVaultSeriesCollateralLocked[series_id] = OptVaultSeriesCollateralLocked.get_or(series_id, 0) - collateral_release;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn settle_position(position_id: int,
                              payout: int,
                              premium_burn: int) {
@@ -162,7 +151,6 @@ seiyaku OptionsVault {
     OptVaultSeriesPayoutPaid[series_id] = OptVaultSeriesPayoutPaid.get_or(series_id, 0) + payout;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn settle_position_c2c(position_id: int,
                                  payout: int,
                                  premium_burn: int) -> int {

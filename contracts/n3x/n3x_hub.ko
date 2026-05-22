@@ -18,6 +18,9 @@ seiyaku N3xHub {
   state int RedeemFeeBps;
   state int MintFeesAccrued;
   state int RedeemFeesAccrued;
+  state int FeeReserveUsdt;
+  state int FeeReserveUsdc;
+  state int FeeReserveKusd;
   state int TargetUsdtBps;
   state int TargetUsdcBps;
   state int TargetKusdBps;
@@ -55,8 +58,10 @@ seiyaku N3xHub {
     assert(usdc_in >= 0, "negative usdc_in");
     assert(kusd_in >= 0, "negative kusd_in");
     let gross = usdt_in + usdc_in + kusd_in;
-    let fee = fee_amount(gross, MintFeeBps);
-    return gross - fee;
+    let usdt_fee = fee_amount(usdt_in, MintFeeBps);
+    let usdc_fee = fee_amount(usdc_in, MintFeeBps);
+    let kusd_fee = fee_amount(kusd_in, MintFeeBps);
+    return gross - usdt_fee - usdc_fee - kusd_fee;
   }
 
   fn quote_redeem_impl(n3x_amount: int) -> int {
@@ -74,7 +79,6 @@ seiyaku N3xHub {
     return usdt_out + usdc_out + kusd_out;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn main() -> int {
     if HubInitialized == 1 {
       return TotalN3x;
@@ -82,7 +86,6 @@ seiyaku N3xHub {
     return 0;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn init_hub(usdt_asset: AssetDefinitionId,
                       usdc_asset: AssetDefinitionId,
                       kusd_asset: AssetDefinitionId,
@@ -112,6 +115,9 @@ seiyaku N3xHub {
     RedeemFeeBps = redeem_fee_bps;
     MintFeesAccrued = 0;
     RedeemFeesAccrued = 0;
+    FeeReserveUsdt = 0;
+    FeeReserveUsdc = 0;
+    FeeReserveKusd = 0;
     TargetUsdtBps = target_usdt_bps;
     TargetUsdcBps = target_usdc_bps;
     TargetKusdBps = target_kusd_bps;
@@ -147,14 +153,12 @@ seiyaku N3xHub {
     );
   }
 
-  #[access(read="*", write="*")]
   kotoage fn bind_vault_account(vault_account: AccountId) {
     assert_initialized_impl();
     assert_owner();
     VaultAccount = vault_account;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn repair_zero_supply_state(vault_account: AccountId) {
     assert_initialized_impl();
     assert_owner();
@@ -165,6 +169,9 @@ seiyaku N3xHub {
     BasketKusd = 0;
     MintFeesAccrued = 0;
     RedeemFeesAccrued = 0;
+    FeeReserveUsdt = 0;
+    FeeReserveUsdc = 0;
+    FeeReserveKusd = 0;
   }
 
   view fn mirror_state() -> (int, int, int, int, int, int, int, int, int, int, int, int) {
@@ -185,7 +192,17 @@ seiyaku N3xHub {
     );
   }
 
-  #[access(read="*", write="*")]
+  view fn fee_reserve_state() -> (int, int, int, int, int) {
+    assert_initialized_impl();
+    return (
+      FeeReserveUsdt,
+      FeeReserveUsdc,
+      FeeReserveKusd,
+      MintFeesAccrued,
+      RedeemFeesAccrued
+    );
+  }
+
   kotoage fn deposit_and_mint(usdt_in: int,
                               usdc_in: int,
                               kusd_in: int) -> int permission(AssetOps) {
@@ -193,7 +210,13 @@ seiyaku N3xHub {
     let user = authority();
     let gross = usdt_in + usdc_in + kusd_in;
     let minted = quote_mint_impl(usdt_in, usdc_in, kusd_in);
-    let fee = gross - minted;
+    let usdt_fee = fee_amount(usdt_in, MintFeeBps);
+    let usdc_fee = fee_amount(usdc_in, MintFeeBps);
+    let kusd_fee = fee_amount(kusd_in, MintFeeBps);
+    let fee = usdt_fee + usdc_fee + kusd_fee;
+    let net_usdt = usdt_in - usdt_fee;
+    let net_usdc = usdc_in - usdc_fee;
+    let net_kusd = kusd_in - kusd_fee;
     assert(minted > 0, "zero mint");
 
     if usdt_in > 0 {
@@ -213,15 +236,17 @@ seiyaku N3xHub {
     }
     mint_asset(user, N3xAsset, minted);
 
-    BasketUsdt = BasketUsdt + usdt_in;
-    BasketUsdc = BasketUsdc + usdc_in;
-    BasketKusd = BasketKusd + kusd_in;
+    BasketUsdt = BasketUsdt + net_usdt;
+    BasketUsdc = BasketUsdc + net_usdc;
+    BasketKusd = BasketKusd + net_kusd;
+    FeeReserveUsdt = FeeReserveUsdt + usdt_fee;
+    FeeReserveUsdc = FeeReserveUsdc + usdc_fee;
+    FeeReserveKusd = FeeReserveKusd + kusd_fee;
     TotalN3x = TotalN3x + minted;
     MintFeesAccrued = MintFeesAccrued + fee;
     return minted;
   }
 
-  #[access(read="*", write="*")]
   kotoage fn burn_and_redeem(n3x_amount: int) -> int permission(AssetOps) {
     assert_initialized_impl();
     let user = authority();
@@ -259,11 +284,44 @@ seiyaku N3xHub {
       }
     }
 
-    BasketUsdt = BasketUsdt - usdt_out;
-    BasketUsdc = BasketUsdc - usdc_out;
-    BasketKusd = BasketKusd - kusd_out;
+    BasketUsdt = BasketUsdt - gross_usdt;
+    BasketUsdc = BasketUsdc - gross_usdc;
+    BasketKusd = BasketKusd - gross_kusd;
+    FeeReserveUsdt = FeeReserveUsdt + usdt_fee;
+    FeeReserveUsdc = FeeReserveUsdc + usdc_fee;
+    FeeReserveKusd = FeeReserveKusd + kusd_fee;
     RedeemFeesAccrued = RedeemFeesAccrued + usdt_fee + usdc_fee + kusd_fee;
     TotalN3x = total - n3x_amount;
     return redeemed;
+  }
+
+  kotoage fn claim_fees(recipient: AccountId) -> int permission(AssetOps) {
+    assert_initialized_impl();
+    assert_owner();
+    let usdt_amount = FeeReserveUsdt;
+    let usdc_amount = FeeReserveUsdc;
+    let kusd_amount = FeeReserveKusd;
+    let total_claimed = usdt_amount + usdc_amount + kusd_amount;
+    assert(total_claimed > 0, "no fees");
+
+    FeeReserveUsdt = 0;
+    FeeReserveUsdc = 0;
+    FeeReserveKusd = 0;
+    if usdt_amount > 0 {
+      if VaultAccount != recipient {
+        transfer_asset(VaultAccount, recipient, UsdtAsset, usdt_amount);
+      }
+    }
+    if usdc_amount > 0 {
+      if VaultAccount != recipient {
+        transfer_asset(VaultAccount, recipient, UsdcAsset, usdc_amount);
+      }
+    }
+    if kusd_amount > 0 {
+      if VaultAccount != recipient {
+        transfer_asset(VaultAccount, recipient, KusdAsset, kusd_amount);
+      }
+    }
+    return total_claimed;
   }
 }

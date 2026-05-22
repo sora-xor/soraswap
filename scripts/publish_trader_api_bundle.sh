@@ -144,6 +144,42 @@ routes_json="$(
       path: "/v1/contracts/rollups/trader/account",
       adapter: "contract.rollups.trader_account.v1",
       cache_ttl_ms: 5000
+    },
+    {
+      method: "GET",
+      path: "/v1/contracts/rollups/intents",
+      adapter: "contract.rollups.intents.v1",
+      cache_ttl_ms: 2500
+    },
+    {
+      method: "GET",
+      path: "/v1/contracts/rollups/vaults/positions",
+      adapter: "contract.rollups.vault_positions.v1",
+      cache_ttl_ms: 5000
+    },
+    {
+      method: "GET",
+      path: "/v1/contracts/rollups/operators/status",
+      adapter: "contract.rollups.operators_status.v1",
+      cache_ttl_ms: 5000
+    },
+    {
+      method: "GET",
+      path: "/v1/contracts/rollups/margin/health",
+      adapter: "contract.rollups.margin_health.v1",
+      cache_ttl_ms: 2500
+    },
+    {
+      method: "GET",
+      path: "/v1/contracts/rollups/rwa/lots",
+      adapter: "contract.rollups.rwa_lots.v1",
+      cache_ttl_ms: 5000
+    },
+    {
+      method: "GET",
+      path: "/v1/contracts/rollups/dlmm/hooks",
+      adapter: "contract.rollups.dlmm_hooks.v1",
+      cache_ttl_ms: 2500
     }
   ]'
 )"
