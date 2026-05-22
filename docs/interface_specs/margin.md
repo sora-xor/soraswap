@@ -13,4 +13,5 @@ Entrypoints:
 
 Notes:
 - Health is `collateral * 10000 / exposure`; zero exposure is reported as `10000`.
+- Margin account keys are bound to the first depositor; exposure changes require that account owner or the registered market owner.
 - This is the first v2 shared-margin adapter for perps/options/cover/RWA integration.

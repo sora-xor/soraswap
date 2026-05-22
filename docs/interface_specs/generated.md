@@ -1163,7 +1163,7 @@ Manifest: `iroha.contracts.toml`
 ## automation.job_queue
 
 - Interface: `artifacts/compiled/automation/job_queue.interface.json`
-- Entrypoints: `15`
+- Entrypoints: `14`
 - State keys: `11`
 
 ### main
@@ -3694,7 +3694,6 @@ Manifest: `iroha.contracts.toml`
 ```json
 {
   "amount_out": 0,
-  "fill_slot": 0,
   "intent_id": "name"
 }
 ```
@@ -3715,7 +3714,7 @@ Manifest: `iroha.contracts.toml`
 
 - Interface: `artifacts/compiled/vaults/manager.interface.json`
 - Entrypoints: `7`
-- State keys: `13`
+- State keys: `15`
 
 ### main
 
@@ -3781,7 +3780,6 @@ Manifest: `iroha.contracts.toml`
 
 ```json
 {
-  "current_slot": 0,
   "request_id": "name"
 }
 ```
@@ -3896,7 +3894,7 @@ Manifest: `iroha.contracts.toml`
 
 - Interface: `artifacts/compiled/margin/portfolio_margin.interface.json`
 - Entrypoints: `8`
-- State keys: `7`
+- State keys: `8`
 
 ### main
 

@@ -2,6 +2,7 @@ seiyaku PortfolioMargin {
   state MarketOwner: Map<Name, AccountId>;
   state MarketRiskWeightBps: Map<Name, int>;
   state MarketLiquidationThresholdBps: Map<Name, int>;
+  state AccountOwner: Map<Name, AccountId>;
   state AccountCollateral: Map<Name, int>;
   state AccountExposure: Map<Name, int>;
   state AccountHealthBps: Map<Name, int>;
@@ -9,6 +10,19 @@ seiyaku PortfolioMargin {
 
   fn assert_market_exists(market_id: Name) {
     assert(MarketOwner.contains(market_id), "market missing");
+  }
+
+  fn assert_account_owner(account_key: Name) {
+    assert(AccountOwner.contains(account_key), "account missing");
+    assert(AccountOwner[account_key] == authority(), "account owner mismatch");
+  }
+
+  fn assert_exposure_operator(market_id: Name, account_key: Name) {
+    assert_market_exists(market_id);
+    if MarketOwner[market_id] == authority() {
+      return;
+    }
+    assert_account_owner(account_key);
   }
 
   fn recalc(account_key: Name) {
@@ -38,11 +52,17 @@ seiyaku PortfolioMargin {
 
   kotoage fn deposit_collateral(account_key: Name, amount: int) permission(AssetOps) {
     assert(amount > 0, "invalid collateral");
+    if AccountOwner.contains(account_key) {
+      assert_account_owner(account_key);
+    } else {
+      AccountOwner[account_key] = authority();
+    }
     AccountCollateral[account_key] = AccountCollateral.ensure(account_key, 0) + amount;
     recalc(account_key);
   }
 
   kotoage fn withdraw_collateral(account_key: Name, amount: int) permission(AssetOps) {
+    assert_account_owner(account_key);
     assert(amount > 0, "invalid collateral");
     assert(AccountCollateral.ensure(account_key, 0) >= amount, "insufficient collateral");
     AccountCollateral[account_key] = AccountCollateral.ensure(account_key, 0) - amount;
@@ -51,7 +71,7 @@ seiyaku PortfolioMargin {
   }
 
   kotoage fn lock_exposure(market_id: Name, account_key: Name, exposure_delta: int) {
-    assert_market_exists(market_id);
+    assert_exposure_operator(market_id, account_key);
     assert(exposure_delta >= 0, "invalid exposure");
     AccountExposure[account_key] = AccountExposure.ensure(account_key, 0) + exposure_delta;
     recalc(account_key);

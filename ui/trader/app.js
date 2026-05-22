@@ -235,7 +235,7 @@ const ACTION_RAILS = {
         key: "launchpad_contribute",
         label: "Contribute",
         submitLabel: "Submit Contribution",
-        entrypoint: "contribute",
+        entrypoint: "contribute_recorded",
         fields: [
           { key: "sale", label: "Sale", type: "text", defaultValue: "seed-alpha" },
           { key: "allocation", label: "Allocation", type: "text", defaultValue: "alloc-alpha" },
@@ -423,7 +423,7 @@ const ACTION_RAILS = {
           amount_in: normalizeInteger(draft.amount_in),
           min_out: normalizeInteger(draft.min_out),
           solver_fee_bps: normalizeInteger(draft.solver_fee_bps),
-          deadline_slot: 100,
+          deadline_slot: 1_000_000_000,
           nonce: 1,
         }),
       },
@@ -439,7 +439,6 @@ const ACTION_RAILS = {
         buildPayload: (draft) => ({
           intent_id: String(draft.intent_id || "intent-1"),
           amount_out: normalizeInteger(draft.amount_out),
-          fill_slot: 1,
         }),
       },
     ],

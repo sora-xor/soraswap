@@ -57,10 +57,11 @@ seiyaku IntentSettlementRouter {
     IntentStatus[intent_id] = 3;
   }
 
-  kotoage fn fill_intent(intent_id: Name, amount_out: int, fill_slot: int) {
+  kotoage fn fill_intent(intent_id: Name, amount_out: int) {
     assert_intent_exists(intent_id);
     assert(IntentStatus.ensure(intent_id, 0) == 1, "intent not open");
     assert(amount_out >= IntentMinOut.ensure(intent_id, 0), "insufficient output");
+    let fill_slot = block_height();
     assert(fill_slot <= IntentDeadlineSlot.ensure(intent_id, 0), "intent expired");
     IntentStatus[intent_id] = 2;
     IntentSolver[intent_id] = authority();

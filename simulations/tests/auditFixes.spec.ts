@@ -545,6 +545,186 @@ class N3xFeeReserveModel {
   }
 }
 
+class IntentSettlementModel {
+  private readonly intents = new Map<string, { owner: string; minOut: number; deadlineSlot: number; status: number; fillSlot: number }>();
+
+  openIntent(caller: string, intentId: string, minOut: number, deadlineSlot: number): void {
+    if (this.intents.has(intentId)) {
+      throw new Error("intent exists");
+    }
+    requirePositiveSafeInteger(minOut, "invalid min out");
+    requireNonNegativeSafeInteger(deadlineSlot, "invalid deadline");
+    this.intents.set(intentId, { owner: caller, minOut, deadlineSlot, status: 1, fillSlot: 0 });
+  }
+
+  fillIntent(caller: string, intentId: string, amountOut: number, blockHeight: number): void {
+    const intent = this.mustIntent(intentId);
+    requireNonNegativeSafeInteger(blockHeight, "invalid block height");
+    if (intent.status !== 1) {
+      throw new Error("intent not open");
+    }
+    if (amountOut < intent.minOut) {
+      throw new Error("insufficient output");
+    }
+    if (blockHeight > intent.deadlineSlot) {
+      throw new Error("intent expired");
+    }
+    intent.status = 2;
+    intent.fillSlot = blockHeight;
+    void caller;
+  }
+
+  state(intentId: string): { status: number; fillSlot: number } {
+    const intent = this.mustIntent(intentId);
+    return { status: intent.status, fillSlot: intent.fillSlot };
+  }
+
+  private mustIntent(intentId: string): { owner: string; minOut: number; deadlineSlot: number; status: number; fillSlot: number } {
+    const intent = this.intents.get(intentId);
+    if (!intent) {
+      throw new Error("intent missing");
+    }
+    return intent;
+  }
+}
+
+class VaultManagerModel {
+  private readonly vaults = new Set<string>();
+  private readonly positionOwner = new Map<string, string>();
+  private readonly positionVault = new Map<string, string>();
+  private readonly positionShares = new Map<string, number>();
+  private readonly requests = new Map<string, { owner: string; vault: string; shares: number; claimSlot: number; status: number }>();
+
+  registerVault(vaultId: string): void {
+    if (this.vaults.has(vaultId)) {
+      throw new Error("vault exists");
+    }
+    this.vaults.add(vaultId);
+  }
+
+  deposit(caller: string, vaultId: string, positionId: string, amount: number): void {
+    this.requireVault(vaultId);
+    requirePositiveSafeInteger(amount, "invalid deposit");
+    if (this.positionOwner.has(positionId)) {
+      this.requirePosition(caller, vaultId, positionId);
+    } else {
+      this.positionOwner.set(positionId, caller);
+      this.positionVault.set(positionId, vaultId);
+      this.positionShares.set(positionId, 0);
+    }
+    this.positionShares.set(positionId, (this.positionShares.get(positionId) ?? 0) + amount);
+  }
+
+  requestRedeem(caller: string, vaultId: string, requestId: string, positionId: string, shares: number, claimSlot: number): void {
+    this.requireVault(vaultId);
+    if (this.requests.has(requestId)) {
+      throw new Error("request exists");
+    }
+    requirePositiveSafeInteger(shares, "invalid shares");
+    requireNonNegativeSafeInteger(claimSlot, "invalid claim slot");
+    this.requirePosition(caller, vaultId, positionId);
+    const currentShares = this.positionShares.get(positionId) ?? 0;
+    if (currentShares < shares) {
+      throw new Error("insufficient shares");
+    }
+    this.positionShares.set(positionId, currentShares - shares);
+    this.requests.set(requestId, { owner: caller, vault: vaultId, shares, claimSlot, status: 1 });
+  }
+
+  claimRedeem(caller: string, requestId: string, blockHeight: number): void {
+    const request = this.requests.get(requestId);
+    if (!request) {
+      throw new Error("request missing");
+    }
+    requireNonNegativeSafeInteger(blockHeight, "invalid block height");
+    if (request.owner !== caller) {
+      throw new Error("request owner mismatch");
+    }
+    if (request.status !== 1) {
+      throw new Error("request not open");
+    }
+    if (blockHeight < request.claimSlot) {
+      throw new Error("claim not ready");
+    }
+    request.status = 2;
+  }
+
+  shares(positionId: string): number {
+    return this.positionShares.get(positionId) ?? 0;
+  }
+
+  private requireVault(vaultId: string): void {
+    if (!this.vaults.has(vaultId)) {
+      throw new Error("vault missing");
+    }
+  }
+
+  private requirePosition(caller: string, vaultId: string, positionId: string): void {
+    if (!this.positionOwner.has(positionId)) {
+      throw new Error("position missing");
+    }
+    if (this.positionOwner.get(positionId) !== caller) {
+      throw new Error("position owner mismatch");
+    }
+    if (this.positionVault.get(positionId) !== vaultId) {
+      throw new Error("position vault mismatch");
+    }
+  }
+}
+
+class PortfolioMarginModel {
+  private readonly marketOwner = new Map<string, string>();
+  private readonly accountOwner = new Map<string, string>();
+  private readonly collateral = new Map<string, number>();
+  private readonly exposure = new Map<string, number>();
+
+  registerMarket(caller: string, marketId: string): void {
+    if (this.marketOwner.has(marketId)) {
+      throw new Error("market exists");
+    }
+    this.marketOwner.set(marketId, caller);
+  }
+
+  depositCollateral(caller: string, accountKey: string, amount: number): void {
+    requirePositiveSafeInteger(amount, "invalid collateral");
+    if (this.accountOwner.has(accountKey)) {
+      this.requireAccountOwner(caller, accountKey);
+    } else {
+      this.accountOwner.set(accountKey, caller);
+    }
+    this.collateral.set(accountKey, (this.collateral.get(accountKey) ?? 0) + amount);
+  }
+
+  lockExposure(caller: string, marketId: string, accountKey: string, exposureDelta: number): void {
+    const owner = this.marketOwner.get(marketId);
+    if (!owner) {
+      throw new Error("market missing");
+    }
+    requireNonNegativeSafeInteger(exposureDelta, "invalid exposure");
+    if (owner !== caller) {
+      this.requireAccountOwner(caller, accountKey);
+    }
+    this.exposure.set(accountKey, (this.exposure.get(accountKey) ?? 0) + exposureDelta);
+  }
+
+  healthBps(accountKey: string): number {
+    const exposure = this.exposure.get(accountKey) ?? 0;
+    if (exposure === 0) {
+      return 10_000;
+    }
+    return Math.floor(((this.collateral.get(accountKey) ?? 0) * 10_000) / exposure);
+  }
+
+  private requireAccountOwner(caller: string, accountKey: string): void {
+    if (!this.accountOwner.has(accountKey)) {
+      throw new Error("account missing");
+    }
+    if (this.accountOwner.get(accountKey) !== caller) {
+      throw new Error("account owner mismatch");
+    }
+  }
+}
+
 describe("Audit fix simulations", () => {
   test("signed oracle payloads reject tampering, stale slots, and replayed slots", () => {
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
@@ -915,6 +1095,53 @@ describe("Audit fix simulations", () => {
     ).toThrow("invalid amount");
     bridge.finalizeInbound("proof-authority", "route", "fractional", 1);
     bridge.finalizeInbound("proof-authority", "route", "unsafe", 1);
+  });
+
+  test("margin exposure locks require the account owner or market owner", () => {
+    const margin = new PortfolioMarginModel();
+    margin.registerMarket("market-controller", "perps");
+    margin.depositCollateral("alice", "alice-margin", 500);
+
+    expect(() => margin.lockExposure("attacker", "perps", "alice-margin", 10_000)).toThrow("account owner mismatch");
+    expect(() => margin.lockExposure("attacker", "perps", "missing-margin", 10)).toThrow("account missing");
+
+    margin.lockExposure("market-controller", "perps", "alice-margin", 2_500);
+    expect(margin.healthBps("alice-margin")).toBe(2_000);
+    margin.lockExposure("alice", "perps", "alice-margin", 500);
+    expect(margin.healthBps("alice-margin")).toBe(1_666);
+  });
+
+  test("vault redemptions are scoped to position owner, position vault, and block-height claim readiness", () => {
+    const vault = new VaultManagerModel();
+    vault.registerVault("vault-a");
+    vault.registerVault("vault-b");
+    vault.deposit("alice", "vault-a", "position-a", 100);
+
+    expect(() => vault.deposit("bob", "vault-a", "position-a", 1)).toThrow("position owner mismatch");
+    expect(() => vault.requestRedeem("bob", "vault-a", "redeem-bob", "position-a", 10, 5)).toThrow(
+      "position owner mismatch"
+    );
+    expect(() => vault.requestRedeem("alice", "vault-b", "redeem-wrong-vault", "position-a", 10, 5)).toThrow(
+      "position vault mismatch"
+    );
+
+    vault.requestRedeem("alice", "vault-a", "redeem-a", "position-a", 40, 10);
+    expect(vault.shares("position-a")).toBe(60);
+    expect(() => vault.claimRedeem("alice", "redeem-a", 9)).toThrow("claim not ready");
+    expect(() => vault.claimRedeem("bob", "redeem-a", 10)).toThrow("request owner mismatch");
+    vault.claimRedeem("alice", "redeem-a", 10);
+    expect(() => vault.claimRedeem("alice", "redeem-a", 11)).toThrow("request not open");
+  });
+
+  test("intent fills use block height for expiry and recorded fill slot", () => {
+    const intents = new IntentSettlementModel();
+    intents.openIntent("alice", "intent-expired", 90, 10);
+    expect(() => intents.fillIntent("solver", "intent-expired", 95, 11)).toThrow("intent expired");
+
+    intents.openIntent("alice", "intent-live", 90, 20);
+    expect(() => intents.fillIntent("solver", "intent-live", 89, 12)).toThrow("insufficient output");
+    intents.fillIntent("solver", "intent-live", 95, 20);
+    expect(intents.state("intent-live")).toEqual({ status: 2, fillSlot: 20 });
   });
 
   test("launchpad requires explicit factory init, allocation-only buys, and block-height vesting", () => {

@@ -6,6 +6,8 @@ seiyaku VaultManager {
   state VaultAsyncRedeem: Map<Name, int>;
   state VaultTotalAssets: Map<Name, int>;
   state VaultTotalShares: Map<Name, int>;
+  state PositionOwner: Map<Name, AccountId>;
+  state PositionVault: Map<Name, Name>;
   state PositionShares: Map<Name, int>;
   state RequestOwner: Map<Name, AccountId>;
   state RequestVault: Map<Name, Name>;
@@ -20,6 +22,12 @@ seiyaku VaultManager {
   fn assert_request_owner(request_id: Name) {
     assert(RequestOwner.contains(request_id), "request missing");
     assert(RequestOwner[request_id] == authority(), "request owner mismatch");
+  }
+
+  fn assert_position_owner(vault_id: Name, position_id: Name) {
+    assert(PositionOwner.contains(position_id), "position missing");
+    assert(PositionOwner[position_id] == authority(), "position owner mismatch");
+    assert(PositionVault[position_id] == vault_id, "position vault mismatch");
   }
 
   kotoage fn main() -> int {
@@ -46,6 +54,12 @@ seiyaku VaultManager {
   kotoage fn deposit(vault_id: Name, position_id: Name, amount: int) permission(AssetOps) {
     assert_vault_exists(vault_id);
     assert(amount > 0, "invalid deposit");
+    if PositionOwner.contains(position_id) {
+      assert_position_owner(vault_id, position_id);
+    } else {
+      PositionOwner[position_id] = authority();
+      PositionVault[position_id] = vault_id;
+    }
     VaultTotalAssets[vault_id] = VaultTotalAssets.ensure(vault_id, 0) + amount;
     VaultTotalShares[vault_id] = VaultTotalShares.ensure(vault_id, 0) + amount;
     PositionShares[position_id] = PositionShares.ensure(position_id, 0) + amount;
@@ -55,6 +69,8 @@ seiyaku VaultManager {
     assert_vault_exists(vault_id);
     assert(!RequestOwner.contains(request_id), "request exists");
     assert(shares > 0, "invalid shares");
+    assert(claim_slot >= 0, "invalid claim slot");
+    assert_position_owner(vault_id, position_id);
     assert(PositionShares.ensure(position_id, 0) >= shares, "insufficient shares");
     PositionShares[position_id] = PositionShares.ensure(position_id, 0) - shares;
     RequestOwner[request_id] = authority();
@@ -64,9 +80,10 @@ seiyaku VaultManager {
     RequestStatus[request_id] = 1;
   }
 
-  kotoage fn claim_redeem(request_id: Name, current_slot: int) permission(AssetOps) {
+  kotoage fn claim_redeem(request_id: Name) permission(AssetOps) {
     assert_request_owner(request_id);
     assert(RequestStatus.ensure(request_id, 0) == 1, "request not open");
+    let current_slot = block_height();
     assert(current_slot >= RequestClaimSlot.ensure(request_id, 0), "claim not ready");
     let vault_id = RequestVault[request_id];
     let shares = RequestShares.ensure(request_id, 0);

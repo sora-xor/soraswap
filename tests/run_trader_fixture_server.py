@@ -218,7 +218,7 @@ ENTRYPOINT_TO_EVENT_KIND = {
     "stake": "farm_staked",
     "unstake": "farm_unstaked",
     "claim": "farm_rewards_claimed",
-    "contribute": "launchpad_contributed",
+    "contribute_recorded": "launchpad_contributed",
     "claim_allocation": "launchpad_claimed",
     "refund_allocation": "launchpad_refunded",
     "finalize_sale_activation": "launchpad_activation_finalized",
@@ -415,7 +415,7 @@ class MockToriiState:
             "position": "yield-alpha",
             "amount": 550,
         })
-        self.append_event("launchpad.sale_factory", "contribute", FIXTURE_AUTHORITY, {
+        self.append_event("launchpad.sale_factory", "contribute_recorded", FIXTURE_AUTHORITY, {
             "sale": "seed-alpha",
             "allocation": "alloc-alpha",
             "payment_amount": 420,
@@ -1193,7 +1193,7 @@ class MockToriiState:
         elif entrypoint == "claim":
             normalized.setdefault("position", "yield-alpha")
             normalized.setdefault("amount", 42)
-        elif entrypoint == "contribute":
+        elif entrypoint == "contribute_recorded":
             normalized.setdefault("sale", "seed-alpha")
             normalized.setdefault("allocation", "alloc-alpha")
             normalized.setdefault("payment_amount", 260)

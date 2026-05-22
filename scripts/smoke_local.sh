@@ -160,9 +160,9 @@ intent_amount_in="${SORASWAP_INTENT_SMOKE_AMOUNT_IN:-10}"
 intent_min_out="${SORASWAP_INTENT_SMOKE_MIN_OUT:-9}"
 intent_amount_out="${SORASWAP_INTENT_SMOKE_AMOUNT_OUT:-10}"
 intent_solver_fee_bps="${SORASWAP_INTENT_SMOKE_SOLVER_FEE_BPS:-30}"
-intent_deadline_slot="${SORASWAP_INTENT_SMOKE_DEADLINE_SLOT:-100}"
+intent_deadline_slot="${SORASWAP_INTENT_SMOKE_DEADLINE_SLOT:-}"
+intent_deadline_offset_slots="${SORASWAP_INTENT_SMOKE_DEADLINE_OFFSET_SLOTS:-100}"
 intent_nonce="${SORASWAP_INTENT_SMOKE_NONCE:-1}"
-intent_fill_slot="${SORASWAP_INTENT_SMOKE_FILL_SLOT:-2}"
 vault_smoke_id="${SORASWAP_VAULT_SMOKE_ID:-smoke_n3x_savings}"
 vault_position_id="${SORASWAP_VAULT_SMOKE_POSITION_ID:-smoke_vault_position}"
 vault_redeem_request_id="${SORASWAP_VAULT_SMOKE_REDEEM_REQUEST_ID:-smoke_vault_redeem}"
@@ -170,7 +170,8 @@ vault_strategy_code="${SORASWAP_VAULT_SMOKE_STRATEGY_CODE:-1}"
 vault_async_redeem="${SORASWAP_VAULT_SMOKE_ASYNC_REDEEM:-1}"
 vault_deposit_amount="${SORASWAP_VAULT_SMOKE_DEPOSIT_AMOUNT:-25}"
 vault_redeem_shares="${SORASWAP_VAULT_SMOKE_REDEEM_SHARES:-10}"
-vault_claim_slot="${SORASWAP_VAULT_SMOKE_CLAIM_SLOT:-5}"
+vault_claim_slot="${SORASWAP_VAULT_SMOKE_CLAIM_SLOT:-}"
+vault_claim_delay_slots="${SORASWAP_VAULT_SMOKE_CLAIM_DELAY_SLOTS:-1}"
 operator_service="${SORASWAP_OPERATOR_SMOKE_SERVICE:-smoke_solver}"
 operator_unregistered_service="${SORASWAP_OPERATOR_SMOKE_UNREGISTERED_SERVICE:-smoke_unbonded_operator}"
 operator_min_bond="${SORASWAP_OPERATOR_SMOKE_MIN_BOND:-100}"
@@ -386,8 +387,24 @@ if (( cover_policy_required_observations != 3 )); then
   echo "invalid cover observation configuration for smoke: local shell smoke currently expects exactly 3 required observations" >&2
   exit 1
 fi
-if (( intent_amount_in <= 0 || intent_min_out <= 0 || intent_amount_out < intent_min_out || intent_solver_fee_bps < 0 || intent_solver_fee_bps > 10000 || intent_fill_slot > intent_deadline_slot )); then
+if [[ -n "$intent_deadline_slot" && "$intent_deadline_slot" != <-> ]]; then
+  echo "invalid intent deadline slot for smoke: $intent_deadline_slot" >&2
+  exit 1
+fi
+if [[ "$intent_deadline_offset_slots" != <-> || "$intent_deadline_offset_slots" -le 0 ]]; then
+  echo "invalid intent deadline offset for smoke: $intent_deadline_offset_slots" >&2
+  exit 1
+fi
+if (( intent_amount_in <= 0 || intent_min_out <= 0 || intent_amount_out < intent_min_out || intent_solver_fee_bps < 0 || intent_solver_fee_bps > 10000 )); then
   echo "invalid intent smoke configuration" >&2
+  exit 1
+fi
+if [[ -n "$vault_claim_slot" && "$vault_claim_slot" != <-> ]]; then
+  echo "invalid vault claim slot for smoke: $vault_claim_slot" >&2
+  exit 1
+fi
+if [[ "$vault_claim_delay_slots" != <-> ]]; then
+  echo "invalid vault claim delay for smoke: $vault_claim_delay_slots" >&2
   exit 1
 fi
 if (( vault_deposit_amount <= 0 || vault_redeem_shares <= 0 || vault_redeem_shares > vault_deposit_amount || vault_async_redeem < 0 || vault_async_redeem > 1 )); then
@@ -524,6 +541,18 @@ dlmm_remove_position_tx_hash="$(call_contract_and_wait "$config" "$dlmm_pool_con
     }'
 )")"
 
+intent_current_slot="$(soraswap_current_block_height "$config")"
+if [[ -z "$intent_current_slot" || "$intent_current_slot" == "null" || "$intent_current_slot" != <-> ]]; then
+  intent_current_slot=0
+fi
+if [[ -z "$intent_deadline_slot" ]]; then
+  intent_deadline_slot=$(( intent_current_slot + intent_deadline_offset_slots ))
+fi
+if (( intent_deadline_slot <= intent_current_slot )); then
+  echo "invalid intent deadline for smoke: deadline $intent_deadline_slot is not after current block $intent_current_slot" >&2
+  exit 1
+fi
+
 intent_open_payload_json="$(
   jq -cn \
     --arg intent_id "$intent_smoke_id" \
@@ -551,11 +580,9 @@ intent_fill_tx_hash="$(call_contract_and_wait "$config" "$intents_settlement_rou
   jq -cn \
     --arg intent_id "$intent_smoke_id" \
     --argjson amount_out "$intent_amount_out" \
-    --argjson fill_slot "$intent_fill_slot" \
     '{
       intent_id: $intent_id,
-      amount_out: $amount_out,
-      fill_slot: $fill_slot
+      amount_out: $amount_out
     }'
 )")"
 intent_state_view_json="$(submit_contract_view "$config" "$intents_settlement_router_contract" intent_state "$SORASWAP_SMOKE_GAS_LIMIT" "$(
@@ -588,6 +615,13 @@ vault_deposit_tx_hash="$(call_contract_and_wait "$config" "$vaults_manager_contr
       amount: $amount
     }'
 )")"
+if [[ -z "$vault_claim_slot" ]]; then
+  vault_current_slot="$(soraswap_current_block_height "$config")"
+  if [[ -z "$vault_current_slot" || "$vault_current_slot" == "null" || "$vault_current_slot" != <-> ]]; then
+    vault_current_slot=0
+  fi
+  vault_claim_slot=$(( vault_current_slot + vault_claim_delay_slots ))
+fi
 vault_request_redeem_tx_hash="$(call_contract_and_wait "$config" "$vaults_manager_contract" request_redeem "$(
   jq -cn \
     --arg vault_id "$vault_smoke_id" \
@@ -603,13 +637,12 @@ vault_request_redeem_tx_hash="$(call_contract_and_wait "$config" "$vaults_manage
       claim_slot: $claim_slot
     }'
 )")"
+soraswap_wait_for_block_height_at_least "$config" "$vault_claim_slot" "vault redeem claim"
 vault_claim_redeem_tx_hash="$(call_contract_and_wait "$config" "$vaults_manager_contract" claim_redeem "$(
   jq -cn \
     --arg request_id "$vault_redeem_request_id" \
-    --argjson current_slot "$vault_claim_slot" \
     '{
-      request_id: $request_id,
-      current_slot: $current_slot
+      request_id: $request_id
     }'
 )")"
 vault_state_view_json="$(submit_contract_view "$config" "$vaults_manager_contract" vault_state "$SORASWAP_SMOKE_GAS_LIMIT" "$(

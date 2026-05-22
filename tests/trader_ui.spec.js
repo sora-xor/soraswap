@@ -126,6 +126,11 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#journal-body")).toContainText("83 USDT");
   await expect(page.locator("#activity-body")).toContainText("9 -> 83");
 
+  await page.locator("#module-grid").getByRole("button", { name: /Launchpad/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "contribute_recorded"');
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#trade-result")).toContainText("committed");
+
   await page.locator("#module-grid").getByRole("button", { name: /Intents/i }).click();
   await page.locator("#trade-mode-bar").getByRole("button", { name: /^Fill$/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "fill_intent"');
