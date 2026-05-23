@@ -57,6 +57,7 @@ make simulate-full
 make local-up
 make deploy-local
 make smoke-local
+make taira-preflight
 make test-local
 make test-local-isolated
 make test-local-foundation-isolated
@@ -308,7 +309,7 @@ The default contract workflow is profile based. Prefer editing or selecting prof
 - `SORASWAP_CLIENT_CONFIG` - CLI config path; defaults per script
 - `SORASWAP_AUTHORITY` - optional canonical I105 override; otherwise derived from the client config public key
 - `SORASWAP_BASE_ASSET_ALIAS` - defaults to `xor#universal`
-- `SORASWAP_XOR_ASSET_DEFINITION_ID` - defaults to the repo-local `xor` asset definition id used for `xor#universal`
+- `SORASWAP_XOR_ASSET_DEFINITION_ID` - defaults to Taira's canonical `xor#universal` asset definition id; used when the public alias is not query-visible
 - `SORASWAP_USDT_ASSET_DEFINITION_ID`, `SORASWAP_USDC_ASSET_DEFINITION_ID`, `SORASWAP_KUSD_ASSET_DEFINITION_ID`, `SORASWAP_N3X_ASSET_DEFINITION_ID` - optional public helper-asset definition overrides used by `bootstrap_assets.sh`; set these before `make deploy-production` when the parallel public chain uses different helper asset ids than Taira
 - `SORASWAP_SMOKE_GAS_LIMIT` - defaults to `500000`
 - `SORASWAP_SKIP_IROHA_CLI_BUILD` - set to `1` to reuse an existing `../iroha/target/debug/iroha` binary even when the sibling tree is newer than the binary
@@ -326,7 +327,8 @@ The default contract workflow is profile based. Prefer editing or selecting prof
 - `SORASWAP_PRODUCTION_CLIENT_CONFIG` - optional default config path used by `make deploy-production`, `make smoke-production`, `make smoke-production-readonly`, and `make test-contract-console-production` when `SORASWAP_CLIENT_CONFIG` is not set
 - `SORASWAP_PRODUCTION_CHAIN_ID` - optional production chain-id override used when the production client config is copied from another environment or otherwise carries the wrong `chain` value
 - `SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT` - optional network-prefix override for the parallel production environment; falls back to `SORASWAP_CHAIN_DISCRIMINANT` when omitted
-- `SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID`, `SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID` - fee-asset definition ids inserted into ledger transaction metadata for local/testnet bootstrap commands that run outside the contract-call wrapper
+- `SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID`, `SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID` - fee-asset definition ids inserted into ledger transaction metadata for local/testnet bootstrap commands and public contract-call gas metadata; testnet gas metadata defaults to the canonical definition id because `xor#universal` is not guaranteed to be an active public gas alias
+- `SORASWAP_TESTNET_FEE_ASSET_LABEL` - optional testnet gas metadata override; defaults to `SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID`
 - `SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID`, `SORASWAP_PRODUCTION_FEE_ASSET_LABEL` - optional production fee-asset overrides for deploy/bootstrap/smoke preflight when the production fee asset is not query-visible through `SORASWAP_FEE_ASSET_ALIAS`
 - `SORASWAP_LEDGER_GAS_LIMIT` - optional gas limit for metadata-backed ledger/SNS bootstrap transactions; defaults to `2000000`
 - `SORASWAP_PUBLIC_RUN_SUFFIX`, `SORASWAP_PUBLIC_BRIDGE_ROUTE`, `SORASWAP_PUBLIC_BRIDGE_RECENT_LIMIT`, `SORASWAP_PUBLIC_BRIDGE_MESSAGE_ID` - optional shared public-env overrides used by the generic public smoke and contract-console wrappers before their built-in defaults
@@ -343,9 +345,11 @@ The default contract workflow is profile based. Prefer editing or selecting prof
 - `SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS` - defaults to `45`; max request time for the public `/v1/contracts/deploy` wrapper before deploy recovery/fallback logic takes over
 - `SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS` - defaults to `600`; max request time for the multi-contract `contract app deploy` bundle path before the local/public deploy wrapper gives up
 - `SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS` - defaults to `180`; max wait for each bundle alias to resolve to its planned contract address before materializing deployment evidence
-- `SORASWAP_DEPLOY_PIPELINE_WAIT_SECS`, `SORASWAP_DEPLOY_COMMITTED_WAIT_SECS`, `SORASWAP_DEPLOY_MANIFEST_WAIT_SECS` - default to `300`, `120`, and `180`; control live deploy revalidation windows for pipeline status, committed transaction lookup, and manifest visibility during deploy recovery plus post-deploy bootstrap
+- `SORASWAP_DEPLOY_PIPELINE_WAIT_SECS`, `SORASWAP_DEPLOY_COMMITTED_WAIT_SECS`, `SORASWAP_DEPLOY_MANIFEST_WAIT_SECS`, `SORASWAP_DEPLOY_NONCE_WAIT_SECS` - default to `300`, `120`, `180`, and `30`; control live deploy revalidation windows for pipeline status, committed transaction lookup, manifest visibility, and deploy-nonce visibility during deploy recovery plus post-deploy bootstrap
 - `SORASWAP_CONTRACT_CALL_MAX_TIME_SECS` - defaults to `120`; max request time for signed `/v1/contracts/call` mutations before the wrapper fails the request
 - `SORASWAP_CONTRACT_CALL_RETRY_COUNT` - defaults to `1`; mutating `/v1/contracts/call` requests are not retried by default because a transport timeout can still submit the first transaction and make a blind retry duplicate a non-idempotent action
+- `SORASWAP_ACCEPT_PIPELINE_APPLIED_WITHOUT_COMMITTED_TX` - defaults to `auto`; public environments accept terminal pipeline `Applied|Committed` when committed transaction lookup cannot decode the public response, while local environments remain strict unless overridden
+- `SORASWAP_PIPELINE_APPLIED_COMMITTED_VERIFY_SECS` - defaults to `5`; short committed-transaction decode attempt before the public pipeline-only fallback is used
 - `SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS`, `SORASWAP_TORII_READ_MAX_TIME_SECS` - optional public-node timeout controls for `/v1/contracts/view` and read-only Torii queries; useful when `taira.sora.org` is intermittently resetting or stalling connections
 - `SORASWAP_LOCALNET_DIR` - optional override for the generated localnet directory
 - `SORASWAP_LOCALNET_BASE_API_PORT` - optional localnet API port root override; useful when another local Nexus already occupies `8080-8082`
@@ -363,8 +367,8 @@ The default contract workflow is profile based. Prefer editing or selecting prof
 - `SORASWAP_SMOKE_SCOPE` - defaults to `full`; set to `foundation` to skip launchpad, referral, farms, perps, options, cover, and automation smoke mutations
 - `SORASWAP_TREASURY_ACCOUNT` - optional override for the treasury/vault account used during post-deploy init
 - `SORASWAP_BRIDGE_PROOF_AUTHORITY` - optional bridge proof authority; bootstrap defaults it to the deployment authority and enforces it through `bridge_authorities()`
-- `SORASWAP_ORACLE_PUBLIC_KEY_HEX` - required for full bootstrap; raw 32-byte Ed25519 public keys and Iroha `ed0120...` public keys are accepted and normalized before contract init
-- `SORASWAP_ORACLE_PRIVATE_KEY_HEX` - optional local/test smoke signer key for `scripts/oracle_payload.py`; raw seed, seed+public, and Iroha `802620...` private keys are accepted
+- `SORASWAP_ORACLE_PUBLIC_KEY_HEX` - optional override for the bootstrap and smoke oracle public key; raw 32-byte Ed25519 public keys and Iroha `ed0120...` public keys are accepted and normalized before contract init, and public configs default to the client config signer when this is unset
+- `SORASWAP_ORACLE_PRIVATE_KEY_HEX` - optional override for `scripts/oracle_payload.py`; raw seed, seed+public, and Iroha `802620...` private keys are accepted, and public configs default to the client config signer when this is unset
 - `SORASWAP_ORACLE_SCHEME` - defaults to `1` for Ed25519 signatures over the exact raw UTF-8 JSON oracle payload bytes
 - `SORASWAP_POOL_SEED_NEXT_BASE`, `SORASWAP_POOL_SEED_NEXT_QUOTE`, `SORASWAP_POOL_SEED_FAR_BASE`, `SORASWAP_POOL_SEED_FAR_QUOTE` - optional adjacent-bin bootstrap liquidity overrides
 - `SORASWAP_POOL_POSITION_ID`, `SORASWAP_POOL_POSITION_BASE`, `SORASWAP_POOL_POSITION_QUOTE`, `SORASWAP_POOL_POSITION_REMOVE_SHARES` - optional local DLMM smoke position controls
@@ -410,9 +414,17 @@ config/testnet/taira.client.toml.example
 Copy it to an untracked `.toml`, set the correct credentials, then point `SORASWAP_CLIENT_CONFIG` at that file before running `make deploy-testnet`.
 Use a fully qualified account domain in the copied config, for example `wonderland.universal`.
 
-As observed on March 25, 2026, live `taira.sora.org` still uses chain id `809574f5-fee7-5e69-bfcf-52451e42d50f`. If Taira is redeployed with a new chain id, either update your copied client config or set `SORASWAP_TESTNET_CHAIN_ID` before running any deploy or smoke flow.
+Use the read-only preflight before the signed release gate when setting up a workstation or diagnosing public Taira:
 
-`make deploy-testnet` now treats public deployment as a permissionless `universal` dataspace bundle flow. Before deploying it fingerprints the live chain using `chain id + block 1 hash`, writes `deployments/testnet/chain.latest.json`, and archives stale `deployments/testnet` evidence under `deployments/testnet/archive/<utc>-<block1-hash>/` whenever Taira has been redeployed without changing the chain id. The observed `torii_url` is still recorded in that snapshot as metadata, but endpoint URL is not part of chain identity. The wrapper compiles `iroha.contracts.toml`, submits it through `iroha contract app deploy`, persists the first-class platform receipt to `deployments/testnet/soraswap.bundle.deploy.json`, then materializes the per-contract `*.deploy.json` records that the readonly and mutable smoke flows already consume. `deployments/testnet/nested_call_probe.latest.json` still records both a persisted `bytes` state round-trip check and the minimal no-arg live `call_contract(...)` probe that must pass before bootstrap proceeds.
+```bash
+make taira-preflight
+```
+
+It writes `deployments/testnet/preflight.latest.json`, checks client-config shape, mutation consent, oracle key availability, public endpoint reachability, current block height, live block-1 chain fingerprint, native Torii MCP status, faucet puzzle availability, signer derivation/funding when a real config is present, existing release evidence, and any current-chain nested-call probe blocker. When `SORASWAP_ORACLE_PUBLIC_KEY_HEX` and `SORASWAP_ORACLE_PRIVATE_KEY_HEX` are unset, the Taira client config signer is used as the native oracle provider. It blocks the full release when native Torii MCP is missing or unhealthy; the CLI/HTTP scripts remain useful for diagnostics, but not for claiming release readiness. It does not deploy contracts or print signing secrets.
+
+As verified on May 23, 2026, live `taira.sora.org` still uses chain id `809574f5-fee7-5e69-bfcf-52451e42d50f`. If Taira is redeployed with a new chain id, either update your copied client config or set `SORASWAP_TESTNET_CHAIN_ID` before running any deploy or smoke flow.
+
+`make deploy-testnet` now treats public deployment as a permissionless `universal` dataspace bundle flow. Before deploying it fingerprints the live chain using `chain id + block 1 hash`, writes `deployments/testnet/chain.latest.json`, and archives stale `deployments/testnet` evidence under `deployments/testnet/archive/<utc>-<block1-hash>/` whenever Taira has been redeployed without changing the chain id. The observed `torii_url` is still recorded in that snapshot as metadata, but endpoint URL is not part of chain identity. The wrapper auto-runs the helper domain/asset bootstrap when `soraswap.universal` or the helper aliases are missing, compiles `iroha.contracts.toml`, submits it through `iroha contract app deploy`, persists the first-class platform receipt to `deployments/testnet/soraswap.bundle.deploy.json`, then materializes the per-contract `*.deploy.json` records that the readonly and mutable smoke flows already consume. `deployments/testnet/nested_call_probe.latest.json` records persisted `bytes` state round-trip, minimal no-arg live `call_contract(...)`, and multi-hop nested AssetOps relay checks that must pass before bootstrap proceeds.
 
 `scripts/fund_testnet_signer.sh` is the operator helper for public Taira funding. `make deploy-testnet` will auto-claim faucet funds when the signer is missing or unfunded, solve the faucet PoW puzzle, and wait for a positive `xor#universal` balance before deploying. Post-deploy init now runs by default there, and `SORASWAP_BOOTSTRAP_SCOPE=foundation|full` still narrows the init surface when needed.
 
@@ -424,7 +436,7 @@ The bridge proof lane stays in the same release gate, but it runs as its own tar
 
 `make smoke-testnet-readonly` preserves the older non-destructive compatibility lane. It revalidates each saved `*.deploy.json` record on the current chain, rebuilds missing records from live aliases plus local manifests when possible, compares live code manifests against any saved deployment manifests, and records typed readonly view evidence under the same `deployments/testnet/` directory.
 
-`make release-taira` is the full public release runner. It requires a real untracked `config/testnet/taira.client.toml` or `SORASWAP_CLIENT_CONFIG`, rejects the checked-in example and placeholder credentials, requires `SORASWAP_ALLOW_TESTNET_MUTATIONS=1`, and requires explicit `SORASWAP_ORACLE_PUBLIC_KEY_HEX` plus `SORASWAP_ORACLE_PRIVATE_KEY_HEX` before any public mutation. It runs the release sequence in order: nested-call probe, deploy, readonly smoke, mutating smoke, contract-console smoke, trader readonly, trader mutating, trader API publish, and `release-checklist`.
+`make release-taira` is the full public release runner. It requires a real untracked `config/testnet/taira.client.toml` or `SORASWAP_CLIENT_CONFIG`, rejects the checked-in example and placeholder credentials, and requires `SORASWAP_ALLOW_TESTNET_MUTATIONS=1` before any public mutation. By default, the same client config signer submits native oracle attestations; set `SORASWAP_ORACLE_PUBLIC_KEY_HEX` plus `SORASWAP_ORACLE_PRIVATE_KEY_HEX` only when overriding that provider. It runs the release sequence in order: read-only preflight, nested-call probe, deploy, readonly smoke, mutating smoke, contract-console smoke, trader readonly, trader mutating, trader API publish, and `release-checklist`.
 
 `deployments/testnet/rwa_compliance.latest.json` is a required release artifact. The repo validates the evidence hook only; issuer approval, legal review, compliance policy, NAV source, and redemption terms remain external artifacts referenced by non-empty ids or URLs in that JSON.
 
@@ -461,9 +473,12 @@ On April 15, 2026, probing the live Taira node additionally showed:
 
 Public SoraSwap docs and scripts now target canonical contract addresses in the `universal` dataspace. A Taira rollout must therefore include both the explicit `nexus.fees.fee_asset_id = "xor#universal"` override and the raised `network.max_frame_bytes_tx_gossip = 1048576` setting from `../iroha/configs/soranexus/taira/config.toml`, then a fresh `make deploy-testnet` run after the node comes back.
 
-When `deployments/testnet/nested_call_probe.latest.json` reports `state_bytes_roundtrip_supported = true` but `nested_call_supported = false`, stop blaming SoraSwap bootstrap. That is the public Taira runtime rejecting minimal nested `call_contract(...)`. The fix path is to roll public Taira forward from `../iroha`, not to add a non-nested fallback here:
+On May 23, 2026, the live Taira probe initially showed native Torii MCP returning `404`; `make taira-preflight` treats that as a release blocker before any signed live action. The public peers were then restarted with `[torii.mcp]` enabled, non-universal dataspace `manifest_hash` values, and a fresh `../iroha` `irohad` build. A later probe reported `mcp_http_status = "200"` and `nested_call_probe.supported = true`. The release gate now defaults the native oracle provider to the Taira client config signer, so separate oracle env vars are only required when an operator wants a different provider keypair.
+
+When `deployments/testnet/preflight.latest.json` reports `mcp_http_status = "404"` or any non-`200` MCP status, stop before signed live actions. When `deployments/testnet/nested_call_probe.latest.json` reports `state_bytes_roundtrip_supported = true` but either `nested_call_supported = false` or `nested_asset_ops_supported = false`, first check the probe's `probe_asset.asset_definition_id`; if that id is wrong for the live chain, fix the asset wiring. If the asset id is correct, treat it as the public Taira runtime rejecting a required nested contract/AssetOps capability. The runtime fix path is to roll public Taira forward from `../iroha`, not to add a non-nested fallback here:
 - build and stage an exact runtime bundle with `bash ../iroha/configs/soranexus/taira/build_taira_rollout_bundle.sh`
 - install/restart the public validator(s) from that bundle
+- verify the sibling runtime canary with `cargo test -p iroha_core --lib contract_call_transaction_preserves_three_hop_transfer_authorities -- --nocapture`
 - rerun the public canary plus the SoraSwap gate with `bash ../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh --public-root "<direct-public-node>" --write-config /run/secrets/taira-canary-client.toml --soraswap-client-config /absolute/path/to/taira.client.toml --run-release-checklist --allow-testnet-mutations`
 
 For a collision-free local full-stack check, use `make test-local-isolated`. It starts a dedicated localnet under `tmp/iroha-localnet-verify`, defaults to `18080` / `11337` instead of the main local ports, deploys the full contract set, runs the full `smoke_local.sh` mutation flow against the generated client config, asserts the exact post-smoke `n3x` and DLMM view snapshots, and drives the shared derivatives write path through `risk_vault` before tearing the node back down. The same DLMM-oriented stack overrides are applied there by default, and the isolated permissioned wrapper now raises both Kagami timing knobs to `5000 ms` by default so the cold first-write `dlmm_pool` path stays clear of the 6 s quorum-timeout band seen on the debug localnet profile.

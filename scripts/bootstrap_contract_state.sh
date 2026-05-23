@@ -1785,7 +1785,6 @@ risk_vault_init_live_predicate='
     or (($actual[2] // 0) > 0)
     or (($actual[3] // 0) > 0)
     or (($actual[5] // 0) > 0)
-    or (($actual[6] // 0) == 0)
   )'
 risk_vault_init_payload="$(jq -cn \
   --arg collateral_asset "$usdt_id" \
@@ -3002,7 +3001,7 @@ launch_operator_view_payload="$(jq -cn --arg service "$soraswap_launch_operator_
 launch_operator_registered_json="$(jq -cn --argjson min_bond "$soraswap_launch_operator_min_bond" '[1,$min_bond,0,10000,0,0,0]')"
 launch_operator_bonded_json="$(jq -cn --argjson min_bond "$soraswap_launch_operator_min_bond" --argjson bonded "$soraswap_launch_operator_bond" '[1,$min_bond,$bonded,10000,0,0,0]')"
 launch_operator_heartbeat_json="$(jq -cn --argjson min_bond "$soraswap_launch_operator_min_bond" --argjson bonded "$soraswap_launch_operator_bond" --argjson slot "$soraswap_launch_operator_heartbeat_slot" --argjson health "$soraswap_launch_operator_health_bps" '[1,$min_bond,$bonded,$health,$slot,0,0]')"
-ensure_step_from_prior_or_skip \
+ensure_step_from_prior_or_skip_with_live_predicate \
   "soraswap launch operator registration" \
   "$operators_registry_contract" \
   "operator_state" \
@@ -3010,8 +3009,15 @@ ensure_step_from_prior_or_skip \
   '[0,0,0,0,0,0,0]' \
   "$launch_operator_registered_json" \
   "register_operator" \
-  "$(jq -cn --arg service "$soraswap_launch_operator_service" --arg bond_asset "$xor_id" --argjson min_bond "$soraswap_launch_operator_min_bond" '{service:$service, bond_asset:$bond_asset, min_bond:$min_bond}')"
-ensure_step_from_prior_or_skip \
+  "$(jq -cn --arg service "$soraswap_launch_operator_service" --arg bond_asset "$xor_id" --argjson min_bond "$soraswap_launch_operator_min_bond" '{service:$service, bond_asset:$bond_asset, min_bond:$min_bond}')" \
+  '$actual[0] == $expected[0]
+   and $actual[1] == $expected[1]
+   and (($actual[2] // 0) >= 0)
+   and (($actual[3] // 0) >= 0)
+   and (($actual[4] // 0) >= 0)
+   and (($actual[5] // 0) >= 0)
+   and (($actual[6] // 0) == 0)'
+ensure_step_from_prior_or_skip_with_live_predicate \
   "soraswap launch operator bond" \
   "$operators_registry_contract" \
   "operator_state" \
@@ -3019,7 +3025,14 @@ ensure_step_from_prior_or_skip \
   "$launch_operator_registered_json" \
   "$launch_operator_bonded_json" \
   "bond" \
-  "$(jq -cn --arg service "$soraswap_launch_operator_service" --argjson amount "$soraswap_launch_operator_bond" '{service:$service, amount:$amount}')"
+  "$(jq -cn --arg service "$soraswap_launch_operator_service" --argjson amount "$soraswap_launch_operator_bond" '{service:$service, amount:$amount}')" \
+  '$actual[0] == $expected[0]
+   and $actual[1] == $expected[1]
+   and (($actual[2] // 0) >= ($expected[2] // 0))
+   and (($actual[3] // 0) >= 0)
+   and (($actual[4] // 0) >= 0)
+   and (($actual[5] // 0) >= 0)
+   and (($actual[6] // 0) == 0)'
 ensure_step_from_prior_or_skip \
   "soraswap launch operator heartbeat" \
   "$operators_registry_contract" \

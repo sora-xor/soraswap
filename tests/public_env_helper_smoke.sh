@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+FIXTURE_SERVER_PID=""
+trap '[[ -z "${FIXTURE_SERVER_PID:-}" ]] || kill "$FIXTURE_SERVER_PID" >/dev/null 2>&1 || true; rm -rf "$TMP_DIR"' EXIT
 
 FAKE_IROHA_ROOT="$TMP_DIR/iroha"
 mkdir -p "$FAKE_IROHA_ROOT/target/debug"
@@ -136,5 +137,99 @@ cat > "$probe_same_chain" <<'EOF'
 {"chain_fingerprint":{"torii_url":"https://node-b.example.invalid","chain":"same-chain","block_1_hash":"same-block-1"}}
 EOF
 nested_call_probe_matches_current_chain "$probe_same_chain" "$current_fingerprint"
+
+cat > "$TMP_DIR/taira_preflight_fixture.py" <<'PY'
+#!/usr/bin/env python3
+import json
+import socketserver
+import sys
+from http.server import BaseHTTPRequestHandler
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/v1/explorer/blocks/1":
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "hash": "fixture-block-1",
+                "height": 1,
+            }).encode())
+            return
+
+        if self.path == "/status/blocks":
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"42")
+            return
+
+        if self.path == "/v1/accounts/faucet/puzzle":
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"algorithm":"fixture"}')
+            return
+
+        if self.path == "/v1/mcp":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+with socketserver.TCPServer(("127.0.0.1", 0), Handler) as httpd:
+    port_path = sys.argv[1]
+    with open(port_path, "w", encoding="utf-8") as handle:
+        handle.write(str(httpd.server_address[1]))
+    httpd.serve_forever()
+PY
+
+fixture_port_file="$TMP_DIR/taira_preflight.port"
+python3 "$TMP_DIR/taira_preflight_fixture.py" "$fixture_port_file" &
+FIXTURE_SERVER_PID="$!"
+for _ in {1..50}; do
+  [[ -s "$fixture_port_file" ]] && break
+  sleep 0.1
+done
+[[ -s "$fixture_port_file" ]]
+
+fixture_root="http://127.0.0.1:$(cat "$fixture_port_file")"
+missing_cfg="$TMP_DIR/missing-taira.client.toml"
+preflight_output="$TMP_DIR/taira_preflight.out"
+preflight_status=0
+(
+  unset SORASWAP_PUBLIC_ENV
+  export SORASWAP_TORII_URL="$fixture_root"
+  export SORASWAP_CLIENT_CONFIG="$missing_cfg"
+  export SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS=2
+  export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$TMP_DIR/preflight-reports"
+  "$ROOT/scripts/taira_preflight.sh"
+) >"$preflight_output" 2>&1 || preflight_status="$?"
+[[ "$preflight_status" != "0" ]]
+rg -q "taira preflight: blocked" "$preflight_output"
+rg -q "native Torii MCP is not enabled" "$preflight_output"
+rg -q "next setup:" "$preflight_output"
+
+preflight_report="$TMP_DIR/preflight-reports/preflight.latest.json"
+[[ -s "$preflight_report" ]]
+jq -e \
+  --arg fixture_root "$fixture_root" \
+  '.status == "blocked"
+    and (.endpoint.torii_root == $fixture_root)
+    and (.endpoint.mcp_http_status == "404")
+    and (.blockers | any(contains("native Torii MCP is not enabled")))
+    and (.endpoint.faucet_puzzle_http_status == "200")
+    and (.endpoint.current_block_height == 42)
+    and (.chain.fingerprint_available == true)
+    and (.chain.fingerprint.block_1_hash == "fixture-block-1")
+    and (.config.exists == false)' \
+  "$preflight_report" >/dev/null
 
 echo "public env helper smoke ok"

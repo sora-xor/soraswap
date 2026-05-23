@@ -55,11 +55,12 @@ dlmm_hooks_manager_contract="$(deployed_contract_id_for_env "$public_env" dlmm_h
 risk_vault_contract_subject="$(contract_subject_account_for_literal "$config" "$risk_vault_contract")"
 risk_vault_contract_blob_hex="0x$(printf '%s' "$risk_vault_contract" | xxd -p -c 256 | tr -d '\n')"
 
-iroha_cli_json --config "$config" ledger asset definition get --alias "$SORASWAP_BASE_ASSET_ALIAS" \
-  | jq -e --arg id "$SORASWAP_XOR_ASSET_DEFINITION_ID" '.id == $id and .name == "xor"' >/dev/null
-
 vault_account="$(treasury_account_for_mode "$public_env")"
 xor_id="$(asset_definition_id_for_alias "$config" "$SORASWAP_BASE_ASSET_ALIAS")"
+if [[ "$xor_id" != "$SORASWAP_XOR_ASSET_DEFINITION_ID" ]]; then
+  echo "unexpected XOR asset definition id for $SORASWAP_BASE_ASSET_ALIAS: $xor_id" >&2
+  exit 1
+fi
 usdt_id="$(asset_definition_id_for_alias "$config" usdt#soraswap.universal)"
 usdc_id="$(asset_definition_id_for_alias "$config" usdc#soraswap.universal)"
 kusd_id="$(asset_definition_id_for_alias "$config" kusd#soraswap.universal)"
@@ -281,6 +282,74 @@ dlmm_gross_from_net() {
     gross=$(( gross + 1 ))
   fi
   echo "$gross"
+}
+
+ensure_dlmm_base_swap_fillable() {
+  local amount_in="$1"
+  local scale=1000000
+  local pool_state_json active_bin bin_view_json bin_result_json
+  local reserve_base reserve_quote current_available_quote
+  local effective price projected_out required_available_quote topup
+
+  if (( amount_in <= 0 )); then
+    return 0
+  fi
+
+  pool_state_json="$(contract_view_result_json "$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_state "$SORASWAP_SMOKE_GAS_LIMIT")")"
+  active_bin="$(jq -r '.[1] // 0' <<<"$pool_state_json")"
+  bin_view_json="$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_bin "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+    jq -cn \
+      --argjson bin_id "$active_bin" \
+      '{ bin_id: $bin_id }'
+  )")"
+  bin_result_json="$(contract_view_result_json "$bin_view_json")"
+  reserve_base="$(jq -r '.[0] // 0' <<<"$bin_result_json")"
+  reserve_quote="$(jq -r '.[1] // 0' <<<"$bin_result_json")"
+
+  if (( pool_bin_liquidity_cap > 0 && reserve_base + amount_in > pool_bin_liquidity_cap )); then
+    echo "$public_env smoke cannot route base swap: active bin base cap would be exceeded" >&2
+    jq -n \
+      --argjson active_bin "$active_bin" \
+      --argjson reserve_base "$reserve_base" \
+      --argjson amount_in "$amount_in" \
+      --argjson bin_liquidity_cap "$pool_bin_liquidity_cap" \
+      '{active_bin: $active_bin, reserve_base: $reserve_base, amount_in: $amount_in, bin_liquidity_cap: $bin_liquidity_cap}' >&2
+    exit 1
+  fi
+
+  effective=$(( amount_in * (scale - pool_fee_pips) / scale ))
+  price="$(dlmm_price_ppm "$active_bin" "$pool_bin_step")"
+  projected_out=$(( effective * price / scale ))
+  if (( projected_out <= 0 )); then
+    echo "$public_env smoke cannot route base swap: configured amount produces zero quote output" >&2
+    exit 1
+  fi
+
+  required_available_quote=$(( projected_out + 1 ))
+  current_available_quote=$(( reserve_quote - pool_min_reserve_quote ))
+  if (( current_available_quote >= required_available_quote )); then
+    return 0
+  fi
+
+  topup=$(( required_available_quote - current_available_quote ))
+  if (( pool_bin_liquidity_cap > 0 && reserve_quote + topup > pool_bin_liquidity_cap )); then
+    echo "$public_env smoke cannot top up route liquidity: active bin quote cap would be exceeded" >&2
+    jq -n \
+      --argjson active_bin "$active_bin" \
+      --argjson reserve_quote "$reserve_quote" \
+      --argjson topup "$topup" \
+      --argjson bin_liquidity_cap "$pool_bin_liquidity_cap" \
+      '{active_bin: $active_bin, reserve_quote: $reserve_quote, topup: $topup, bin_liquidity_cap: $bin_liquidity_cap}' >&2
+    exit 1
+  fi
+
+  echo "$public_env smoke top-up: seeding $topup quote liquidity into DLMM bin $active_bin for deterministic route_swap" >&2
+  dlmm_route_liquidity_topup_tx_hash="$(call_contract_and_wait "$config" "$dlmm_pool_contract" seed_bin "$(
+    jq -cn \
+      --argjson bin_id "$active_bin" \
+      --argjson quote_amount "$topup" \
+      '{ bin_id: $bin_id, base_amount: 0, quote_amount: $quote_amount }'
+  )")"
 }
 
 assert_view_result_equals() {
@@ -778,6 +847,7 @@ readonly_risk_bucket_1_result="$(jq -c '.view_results.risk_vault_bucket_1 // []'
 readonly_risk_bucket_2_result="$(jq -c '.view_results.risk_vault_bucket_2 // []' <<<"$readonly_report_json")"
 readonly_risk_bucket_3_result="$(jq -c '.view_results.risk_vault_bucket_3 // []' <<<"$readonly_report_json")"
 readonly_risk_vault_state_result="$(jq -c '.view_results.risk_vault_state // []' <<<"$readonly_report_json")"
+dlmm_route_liquidity_topup_tx_hash=""
 
 mint_tx_hash="$(call_contract_and_wait "$config" "$n3x_hub_contract" deposit_and_mint "$(
   jq -cn \
@@ -815,6 +885,53 @@ if (( after_burn_n3x != before_n3x )); then
   exit 1
 fi
 
+pool_before_swap_view_json="$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_state "$SORASWAP_SMOKE_GAS_LIMIT")"
+pool_before_swap_result="$(contract_view_result_json "$pool_before_swap_view_json")"
+pool_live_active_bin="$(jq -r '.[1] // 0' <<<"$pool_before_swap_result")"
+pool_live_active_reserve_base="$(jq -r '.[4] // 0' <<<"$pool_before_swap_result")"
+pool_live_active_reserve_quote="$(jq -r '.[5] // 0' <<<"$pool_before_swap_result")"
+pool_live_active_share_supply="$(jq -r '.[7] // 0' <<<"$pool_before_swap_result")"
+next_bin_id=$(( pool_live_active_bin + pool_bin_step ))
+far_bin_id=$(( pool_live_active_bin + (2 * pool_bin_step) ))
+pool_live_swap_bins_before_json='[]'
+for (( offset = 0; offset <= pool_max_bins_per_swap; offset++ )); do
+  current_bin_id=$(( pool_live_active_bin + offset * pool_bin_step ))
+  current_bin_view_json="$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_bin "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+    jq -cn \
+      --argjson bin_id "$current_bin_id" \
+      '{ bin_id: $bin_id }'
+  )")"
+  current_bin_result="$(contract_view_result_json "$current_bin_view_json")"
+  pool_live_swap_bins_before_json="$(jq -cn \
+    --argjson bins "$pool_live_swap_bins_before_json" \
+    --argjson bin_id "$current_bin_id" \
+    --argjson result "$current_bin_result" \
+    '$bins + [{ bin_id: $bin_id, result: $result }]' \
+  )"
+done
+pool_live_next_bin_before_view_json="$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_bin "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn \
+    --argjson bin_id "$next_bin_id" \
+    '{ bin_id: $bin_id }'
+)")"
+pool_live_far_bin_before_view_json="$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_bin "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn \
+    --argjson bin_id "$far_bin_id" \
+    '{ bin_id: $bin_id }'
+)")"
+pool_live_next_bin_before_result="$(contract_view_result_json "$pool_live_next_bin_before_view_json")"
+pool_live_far_bin_before_result="$(contract_view_result_json "$pool_live_far_bin_before_view_json")"
+pool_position_before_swap_view_json="$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_position "$SORASWAP_SMOKE_GAS_LIMIT" "$(
+  jq -cn \
+    --arg position_id "$pool_position_id" \
+    '{ position_id: $position_id }'
+)")"
+pool_position_before_swap_result="$(contract_view_result_json "$pool_position_before_swap_view_json")"
+pool_position_registered_before_swap="$(jq -r '.[0] // 0' <<<"$pool_position_before_swap_result")"
+pool_position_bin_before_swap="$(jq -r '.[1] // 0' <<<"$pool_position_before_swap_result")"
+pool_position_shares_before_swap="$(jq -r '.[2] // 0' <<<"$pool_position_before_swap_result")"
+
+ensure_dlmm_base_swap_fillable "$swap_amount_in"
 pool_before_swap_view_json="$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_state "$SORASWAP_SMOKE_GAS_LIMIT")"
 pool_before_swap_result="$(contract_view_result_json "$pool_before_swap_view_json")"
 pool_live_active_bin="$(jq -r '.[1] // 0' <<<"$pool_before_swap_result")"
@@ -1757,7 +1874,7 @@ job_cron_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_cont
       interval_slots: $interval_slots
     }'
 )")"
-soraswap_wait_for_block_height_at_least "$config" "$automation_next_slot" "automation initial dispatch"
+soraswap_wait_for_block_height_at_least "$config" "$automation_next_slot" "automation initial dispatch" 120 1
 job_dispatch_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_contract" dispatch_job "$(
   jq -cn \
     --arg job "$job_name" \
@@ -1784,7 +1901,7 @@ job_retry_state_view_json="$(submit_contract_view "$config" "$automation_job_que
     '{ job: $job }'
 )")"
 automation_retry_ready_slot="$(contract_view_result_json "$job_retry_state_view_json" | jq -er '.[5]')"
-soraswap_wait_for_block_height_at_least "$config" "$automation_retry_ready_slot" "automation retry dispatch"
+soraswap_wait_for_block_height_at_least "$config" "$automation_retry_ready_slot" "automation retry dispatch" 120 1
 job_retry_dispatch_tx_hash="$(call_contract_and_wait "$config" "$automation_job_queue_contract" dispatch_job "$(
   jq -cn \
     --arg job "$job_name" \
@@ -2328,7 +2445,12 @@ risk_vault_state_expected_json="$(jq -cn \
   ]')"
 job_mirror_result_json="$(contract_view_result_json "$job_mirror_view_json")"
 automation_retry_run_slot="$(jq -er '.[9]' <<<"$job_mirror_result_json")"
-automation_expected_next_slot=$(( automation_retry_run_slot + automation_cron_interval_slots ))
+automation_expected_next_slot="$(jq -er '.[5]' <<<"$job_mirror_result_json")"
+automation_min_next_slot=$(( automation_retry_run_slot + automation_cron_interval_slots ))
+if (( automation_expected_next_slot < automation_min_next_slot )); then
+  echo "$public_env automation next slot $automation_expected_next_slot is before minimum cron slot $automation_min_next_slot" >&2
+  exit 1
+fi
 automation_expected_run_count=2
 n3x_total_after_mint=$(( n3x_baseline_total_n3x + n3x_expected_minted ))
 n3x_expected_net_usdt=$(( n3x_usdt_in - n3x_expected_mint_fee_usdt ))
@@ -2742,7 +2864,12 @@ assert_view_result_equals "options shout product position" "$options_shout_produ
 assert_view_result_equals "options outperformance product position" "$options_outperformance_product_position_view_json" "$(jq -cn --argjson notional "$options_outperformance_notional" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" --argjson final_mark "$options_outperformance_final_mark_bps" --argjson final_quote_mark "$options_outperformance_final_quote_mark_bps" --argjson payout "$options_outperformance_desired_payout" '[ 1, 2, $notional, $collateral_multiplier_bps, $final_mark, $final_quote_mark, $payout, 2 ]')"
 assert_optional_view_result_equals "cover manager config" "$cover_manager_config_view_json" "$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson stale_slots "$cover_oracle_stale_slots" '[ $settlement_asset, $risk_vault, 0, $required_observations, $stale_slots, 301, 3, 10, 0 ]')"
 assert_view_result_equals "cover automation" "$cover_automation_view_json" '[1,301,3,10,0,0,0]'
-assert_view_result_equals "cover policy" "$cover_policy_view_json" "$(jq -cn --argjson lower_bound "$cover_lower_bound" --argjson upper_bound "$cover_upper_bound" --argjson payout_amount "$cover_payout_amount" --argjson monitoring_window_slots "$cover_monitoring_window_slots" --argjson required_observations "$cover_policy_required_observations" --argjson covered_notional "$cover_notional" --argjson last_observed_price "$cover_trigger_price" --argjson claim_payout "$cover_expected_claim_payout" '[ 1, 4, $lower_bound, $upper_bound, $payout_amount, $monitoring_window_slots, $required_observations, $covered_notional, 2, 3, $last_observed_price, $claim_payout ]')"
+cover_breach_elapsed_actual="$(contract_view_result_json "$cover_policy_view_json" | jq -er '.[8]')"
+if (( cover_breach_elapsed_actual < cover_monitoring_window_slots )); then
+  echo "$public_env smoke cover breach elapsed $cover_breach_elapsed_actual is below monitoring window $cover_monitoring_window_slots" >&2
+  exit 1
+fi
+assert_view_result_equals "cover policy" "$cover_policy_view_json" "$(jq -cn --argjson lower_bound "$cover_lower_bound" --argjson upper_bound "$cover_upper_bound" --argjson payout_amount "$cover_payout_amount" --argjson monitoring_window_slots "$cover_monitoring_window_slots" --argjson required_observations "$cover_policy_required_observations" --argjson covered_notional "$cover_notional" --argjson breach_elapsed "$cover_breach_elapsed_actual" --argjson last_observed_price "$cover_trigger_price" --argjson claim_payout "$cover_expected_claim_payout" '[ 1, 4, $lower_bound, $upper_bound, $payout_amount, $monitoring_window_slots, $required_observations, $covered_notional, $breach_elapsed, 3, $last_observed_price, $claim_payout ]')"
 fi
 
 dlmm_runtime_pool_state_view_json="$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_state "$SORASWAP_SMOKE_GAS_LIMIT")"
@@ -2882,7 +3009,7 @@ vault_request_redeem_tx_hash="$(call_contract_and_wait "$config" "$vaults_manage
       claim_slot: $claim_slot
     }'
 )")"
-soraswap_wait_for_block_height_at_least "$config" "$vault_claim_slot" "vault redeem claim"
+soraswap_wait_for_block_height_at_least "$config" "$vault_claim_slot" "vault redeem claim" 120 1
 vault_claim_redeem_tx_hash="$(call_contract_and_wait "$config" "$vaults_manager_contract" claim_redeem "$(
   jq -cn \
     --arg request_id "$vault_redeem_request_id" \
@@ -3208,6 +3335,7 @@ report_json="$(jq -n \
   --arg n3x_config_tx_hash "$n3x_config_tx_hash" \
   --arg mint_tx_hash "$mint_tx_hash" \
   --arg burn_tx_hash "$burn_tx_hash" \
+  --arg dlmm_route_liquidity_topup_tx_hash "$dlmm_route_liquidity_topup_tx_hash" \
   --arg dlmm_swap_tx_hash "$dlmm_swap_tx_hash" \
   --arg dlmm_collect_position_fees_tx_hash "$dlmm_collect_position_fees_tx_hash" \
   --arg dlmm_remove_position_tx_hash "$dlmm_remove_position_tx_hash" \
@@ -3450,6 +3578,7 @@ report_json="$(jq -n \
       n3x_init_only_config: ($n3x_config_tx_hash | nullable_tx),
       n3x_deposit_and_mint: ($mint_tx_hash | nullable_tx),
       n3x_burn_and_redeem: ($burn_tx_hash | nullable_tx),
+      dlmm_pool_route_liquidity_topup: ($dlmm_route_liquidity_topup_tx_hash | nullable_tx),
       dlmm_router_route_swap: ($dlmm_swap_tx_hash | nullable_tx),
       dlmm_pool_collect_position_fees: ($dlmm_collect_position_fees_tx_hash | nullable_tx),
       dlmm_pool_remove_position_liquidity: ($dlmm_remove_position_tx_hash | nullable_tx),

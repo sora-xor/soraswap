@@ -77,7 +77,7 @@ request_json() {
       -w '%{http_code}' \
       -H 'Accept: application/json' \
       -H 'Content-Type: application/json' \
-      -H 'X-Iroha-API-Version: 1.1' \
+      -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION" \
       -X POST \
       "$torii_base$request_path" \
       -d "$body" || true)"
@@ -87,7 +87,7 @@ request_json() {
       -o "$tmp" \
       -w '%{http_code}' \
       -H 'Accept: application/json' \
-      -H 'X-Iroha-API-Version: 1.1' \
+      -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION" \
       "$torii_base$request_path" || true)"
   fi
   response_body="$(cat "$tmp")"

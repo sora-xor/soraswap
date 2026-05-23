@@ -14,6 +14,8 @@ This checklist is the repo-wide release gate for SoraSwap. Taira is the canonica
 - `SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make release-taira`
 
 Equivalent expanded sequence:
+- `make taira-preflight`
+- `make testnet-nested-call-probe`
 - `make deploy-testnet`
 - `make smoke-testnet-trader-readonly`
 - `SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make smoke-testnet-trader`
@@ -29,8 +31,9 @@ Equivalent expanded sequence:
 
 ## Evidence Requirements
 - `deployments/testnet/chain.latest.json` matches the current Taira fingerprint.
+- `deployments/testnet/preflight.latest.json` exists, has `status: "ready"`, records the current Taira block-1 fingerprint, reports native Torii MCP HTTP `200`, records usable oracle key sources, and has no blockers.
 - `deployments/testnet/deploy.latest.json` exists, is `completed`, and records completed `preflight`, `compile`, `nested_call_probe`, `deploy`, `bootstrap_contract_state`, and `deployment_records_snapshot` phases.
-- `deployments/testnet/nested_call_probe.latest.json` exists, matches the current Taira fingerprint, proves that persisted `bytes` state round-trips on live Taira, and proves that the minimal live `call_contract(...)` probe succeeded.
+- `deployments/testnet/nested_call_probe.latest.json` exists, matches the current Taira fingerprint, has `supported == true`, records the live `probe_asset.asset_definition_id`, proves that persisted `bytes` state round-trips on live Taira, proves that the minimal live `call_contract(...)` probe succeeded, and proves that the multi-hop nested AssetOps relay succeeded.
 - `deployments/testnet/contracts.latest.json` exists and matches the current Taira fingerprint.
 - `deployments/testnet/trader_readonly.latest.json` exists, matches the current Taira fingerprint, references the current `contracts.latest.json` plus `deploy.latest.json` metadata, and proves that `view/batch`, `swaps/fills`, `swaps/candles`, `trader/activity`, and `trader/account` are all live on public Taira.
 - `deployments/testnet/trader.latest.json` exists, matches the current Taira fingerprint, references the current `contracts.latest.json` plus `deploy.latest.json` metadata, proves that the same trader routes are live on public Taira, and records a committed signed trader mutation.
@@ -50,10 +53,12 @@ Equivalent expanded sequence:
 - `contract_console_smoke.latest.json.bridge.submission_expectation == "apply"` is acceptable when proof/message both reach `Applied|Committed`.
 - `contract_console_smoke.latest.json.bridge.submission_expectation == "replay_reject"` is acceptable when cached SCCP evidence proves the governed route and the deployed bridge rejects the replay path with decoded replay/duplicate/consumed/proof-overlap semantics, or with the current generic bridge-contract `assertion failed (constraint violation)` rejection when Taira does not preserve the original contract string.
 - Bridge evidence must prove governed route provenance (`route_provenance[0] == 1`) before any production claim.
+- If `preflight.latest.json` reports `endpoint.mcp_http_status != "200"`, native Torii MCP is not release-ready and the gate must stop before signed live actions.
 - If `nested_call_probe.latest.json` reports `state_bytes_roundtrip_supported == true` and `nested_call_supported == false`, the public Taira runtime is specifically failing on nested `call_contract(...)` rather than basic pointer/state codecs, and the gate must stop there.
+- If `nested_call_probe.latest.json` reports `state_bytes_roundtrip_supported == true`, `nested_call_supported == true`, and `nested_asset_ops_supported == false`, first verify `probe_asset.asset_definition_id` exists on the live chain. If it does, the public Taira runtime is specifically failing on nested AssetOps relay across `call_contract(...)` boundaries, and the gate must stop there.
 - If `nested_call_probe.latest.json` reports `supported == false`, the public Taira runtime is not release-capable for SoraSwap’s active router/launchpad/derivatives surfaces and the gate must stop there.
 - If `trader_readonly.latest.json` or `trader.latest.json` reports missing rollup routes, the public Taira app API is missing the trader read-plane rollout and the gate must stop there.
-- The only acceptable fix for that specific blocker is a public Taira runtime rollout from `../iroha`, followed by `../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh`; do not add a SoraSwap-side non-nested fallback.
+- The only acceptable fix for that specific blocker is a public Taira runtime rollout from `../iroha`, with the sibling `iroha_core` three-hop nested transfer canary passing locally, followed by `../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh`; do not add a SoraSwap-side non-nested fallback.
 
 ## Release And Rollback
 - Mainnet cutover happens only after the exact Taira artifact set is green with no exceptions.

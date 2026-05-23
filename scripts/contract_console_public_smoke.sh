@@ -39,9 +39,11 @@ run_suffix_var="SORASWAP_${public_env_upper}_RUN_SUFFIX"
 bridge_route_var="SORASWAP_${public_env_upper}_BRIDGE_ROUTE"
 bridge_recent_limit_var="SORASWAP_${public_env_upper}_BRIDGE_RECENT_LIMIT"
 bridge_message_id_var="SORASWAP_${public_env_upper}_BRIDGE_MESSAGE_ID"
+bridge_auto_seed_var="SORASWAP_${public_env_upper}_BRIDGE_AUTO_SEED"
 run_suffix="${(P)run_suffix_var:-${SORASWAP_PUBLIC_RUN_SUFFIX:-$timestamp}}"
 bridge_route_hint="${(P)bridge_route_var:-${SORASWAP_PUBLIC_BRIDGE_ROUTE:-${SORASWAP_BRIDGE_ROUTE:-eth_sora_usdt}}}"
 recent_limit="${(P)bridge_recent_limit_var:-${SORASWAP_PUBLIC_BRIDGE_RECENT_LIMIT:-25}}"
+bridge_auto_seed="${(P)bridge_auto_seed_var:-${SORASWAP_PUBLIC_BRIDGE_AUTO_SEED:-auto}}"
 contracts_latest_path="$report_dir/contracts.latest.json"
 deploy_latest_path="$report_dir/deploy.latest.json"
 contracts_snapshot_json='null'
@@ -320,6 +322,80 @@ prefer_cached_lookup_result() {
   printf '%s\n' "$current_lookup_json"
 }
 
+auto_seed_bridge_inventory_enabled() {
+  case "$bridge_auto_seed" in
+    1|true|yes|on)
+      return 0
+      ;;
+    auto)
+      [[ "$public_env" == "testnet" ]]
+      return
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+bridge_inventory_nonce() {
+  local nonce_var="SORASWAP_${public_env_upper}_BRIDGE_NONCE"
+  local nonce="${(P)nonce_var:-${SORASWAP_PUBLIC_BRIDGE_NONCE:-}}"
+  if [[ -n "$nonce" ]]; then
+    printf '%s\n' "$nonce"
+    return 0
+  fi
+  python3 - <<'PY'
+import time
+print(time.time_ns() & ((1 << 64) - 1))
+PY
+}
+
+seed_sccp_bridge_transfer_inventory() {
+  local gov_bin gas_asset_id nonce output
+  local source_domain dest_domain asset_home_domain asset_id_codec asset_id amount
+  local sender_codec sender recipient_codec route_id_codec
+  local sender_var="SORASWAP_${public_env_upper}_BRIDGE_SENDER"
+  local amount_var="SORASWAP_${public_env_upper}_BRIDGE_AMOUNT"
+
+  if ! auto_seed_bridge_inventory_enabled; then
+    return 1
+  fi
+
+  gov_bin="$(gov_instruction_bin)"
+  gas_asset_id="$(gas_metadata_asset_id_for_config "$config")"
+  nonce="$(bridge_inventory_nonce)"
+  source_domain="${SORASWAP_PUBLIC_BRIDGE_SOURCE_DOMAIN:-1}"
+  dest_domain="${SORASWAP_PUBLIC_BRIDGE_DEST_DOMAIN:-0}"
+  asset_home_domain="${SORASWAP_PUBLIC_BRIDGE_ASSET_HOME_DOMAIN:-1}"
+  asset_id_codec="${SORASWAP_PUBLIC_BRIDGE_ASSET_ID_CODEC:-1}"
+  asset_id="${SORASWAP_PUBLIC_BRIDGE_ASSET_ID:-genesis_bridge_asset}"
+  amount="${(P)amount_var:-${SORASWAP_PUBLIC_BRIDGE_AMOUNT:-1}}"
+  sender_codec="${SORASWAP_PUBLIC_BRIDGE_SENDER_CODEC:-2}"
+  sender="${(P)sender_var:-${SORASWAP_PUBLIC_BRIDGE_SENDER:-0x52908400098527886E0F7030069857D2E4169EE7}}"
+  recipient_codec="${SORASWAP_PUBLIC_BRIDGE_RECIPIENT_CODEC:-1}"
+  route_id_codec="${SORASWAP_PUBLIC_BRIDGE_ROUTE_ID_CODEC:-1}"
+
+  echo "no unconsumed SCCP transfer found for route $bridge_route_hint; creating a proof-gated testnet transfer message" >&2
+  output="$("$gov_bin" record-sccp-transfer-ivm-proved \
+    --config "$config" \
+    --gas-asset-id "$gas_asset_id" \
+    --gas-limit "${SORASWAP_SCCP_IVM_GAS_LIMIT:-50000000}" \
+    --source-domain "$source_domain" \
+    --dest-domain "$dest_domain" \
+    --nonce "$nonce" \
+    --asset-home-domain "$asset_home_domain" \
+    --asset-id-codec "$asset_id_codec" \
+    --asset-id "$asset_id" \
+    --amount "$amount" \
+    --sender-codec "$sender_codec" \
+    --sender "$sender" \
+    --recipient-codec "$recipient_codec" \
+    --recipient "$SORASWAP_AUTHORITY" \
+    --route-id-codec "$route_id_codec" \
+    --route-id "$bridge_route_hint")"
+  printf '%s\n' "$output"
+}
+
 ensure_console_port_available
 python3 "$SORASWAP_ROOT/scripts/serve_contract_console.py" \
   --host "$host" \
@@ -418,6 +494,25 @@ else
           | select((.kind // "") == "transfer" and (.target_domain // -1) == 0)' \
         <<<"$recent_result_json"
     )
+  fi
+fi
+
+if [[ -z "$message_id" ]]; then
+  if auto_seed_bridge_inventory_enabled; then
+    if ! seeded_result_json="$(seed_sccp_bridge_transfer_inventory)"; then
+      echo "failed to create a proof-gated SCCP transfer message for route $bridge_route_hint" >&2
+      exit 1
+    fi
+    seeded_message_id="$(jq -r '.message_id // empty' <<<"$seeded_result_json" 2>/dev/null || true)"
+    if [[ -n "$seeded_message_id" ]]; then
+      selection_source="seeded_sccp_transfer"
+      message_id="$seeded_message_id"
+      route="$bridge_route_hint"
+      recent_result_json="$(http_json GET "$base_url/api/sccp/messages/recent?environment=${public_env}&limit=${recent_limit}")"
+      selected_recent_item_json="$(jq -cr --arg message_id "$message_id" '
+        first(.response_json.items[]? | select((.message_id_hex // "") == $message_id)) // null
+      ' <<<"$recent_result_json" 2>/dev/null || printf 'null')"
+    fi
   fi
 fi
 

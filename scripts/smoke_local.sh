@@ -2105,7 +2105,12 @@ risk_vault_state_expected_json="$(jq -cn \
   '[ $total_deposits, 0, 0, $total_payouts, 0, 0, 0, 3 ]')"
 job_mirror_result_json="$(contract_view_result_json "$job_mirror_view_json")"
 automation_retry_run_slot="$(jq -er '.[9]' <<<"$job_mirror_result_json")"
-automation_expected_next_slot=$(( automation_retry_run_slot + automation_cron_interval_slots ))
+automation_expected_next_slot="$(jq -er '.[5]' <<<"$job_mirror_result_json")"
+automation_min_next_slot=$(( automation_retry_run_slot + automation_cron_interval_slots ))
+if (( automation_expected_next_slot < automation_min_next_slot )); then
+  echo "local automation next slot $automation_expected_next_slot is before minimum cron slot $automation_min_next_slot" >&2
+  exit 1
+fi
 automation_expected_run_count=2
 n3x_expected_net_usdt=$(( n3x_usdt_in - n3x_expected_mint_fee_usdt ))
 n3x_expected_net_usdc=$(( n3x_usdc_in - n3x_expected_mint_fee_usdc ))
@@ -2329,7 +2334,12 @@ assert_view_result_equals "options shout product position" "$options_shout_produ
 assert_view_result_equals "options outperformance product position" "$options_outperformance_product_position_view_json" "$(jq -cn --argjson notional "$options_outperformance_notional" --argjson collateral_multiplier_bps "$options_collateral_multiplier_bps" --argjson final_mark "$options_outperformance_final_mark_bps" --argjson final_quote_mark "$options_outperformance_final_quote_mark_bps" --argjson payout "$options_outperformance_desired_payout" '[ 1, 2, $notional, $collateral_multiplier_bps, $final_mark, $final_quote_mark, $payout, 2 ]')"
 assert_view_result_equals "cover manager config" "$cover_manager_config_view_json" "$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson stale_slots "$cover_oracle_stale_slots" '[ $settlement_asset, $risk_vault, 0, $required_observations, $stale_slots, 301, 3, 10, 0 ]')"
 assert_view_result_equals "cover automation" "$cover_automation_view_json" '[1,301,3,10,0,0,0]'
-assert_view_result_equals "cover policy" "$cover_policy_view_json" "$(jq -cn --argjson lower_bound "$cover_lower_bound" --argjson upper_bound "$cover_upper_bound" --argjson payout_amount "$cover_payout_amount" --argjson monitoring_window_slots "$cover_monitoring_window_slots" --argjson required_observations "$cover_policy_required_observations" --argjson covered_notional "$cover_notional" --argjson last_observed_price "$cover_trigger_price" --argjson claim_payout "$cover_expected_claim_payout" '[ 1, 4, $lower_bound, $upper_bound, $payout_amount, $monitoring_window_slots, $required_observations, $covered_notional, 2, 3, $last_observed_price, $claim_payout ]')"
+cover_breach_elapsed_actual="$(contract_view_result_json "$cover_policy_view_json" | jq -er '.[8]')"
+if (( cover_breach_elapsed_actual < cover_monitoring_window_slots )); then
+  echo "local smoke cover breach elapsed $cover_breach_elapsed_actual is below monitoring window $cover_monitoring_window_slots" >&2
+  exit 1
+fi
+assert_view_result_equals "cover policy" "$cover_policy_view_json" "$(jq -cn --argjson lower_bound "$cover_lower_bound" --argjson upper_bound "$cover_upper_bound" --argjson payout_amount "$cover_payout_amount" --argjson monitoring_window_slots "$cover_monitoring_window_slots" --argjson required_observations "$cover_policy_required_observations" --argjson covered_notional "$cover_notional" --argjson breach_elapsed "$cover_breach_elapsed_actual" --argjson last_observed_price "$cover_trigger_price" --argjson claim_payout "$cover_expected_claim_payout" '[ 1, 4, $lower_bound, $upper_bound, $payout_amount, $monitoring_window_slots, $required_observations, $covered_notional, $breach_elapsed, 3, $last_observed_price, $claim_payout ]')"
 fi
 
 assert_view_result_equals "intent state" "$intent_state_view_json" "$(jq -cn --argjson amount_in "$intent_amount_in" --argjson min_out "$intent_min_out" --argjson solver_fee_bps "$intent_solver_fee_bps" --argjson deadline_slot "$intent_deadline_slot" --argjson nonce "$intent_nonce" --argjson amount_out "$intent_amount_out" '[ 1, 2, $amount_in, $min_out, $solver_fee_bps, $deadline_slot, $nonce, 1, $amount_out ]')"

@@ -22,7 +22,7 @@ prepare_env_chain_state "$public_env" "$config"
 deploy_report_init "$public_env" "$config"
 
 bootstrap_assets_requested_var="SORASWAP_${public_env_upper}_BOOTSTRAP"
-bootstrap_assets_requested="${(P)bootstrap_assets_requested_var:-${SORASWAP_PUBLIC_BOOTSTRAP:-0}}"
+bootstrap_assets_requested="${(P)bootstrap_assets_requested_var:-${SORASWAP_PUBLIC_BOOTSTRAP:-auto}}"
 
 deploy_failed=1
 trap 'if [[ ${deploy_failed:-1} -ne 0 ]]; then deploy_report_finish "$public_env" failed || true; fi' EXIT
@@ -44,12 +44,20 @@ deploy_report_set_phase "$public_env" preflight completed "$(jq -cn \
   --arg balance "$(asset_value_for_account_id "$config" "$(fee_asset_definition_id_for_config "$config")" "$SORASWAP_AUTHORITY")" \
   '{authority: $authority, fee_asset: $fee_asset, fee_asset_id: $fee_asset_id, balance: $balance}')"
 
+if [[ "$bootstrap_assets_requested" == "auto" ]]; then
+  if public_helper_asset_bootstrap_needed "$config"; then
+    bootstrap_assets_requested=1
+  else
+    bootstrap_assets_requested=0
+  fi
+fi
+
 if [[ "$bootstrap_assets_requested" == "1" ]]; then
   deploy_report_set_phase "$public_env" bootstrap_assets running null
   "$SORASWAP_ROOT/scripts/bootstrap_assets.sh" "$public_env"
   deploy_report_set_phase "$public_env" bootstrap_assets completed null
 else
-  echo "skipping $public_env bootstrap; set ${bootstrap_assets_requested_var}=1 or SORASWAP_PUBLIC_BOOTSTRAP=1 for the one-time public domain/asset setup"
+  echo "skipping $public_env bootstrap; helper domain/assets are already present (set ${bootstrap_assets_requested_var}=1 or SORASWAP_PUBLIC_BOOTSTRAP=1 to force)"
   deploy_report_set_phase "$public_env" bootstrap_assets skipped null
 fi
 

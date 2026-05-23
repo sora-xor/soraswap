@@ -1,6 +1,6 @@
 SHELL := /bin/zsh
 
-.PHONY: dev-doctor dev-build dev-check dev-test dev-schema dev-smoke lint compile simulate-smoke simulate-full local-up local-down deploy-local smoke-local deploy-testnet deploy-production publish-trader-api smoke-testnet smoke-testnet-readonly smoke-testnet-trader smoke-testnet-trader-readonly smoke-production smoke-production-readonly public-nested-call-probe testnet-nested-call-probe production-nested-call-probe test-public-env-helpers test-local test-local-isolated test-local-foundation-isolated contract-console trader-ui test-contract-console test-contract-console-ui test-contract-console-integration test-trader-ui test-contract-console-live test-contract-console-testnet test-contract-console-production soak-contract-console release-taira release-checklist
+.PHONY: dev-doctor dev-build dev-check dev-test dev-schema dev-smoke lint compile simulate-smoke simulate-full local-up local-down deploy-local smoke-local taira-preflight deploy-testnet deploy-production publish-trader-api smoke-testnet smoke-testnet-readonly smoke-testnet-trader smoke-testnet-trader-readonly smoke-production smoke-production-readonly public-nested-call-probe testnet-nested-call-probe production-nested-call-probe test-public-env-helpers test-local test-local-isolated test-local-foundation-isolated contract-console trader-ui test-contract-console test-contract-console-ui test-contract-console-integration test-trader-ui test-contract-console-live test-contract-console-testnet test-contract-console-production soak-contract-console release-taira release-checklist
 
 dev-doctor:
 	./scripts/dev_iroha.sh doctor --manifest iroha.contracts.toml --profile $(or $(SORASWAP_PROFILE),local)
@@ -43,6 +43,9 @@ deploy-local:
 
 smoke-local:
 	./scripts/smoke_local.sh
+
+taira-preflight:
+	./scripts/taira_preflight.sh
 
 deploy-testnet:
 	./scripts/deploy_testnet.sh
