@@ -472,6 +472,10 @@ ensure_risk_vault_init_or_skip() {
     echo "bootstrap skip: risk vault init already matches expected state"
     return 0
   fi
+  if json_equals "$actual_json" "$live_json"; then
+    echo "bootstrap skip: risk vault init already exposes the live exit state"
+    return 0
+  fi
   if [[ "$mode" != "local" && -n "$live_predicate_jq" ]] && jq -en \
     --argjson actual "$actual_json" \
     --argjson expected "$expected_json" \
@@ -488,7 +492,7 @@ ensure_risk_vault_init_or_skip() {
       echo "bootstrap note: risk vault init returned a non-fatal live-state error after reaching the expected initialized state"
       return 0
     fi
-    if [[ "$mode" != "local" ]] && json_equals "$actual_json" "$live_json"; then
+    if json_equals "$actual_json" "$live_json"; then
       echo "bootstrap note: risk vault init returned a non-fatal live-state error while the vault already exposes the live exit state"
       return 0
     fi

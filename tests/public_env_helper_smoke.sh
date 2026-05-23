@@ -232,4 +232,33 @@ jq -e \
     and (.config.exists == false)' \
   "$preflight_report" >/dev/null
 
+kill "$FIXTURE_SERVER_PID" >/dev/null 2>&1 || true
+wait "$FIXTURE_SERVER_PID" 2>/dev/null || true
+FIXTURE_SERVER_PID=""
+
+unreachable_output="$TMP_DIR/taira_preflight_unreachable.out"
+unreachable_status=0
+(
+  unset SORASWAP_PUBLIC_ENV
+  export SORASWAP_TORII_URL="$fixture_root"
+  export SORASWAP_CLIENT_CONFIG="$missing_cfg"
+  export SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS=1
+  export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$TMP_DIR/preflight-unreachable-reports"
+  "$ROOT/scripts/taira_preflight.sh"
+) >"$unreachable_output" 2>&1 || unreachable_status="$?"
+[[ "$unreachable_status" != "0" ]]
+rg -q "could not reach native Torii MCP" "$unreachable_output"
+! rg -q "000000" "$unreachable_output"
+
+unreachable_report="$TMP_DIR/preflight-unreachable-reports/preflight.latest.json"
+[[ -s "$unreachable_report" ]]
+jq -e \
+  --arg fixture_root "$fixture_root" \
+  '.status == "blocked"
+    and (.endpoint.torii_root == $fixture_root)
+    and (.endpoint.mcp_http_status == "000")
+    and (.blockers | any(contains("could not reach native Torii MCP")))' \
+  "$unreachable_report" >/dev/null
+! rg -q "000000" "$unreachable_report"
+
 echo "public env helper smoke ok"

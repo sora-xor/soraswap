@@ -51,7 +51,13 @@ json_array_from_args() {
 http_status_for() {
   local url="$1"
   local timeout="${SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS:-10}"
-  curl -L -sS -o /dev/null --max-time "$timeout" -w '%{http_code}' "$url" 2>/dev/null || printf '000'
+  local http_status
+  http_status="$(curl -L -sS -o /dev/null --max-time "$timeout" -w '%{http_code}' "$url" 2>/dev/null || true)"
+  if [[ -z "$http_status" ]]; then
+    printf '000'
+  else
+    printf '%s' "$http_status"
+  fi
 }
 
 json_get_for() {
