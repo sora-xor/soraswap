@@ -271,8 +271,10 @@
               <pre id="trade-preview">{}</pre>
             </div>
 
-            <button id="trade-submit" class="action-button primary" type="button">Submit Swap</button>
-            <div id="trade-result" class="banner muted">No trade submitted.</div>
+            <div class="ticket-action-footer">
+              <button id="trade-submit" class="action-button primary" type="button">Submit Swap</button>
+              <div id="trade-result" class="banner muted">No trade submitted.</div>
+            </div>
           </section>
 
           <section class="surface insight-stage">
@@ -312,6 +314,28 @@
           </section>
         </aside>
       </main>
+
+      <dialog id="signed-confirmation-dialog" class="confirmation-dialog">
+        <form method="dialog" class="confirmation-panel">
+          <div class="confirmation-heading">
+            <div>
+              <p class="eyebrow small">Signed Mutation</p>
+              <h2>Confirm Call</h2>
+            </div>
+            <button class="icon-close" type="submit" value="cancel" aria-label="Cancel signed call">x</button>
+          </div>
+          <dl id="confirmation-detail-list" class="confirmation-detail-list"></dl>
+          <div id="confirmation-warning" class="banner warning" hidden></div>
+          <div class="confirmation-payload-block">
+            <span>Sanitized JSON Payload</span>
+            <pre id="confirmation-payload">{}</pre>
+          </div>
+          <div class="confirmation-actions">
+            <button class="action-button" type="submit" value="cancel">Cancel</button>
+            <button id="confirmation-confirm" class="action-button primary" type="submit" value="confirm">Confirm signed call</button>
+          </div>
+        </form>
+      </dialog>
     </div>
 
     <script src="/app.js"></script>

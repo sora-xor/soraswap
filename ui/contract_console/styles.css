@@ -20,6 +20,11 @@
   box-sizing: border-box;
 }
 
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -36,6 +41,59 @@ textarea,
 input,
 select {
   font-family: var(--mono);
+}
+
+code,
+pre,
+textarea,
+input,
+select,
+.banner,
+.meta-card,
+.meta-grid,
+.record-card,
+.insight-card,
+.record-line,
+.panel-heading p,
+.hero-copy,
+.confirmation-detail-list,
+.confirmation-payload-block {
+  overflow-wrap: anywhere;
+}
+
+.app-shell,
+.hero,
+.hero > *,
+.layout,
+.layout > *,
+.panel,
+.panel > *,
+.stack,
+.field,
+.field-row,
+.button-row,
+.output-header,
+.meta-card,
+.meta-grid,
+.two-up,
+.output-grid,
+.triple-output-grid,
+.bridge-input-grid,
+.quick-grid,
+.bookmark-grid,
+.lookup-grid,
+.submission-builder-grid,
+.insight-grid,
+.output-pane,
+.record-list,
+.record-card,
+.insight-card,
+.sticky-action-footer,
+.confirmation-dialog,
+.confirmation-panel,
+.confirmation-detail-list,
+.confirmation-payload-block {
+  min-width: 0;
 }
 
 .app-shell {
@@ -297,7 +355,7 @@ button:disabled {
 }
 
 .output-pane {
-  overflow: hidden;
+  overflow: visible;
 }
 
 .output-header {
@@ -379,7 +437,119 @@ pre {
   background: rgba(244, 238, 228, 0.7);
   line-height: 1.5;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.sticky-action-footer {
+  position: sticky;
+  bottom: 12px;
+  z-index: 4;
+  margin: 2px -4px -4px;
+  padding: 12px;
+  border: 1px solid rgba(68, 56, 43, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 252, 247, 0.96);
+  box-shadow: 0 -12px 28px rgba(54, 34, 17, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.sticky-action-footer.compact {
+  margin: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.sticky-action-footer .button-row {
+  justify-content: flex-end;
+}
+
+.sticky-action-footer button {
+  min-width: 160px;
+}
+
+.confirmation-dialog {
+  width: min(740px, calc(100vw - 28px));
+  padding: 0;
+  border: 0;
+  border-radius: 20px;
+  background: transparent;
+  color: var(--text);
+}
+
+.confirmation-dialog::backdrop {
+  background: rgba(36, 28, 22, 0.42);
+  backdrop-filter: blur(4px);
+}
+
+.confirmation-panel {
+  display: grid;
+  gap: 16px;
+  max-height: min(760px, calc(100svh - 32px));
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgba(255, 252, 247, 0.98);
+  box-shadow: 0 28px 70px rgba(36, 28, 22, 0.26);
+}
+
+.confirmation-heading,
+.confirmation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.confirmation-heading h2 {
+  margin: 0;
+}
+
+.icon-close {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  font-family: var(--sans);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.confirmation-detail-list {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.32fr) minmax(0, 1fr);
+  gap: 10px 14px;
+  margin: 0;
+}
+
+.confirmation-detail-list dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.confirmation-detail-list dd {
+  margin: 0;
+  font-family: var(--mono);
+  line-height: 1.45;
+}
+
+.confirmation-payload-block {
+  display: grid;
+  gap: 8px;
+}
+
+.confirmation-payload-block span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.confirmation-payload-block pre {
+  max-height: 280px;
 }
 
 @media (max-width: 1180px) {
@@ -428,7 +598,20 @@ pre {
 
   .field-row,
   .button-row,
-  .output-header {
+  .output-header,
+  .confirmation-actions {
     flex-wrap: wrap;
+  }
+
+  .confirmation-actions {
+    display: grid;
+  }
+
+  .confirmation-actions button {
+    width: 100%;
+  }
+
+  .confirmation-detail-list {
+    grid-template-columns: 1fr;
   }
 }

@@ -119,8 +119,10 @@
             <textarea id="payload-input" rows="16" spellcheck="false"></textarea>
           </div>
 
-          <div class="button-row">
-            <button id="run-request" class="primary-button" type="button">Run Request</button>
+          <div class="sticky-action-footer">
+            <div class="button-row">
+              <button id="run-request" class="primary-button" type="button">Run Request</button>
+            </div>
           </div>
         </section>
       </main>
@@ -428,17 +430,21 @@
           <div class="output-pane">
             <div class="output-header">
               <h3>Bridge Proof Submit JSON</h3>
-              <button id="submit-bridge-proof" class="primary-button" type="button">Submit Proof</button>
             </div>
             <textarea id="proof-submit-input" rows="18" spellcheck="false"></textarea>
+            <div class="sticky-action-footer compact">
+              <button id="submit-bridge-proof" class="primary-button" type="button">Submit Proof</button>
+            </div>
           </div>
 
           <div class="output-pane">
             <div class="output-header">
               <h3>Bridge Message Submit JSON</h3>
-              <button id="submit-bridge-message" class="primary-button" type="button">Submit Message</button>
             </div>
             <textarea id="bridge-message-submit-input" rows="18" spellcheck="false"></textarea>
+            <div class="sticky-action-footer compact">
+              <button id="submit-bridge-message" class="primary-button" type="button">Submit Message</button>
+            </div>
           </div>
         </div>
       </section>
@@ -468,6 +474,28 @@
           </div>
         </div>
       </section>
+
+      <dialog id="signed-confirmation-dialog" class="confirmation-dialog">
+        <form method="dialog" class="confirmation-panel">
+          <div class="confirmation-heading">
+            <div>
+              <p class="eyebrow">Signed Mutation</p>
+              <h2>Confirm Call</h2>
+            </div>
+            <button class="icon-close" type="submit" value="cancel" aria-label="Cancel signed call">x</button>
+          </div>
+          <dl id="confirmation-detail-list" class="confirmation-detail-list"></dl>
+          <div id="confirmation-warning" class="banner warning" hidden></div>
+          <div class="confirmation-payload-block">
+            <span>Sanitized JSON Payload</span>
+            <pre id="confirmation-payload">{}</pre>
+          </div>
+          <div class="confirmation-actions">
+            <button class="secondary-button" type="submit" value="cancel">Cancel</button>
+            <button id="confirmation-confirm" class="primary-button" type="submit" value="confirm">Confirm signed call</button>
+          </div>
+        </form>
+      </dialog>
     </div>
 
     <script src="/app.js" defer></script>

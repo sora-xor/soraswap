@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import urllib.parse
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -270,6 +271,12 @@ class FastThreadingHTTPServer(ThreadingHTTPServer):
         self.server_name = str(host)
         self.server_port = port
 
+    def handle_error(self, request: object, client_address: object) -> None:
+        exc_type, _, _ = sys.exc_info()
+        if exc_type and issubclass(exc_type, (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any] | list[Any] | Any) -> None:
     body = json.dumps(payload).encode("utf-8")
@@ -366,7 +373,8 @@ def format_signed_amount(value: float, symbol: str) -> str:
 def format_timestamp_label(timestamp_ms: int | None) -> str:
     if not timestamp_ms:
         return "-"
-    return f"T+{timestamp_ms // 60000}m"
+    timestamp = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+    return f"{timestamp:%b} {timestamp.day}, {timestamp:%H:%M} UTC"
 
 
 def asset_ticker(asset_id: str) -> str:

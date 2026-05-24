@@ -204,6 +204,30 @@ function createCatalog() {
   };
 }
 
+function createAdversarialCatalog() {
+  const catalog = createCatalog();
+  const longToken = "x".repeat(420);
+  catalog.repo_root = `/Users/takemiyamakoto/dev/soraswap/${longToken}`;
+  const local = catalog.environments[0];
+  local.name = `local-${longToken}`;
+  local.torii_url = `https://${longToken}.example.invalid/${longToken}`;
+  local.chain_fingerprint.chain = `chain-${longToken}`;
+  local.signer.source = `cli:/tmp/${longToken}.client.toml`;
+  local.signer.authority = `i105${longToken}@universal`;
+  local.signer.warnings = [`warning-${longToken}`];
+  local.mutation_policy = {
+    allowed: true,
+    name: `policy-${longToken}`,
+  };
+  local.contracts[0] = {
+    ...local.contracts[0],
+    contract_address: `tairac1${longToken}`,
+    contract_source: `contracts/bridge/${longToken}/sccp_bridge.ko`,
+    manifest_path: `artifacts/local/${longToken}/bridge.sccp_bridge.manifest.json`,
+  };
+  return catalog;
+}
+
 function capabilitiesByEnvironment() {
   return {
     local: {
@@ -665,6 +689,27 @@ async function readLocalStorageJson(page, key) {
   }, key);
 }
 
+function prettyJsonForTest(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+async function expectNoHorizontalOverflow(page) {
+  const dimensions = await page.evaluate(() => ({
+    viewportWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
+}
+
+async function confirmSignedCall(page) {
+  const dialog = page.locator("#signed-confirmation-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Confirm Call");
+  await expect(dialog).toContainText("Confirm signed call");
+  await dialog.getByRole("button", { name: "Confirm signed call" }).click();
+  await expect(dialog).toBeHidden();
+}
+
 test("loads catalog, SCCP discovery, and environment-specific history state", async ({ page }) => {
   await bootConsole(page);
 
@@ -690,6 +735,116 @@ test("loads catalog, SCCP discovery, and environment-specific history state", as
   await expect(page.locator("#environment-summary")).toContainText("Signer: configured (cli:/tmp/production.client.toml)");
   await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP discovery for production: 1 counterparties, 1 manifests.");
   await expect(page.locator("#bridge-summary")).toContainText(`Bridge: ${PRODUCTION_BRIDGE_ADDRESS}`);
+});
+
+test("keeps the contract console viewport-safe on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await bootConsole(page, { catalog: createAdversarialCatalog() });
+
+  await expectNoHorizontalOverflow(page);
+});
+
+test("confirms only generic signed calls and warns on ambiguous ABI defaults", async ({ page }) => {
+  const apiState = await bootConsole(page);
+
+  await page.locator("#entrypoint-select").selectOption("listing_config");
+  await page.locator("#run-request").click();
+  await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
+  await expect(page.locator("#request-status")).toContainText("Request succeeded");
+
+  await page.locator("#entrypoint-select").selectOption("register_asset");
+  await page.locator("#payload-input").fill(prettyJsonForTest({
+    asset_key: "",
+    registrant: null,
+    asset: "",
+    home_domain: 0,
+    decimals: 0,
+  }));
+  await page.locator("#run-request").click();
+
+  const dialog = page.locator("#signed-confirmation-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("blank strings");
+  await expect(dialog).toContainText("null values");
+  await expect(dialog).toContainText("zero numeric fields");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.locator("#request-status")).toContainText("Cancelled before submission");
+  expect(apiState.requests).toHaveLength(0);
+
+  await page.locator("#run-request").click();
+  await confirmSignedCall(page);
+  await expect.poll(() => apiState.requests.length).toBe(1);
+  expect(apiState.requests[0].path).toBe("/api/call");
+  expect(apiState.requests[0].body.payload).toMatchObject({
+    asset_key: "",
+    registrant: null,
+    asset: "",
+    home_domain: 0,
+    decimals: 0,
+  });
+});
+
+test("rejects malformed generic and bridge advanced payloads before confirmation", async ({ page }) => {
+  const apiState = await bootConsole(page);
+
+  await page.locator("#entrypoint-select").selectOption("register_asset");
+  await page.locator("#payload-input").fill("{ not valid json");
+  await page.locator("#run-request").click();
+  await expect(page.locator("#request-status")).toContainText("Payload JSON must be valid JSON");
+  await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
+  expect(apiState.requests).toHaveLength(0);
+
+  await page.locator("#proof-submit-input").fill("{}");
+  await page.locator("#submit-bridge-proof").click();
+  await expect(page.locator("#submission-summary")).toContainText("must include exactly one");
+  await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
+  expect(apiState.requests).toHaveLength(0);
+
+  await page.locator("#bridge-message-submit-input").fill(prettyJsonForTest({
+    message_bundle: {},
+    settlement: "not-an-object",
+  }));
+  await page.locator("#submit-bridge-message").click();
+  await expect(page.locator("#submission-summary")).toContainText("settlement must be an object");
+  await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
+  expect(apiState.requests).toHaveLength(0);
+});
+
+test("sanitizes sensitive fields in signed confirmation payloads", async ({ page }) => {
+  const apiState = await bootConsole(page);
+
+  await page.locator("#entrypoint-select").selectOption("register_asset");
+  await page.locator("#payload-input").fill(prettyJsonForTest({
+    asset_key: "xor",
+    registrant: "i105localbridgeoperator@universal",
+    asset: "xor#universal",
+    home_domain: 1,
+    decimals: 18,
+    private_key: "generic-secret-value",
+    nested: {
+      secret: "nested-secret-value",
+      visible: "safe-visible-value",
+    },
+  }));
+  await page.locator("#run-request").click();
+  await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
+  await expect(page.locator("#confirmation-payload")).toContainText("safe-visible-value");
+  await expect(page.locator("#confirmation-payload")).not.toContainText("generic-secret-value");
+  await expect(page.locator("#confirmation-payload")).not.toContainText("nested-secret-value");
+  await page.locator("#signed-confirmation-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(apiState.requests).toHaveLength(0);
+
+  await page.locator("#proof-submit-input").fill(prettyJsonForTest({
+    authority: "i105localbridgeoperator@universal",
+    private_key: "bridge-secret-value",
+    message_bundle: proofBundle(LOOKUP_MESSAGE_ID).response_json,
+  }));
+  await page.locator("#submit-bridge-proof").click();
+  await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
+  await expect(page.locator("#confirmation-payload")).toContainText(LOOKUP_MESSAGE_ID);
+  await expect(page.locator("#confirmation-payload")).not.toContainText("bridge-secret-value");
+  await page.locator("#signed-confirmation-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(apiState.requests).toHaveLength(0);
 });
 
 test("validates codec-specific recipients and builds bridge requests from labeled fields", async ({ page }) => {
@@ -736,6 +891,13 @@ test("persists bridge bookmarks and signed transaction tracking across reloads",
   await page.locator("#bridge-action-select").selectOption("pause_route");
   await page.locator("#build-bridge-request").click();
   await page.locator("#run-request").click();
+  await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
+  await page.locator("#signed-confirmation-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.locator("#request-status")).toContainText("Cancelled before submission");
+  expect(apiState.requests).toHaveLength(0);
+
+  await page.locator("#run-request").click();
+  await confirmSignedCall(page);
 
   await expect(page.locator("#transaction-history-list")).toContainText(`tx_hash_hex: ${CALL_TX_HASH}`);
   await expect(page.locator("#transaction-history-list")).toContainText("Committed");
@@ -784,10 +946,18 @@ test("submits proof and bridge message payloads and persists request metadata", 
   await page.locator("#load-looked-up-bundle").click();
 
   await page.locator("#submit-bridge-proof").click();
+  await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
+  await page.locator("#signed-confirmation-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.locator("#submission-summary")).toContainText("cancelled before submission");
+  expect(apiState.requests).toHaveLength(0);
+
+  await page.locator("#submit-bridge-proof").click();
+  await confirmSignedCall(page);
   await expect(page.locator("#transaction-history-list")).toContainText(PROOF_TX_HASH);
 
   await page.locator("#insert-settlement-helper").click();
   await page.locator("#submit-bridge-message").click();
+  await confirmSignedCall(page);
   await expect(page.locator("#transaction-history-list")).toContainText(MESSAGE_TX_HASH);
   await expect.poll(() => apiState.requests.length).toBe(2);
 
@@ -832,6 +1002,7 @@ test("marks tracked transactions as timed out when no terminal status arrives", 
   await page.locator("#bridge-route-input").fill("timeout_route");
   await page.locator("#build-bridge-request").click();
   await page.locator("#run-request").click();
+  await confirmSignedCall(page);
 
   await expect(page.locator("#transaction-history-list")).toContainText(CALL_TX_HASH);
   await expect(page.locator("#transaction-history-list")).toContainText("TimedOut");

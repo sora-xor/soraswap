@@ -57,6 +57,44 @@ async function stopFixtureServer(child) {
   });
 }
 
+async function expectNoHorizontalOverflow(page) {
+  const dimensions = await page.evaluate(() => ({
+    viewportWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.viewportWidth + 1);
+}
+
+async function workspaceColumnCount(page) {
+  return page.evaluate(() => {
+    const columns = window.getComputedStyle(document.querySelector(".workspace")).gridTemplateColumns;
+    return columns.split(" ").filter(Boolean).length;
+  });
+}
+
+async function confirmSignedCall(page) {
+  const dialog = page.locator("#signed-confirmation-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Confirm Call");
+  await expect(dialog).toContainText("Confirm signed call");
+  await dialog.getByRole("button", { name: "Confirm signed call" }).click();
+  await expect(dialog).toBeHidden();
+}
+
+async function submitTraderAction(page) {
+  const submit = page.locator("#trade-submit");
+  const preview = await page.locator("#trade-preview").textContent();
+  await expect(submit).toBeEnabled();
+  await expect(submit).toHaveAttribute("title", "");
+  await submit.click();
+  const dialog = page.locator("#signed-confirmation-dialog");
+  await expect(dialog, `confirmation did not open for preview: ${preview}`).toBeVisible();
+  await expect(dialog).toContainText("Confirm Call");
+  await expect(dialog).toContainText("Confirm signed call");
+  await dialog.getByRole("button", { name: "Confirm signed call" }).click();
+  await expect(dialog).toBeHidden();
+}
+
 test.beforeAll(async () => {
   const started = await startFixtureServer();
   fixtureServer = started.child;
@@ -67,7 +105,71 @@ test.afterAll(async () => {
   await stopFixtureServer(fixtureServer);
 });
 
+test("keeps the trader cockpit viewport-safe on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(fixtureServerUrl);
+
+  await expect(page.locator("#status-banner")).toContainText("Loaded 3 executed fills");
+  await expectNoHorizontalOverflow(page);
+  await expect(page.locator("#module-grid")).not.toContainText("T+");
+  await expect(page.locator("#module-grid")).toContainText("UTC");
+  const railPositions = await page.evaluate(() => ({
+    actionTop: document.querySelector(".action-rail").getBoundingClientRect().top,
+    leftTop: document.querySelector(".left-rail").getBoundingClientRect().top,
+    centerTop: document.querySelector(".center-stage").getBoundingClientRect().top,
+  }));
+  expect(railPositions.actionTop).toBeLessThan(railPositions.leftTop);
+  expect(railPositions.actionTop).toBeLessThan(railPositions.centerTop);
+
+  await page.locator("#authority-input").fill(`i105${"x".repeat(420)}@universal`);
+  await expectNoHorizontalOverflow(page);
+});
+
+test("keeps the action submit reachable in the 1280px cockpit", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.goto(fixtureServerUrl);
+
+  await expect(page.locator("#status-banner")).toContainText("Loaded 3 executed fills");
+  expect(await workspaceColumnCount(page)).toBe(3);
+  await expect(page.locator("#trade-submit")).toBeInViewport();
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
+  await page.locator("#signed-confirmation-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.locator("#trade-result")).toContainText("Cancelled before submission");
+});
+
+test("does not submit or confirm invalid trader mutations", async ({ page }) => {
+  const callRequests = [];
+  await page.route("**/api/call", async (route) => {
+    callRequests.push(JSON.parse(route.request().postData() || "{}"));
+    await route.continue();
+  });
+
+  await page.goto(fixtureServerUrl);
+  await expect(page.locator("#status-banner")).toContainText("Loaded 3 executed fills");
+
+  await page.locator("#trade-gas-limit-input").fill("0");
+  await expect(page.locator("#trade-submit")).toBeDisabled();
+  await expect(page.locator("#trade-submit")).toHaveAttribute("title", "Gas limit must be a positive integer.");
+  await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
+  expect(callRequests).toHaveLength(0);
+
+  await page.locator("#trade-gas-limit-input").fill("100000");
+  await expect(page.locator("#trade-submit")).toBeEnabled();
+  await page.locator("#trade-submit").click();
+  await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
+  await expect(page.locator("#trade-result")).toContainText("Cancelled before submission");
+  expect(callRequests).toHaveLength(0);
+});
+
 test("renders the trader cockpit and submits a routed swap through the real Python server", async ({ page }) => {
+  const callRequests = [];
+  await page.route("**/api/call", async (route) => {
+    callRequests.push(JSON.parse(route.request().postData() || "{}"));
+    await route.continue();
+  });
   await page.goto(fixtureServerUrl);
 
   await expect(page.locator("#status-banner")).toContainText("Loaded 3 executed fills");
@@ -99,6 +201,7 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#metric-total-pnl")).not.toHaveText("-");
   await expect(page.locator("#chart-empty")).toBeHidden();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "route_swap"');
+  await expect(page.locator("#module-grid")).not.toContainText("T+");
 
   await page.locator("#module-grid").getByRole("button", { name: /Perps/i }).click();
   await expect(page.locator("#focus-title")).toHaveText("Perps");
@@ -117,6 +220,15 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await page.getByLabel("Spend Base Amount").fill("90");
   await page.getByLabel("Minimum Quote Out").fill("80");
   await page.locator("#trade-submit").click();
+  await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
+  await expect(page.locator("#signed-confirmation-dialog")).toContainText("fixture");
+  await expect(page.locator("#signed-confirmation-dialog")).toContainText("route_swap");
+  await page.locator("#signed-confirmation-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.locator("#trade-result")).toContainText("Cancelled before submission");
+  expect(callRequests).toHaveLength(0);
+
+  await submitTraderAction(page);
+  await expect.poll(() => callRequests.length).toBe(1);
 
   await expect(page.locator("#trade-result")).toContainText("committed");
   await expect(page.locator("#status-banner")).toContainText("Loaded 4 executed fills");
@@ -128,40 +240,40 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
 
   await page.locator("#module-grid").getByRole("button", { name: /Launchpad/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "contribute_recorded"');
-  await page.locator("#trade-submit").click();
+  await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
 
   await page.locator("#module-grid").getByRole("button", { name: /Intents/i }).click();
   await page.locator("#trade-mode-bar").getByRole("button", { name: /^Fill$/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "fill_intent"');
-  await page.locator("#trade-submit").click();
+  await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
 
   await page.locator("#module-grid").getByRole("button", { name: /Vaults/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "deposit"');
-  await page.locator("#trade-submit").click();
+  await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
   await page.locator("#trade-mode-bar").getByRole("button", { name: /^Redeem$/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "request_redeem"');
-  await page.locator("#trade-submit").click();
+  await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
 
   await page.locator("#module-grid").getByRole("button", { name: /Operators/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "bond"');
-  await page.locator("#trade-submit").click();
+  await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
 
   await page.locator("#module-grid").getByRole("button", { name: /^Margin/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "deposit_collateral"');
-  await page.locator("#trade-submit").click();
+  await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
 
   await page.locator("#module-grid").getByRole("button", { name: /RWA/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "issue_lot"');
-  await page.locator("#trade-submit").click();
+  await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
   await page.locator("#trade-mode-bar").getByRole("button", { name: /^Redeem$/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "request_redemption"');
-  await page.locator("#trade-submit").click();
+  await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
 });

@@ -694,6 +694,10 @@ const tradeGasLimitInput = document.querySelector("#trade-gas-limit-input");
 const tradePreview = document.querySelector("#trade-preview");
 const tradeSubmit = document.querySelector("#trade-submit");
 const tradeResult = document.querySelector("#trade-result");
+const signedConfirmationDialog = document.querySelector("#signed-confirmation-dialog");
+const confirmationDetailList = document.querySelector("#confirmation-detail-list");
+const confirmationWarning = document.querySelector("#confirmation-warning");
+const confirmationPayload = document.querySelector("#confirmation-payload");
 
 const insightLastPrice = document.querySelector("#insight-last-price");
 const insightUnrealizedPnl = document.querySelector("#insight-unrealized-pnl");
@@ -727,6 +731,72 @@ function saveStorage(key, value) {
 function setBanner(element, text, kind = "muted") {
   element.textContent = text;
   element.className = `banner ${kind}`;
+}
+
+function sanitizeJsonForDisplay(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeJsonForDisplay(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !["private_key", "privateKey", "secret", "mnemonic"].includes(key))
+        .map(([key, entry]) => [key, sanitizeJsonForDisplay(entry)]),
+    );
+  }
+  return value;
+}
+
+function confirmationValue(value) {
+  if (value === undefined || value === null || value === "") {
+    return "-";
+  }
+  return String(value);
+}
+
+function renderConfirmationDetails(rows) {
+  confirmationDetailList.replaceChildren();
+  rows.forEach(([label, value]) => {
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = confirmationValue(value);
+    confirmationDetailList.append(term, detail);
+  });
+}
+
+function confirmSignedMutation(details) {
+  if (!signedConfirmationDialog || typeof signedConfirmationDialog.showModal !== "function") {
+    return Promise.resolve(window.confirm("Confirm signed call?"));
+  }
+
+  renderConfirmationDetails([
+    ["Environment", details.environment],
+    ["Authority", details.authority],
+    ["Contract", details.contract],
+    ["Address", details.contractAddress],
+    ["Action", details.action],
+    ["Entrypoint", details.entrypoint],
+    [details.requestPath ? "Request Path" : "Gas Limit", details.requestPath || details.gasLimit],
+  ]);
+  confirmationPayload.textContent = JSON.stringify(sanitizeJsonForDisplay(details.payload ?? {}), null, 2);
+  if (details.warningText) {
+    confirmationWarning.textContent = details.warningText;
+    confirmationWarning.hidden = false;
+  } else {
+    confirmationWarning.textContent = "";
+    confirmationWarning.hidden = true;
+  }
+
+  signedConfirmationDialog.returnValue = "";
+  return new Promise((resolve) => {
+    const handleClose = () => {
+      signedConfirmationDialog.removeEventListener("close", handleClose);
+      resolve(signedConfirmationDialog.returnValue === "confirm");
+    };
+    signedConfirmationDialog.addEventListener("close", handleClose);
+    signedConfirmationDialog.showModal();
+  });
 }
 
 function renderLiveStatus() {
@@ -3683,7 +3753,23 @@ async function submitTrade() {
 
   const environment = state.currentEnvironment;
   const action = currentActionDefinition();
+  const module = selectedTradeModule();
   const requestPayload = buildTradePreview();
+  const confirmed = await confirmSignedMutation({
+    environment: environment?.name,
+    authority: requestPayload.authority,
+    contract: module?.contractKey || selectedTradeModule()?.label || "Selected product",
+    contractAddress: requestPayload.contract_address,
+    action: action?.label || "Trader action",
+    entrypoint: requestPayload.entrypoint,
+    gasLimit: requestPayload.gas_limit,
+    payload: requestPayload.payload,
+  });
+  if (!confirmed) {
+    setBanner(tradeResult, "Cancelled before submission. No signed call was sent.", "muted");
+    return;
+  }
+
   tradeSubmit.disabled = true;
   setBanner(tradeResult, `Submitting ${action?.label || "action"}…`, "muted");
 

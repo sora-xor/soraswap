@@ -133,6 +133,10 @@ const proofSubmitInput = document.querySelector("#proof-submit-input");
 const bridgeMessageSubmitInput = document.querySelector("#bridge-message-submit-input");
 const submitBridgeProofButton = document.querySelector("#submit-bridge-proof");
 const submitBridgeMessageButton = document.querySelector("#submit-bridge-message");
+const signedConfirmationDialog = document.querySelector("#signed-confirmation-dialog");
+const confirmationDetailList = document.querySelector("#confirmation-detail-list");
+const confirmationWarning = document.querySelector("#confirmation-warning");
+const confirmationPayload = document.querySelector("#confirmation-payload");
 
 function defaultBridgeBookmarks() {
   return {
@@ -196,6 +200,127 @@ function transactionPollTimeoutMs() {
 function setBanner(element, text, kind = "muted") {
   element.textContent = text;
   element.className = `banner ${kind}`;
+}
+
+function sanitizeJsonForDisplay(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeJsonForDisplay(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !["private_key", "privateKey", "secret", "mnemonic"].includes(key))
+        .map(([key, entry]) => [key, sanitizeJsonForDisplay(entry)]),
+    );
+  }
+  return value;
+}
+
+function confirmationValue(value) {
+  if (value === undefined || value === null || value === "") {
+    return "-";
+  }
+  return String(value);
+}
+
+function renderConfirmationDetails(rows) {
+  confirmationDetailList.replaceChildren();
+  rows.forEach(([label, value]) => {
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = confirmationValue(value);
+    confirmationDetailList.append(term, detail);
+  });
+}
+
+function confirmSignedMutation(details) {
+  if (!signedConfirmationDialog || typeof signedConfirmationDialog.showModal !== "function") {
+    return Promise.resolve(window.confirm("Confirm signed call?"));
+  }
+
+  const rows = [
+    ["Environment", details.environment],
+    ["Authority", details.authority],
+    ["Contract", details.contract],
+    ["Address", details.contractAddress],
+    ["Action", details.action],
+    ["Entrypoint", details.entrypoint],
+  ];
+  if (details.gasLimit !== undefined && details.gasLimit !== null) {
+    rows.push(["Gas Limit", details.gasLimit]);
+  }
+  if (details.requestPath) {
+    rows.push(["Request Path", details.requestPath]);
+  }
+  renderConfirmationDetails(rows);
+
+  confirmationPayload.textContent = prettyJson(sanitizeJsonForDisplay(details.payload ?? {}));
+  if (details.warningText) {
+    confirmationWarning.textContent = details.warningText;
+    confirmationWarning.hidden = false;
+  } else {
+    confirmationWarning.textContent = "";
+    confirmationWarning.hidden = true;
+  }
+
+  signedConfirmationDialog.returnValue = "";
+  return new Promise((resolve) => {
+    const handleClose = () => {
+      signedConfirmationDialog.removeEventListener("close", handleClose);
+      resolve(signedConfirmationDialog.returnValue === "confirm");
+    };
+    signedConfirmationDialog.addEventListener("close", handleClose);
+    signedConfirmationDialog.showModal();
+  });
+}
+
+function collectGenericPayloadWarnings(payload) {
+  const blankStrings = [];
+  const nullValues = [];
+  const zeroNumbers = [];
+
+  function visit(value, path) {
+    const label = path || "payload";
+    if (value === null) {
+      nullValues.push(label);
+      return;
+    }
+    if (typeof value === "string") {
+      if (value.trim() === "") {
+        blankStrings.push(label);
+      }
+      return;
+    }
+    if (typeof value === "number") {
+      if (Object.is(value, 0)) {
+        zeroNumbers.push(label);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((entry, index) => visit(entry, `${label}[${index}]`));
+      return;
+    }
+    if (value && typeof value === "object") {
+      Object.entries(value).forEach(([key, entry]) => visit(entry, path ? `${path}.${key}` : key));
+    }
+  }
+
+  visit(payload, "");
+  const pieces = [];
+  if (blankStrings.length) {
+    pieces.push(`blank strings: ${blankStrings.slice(0, 6).join(", ")}`);
+  }
+  if (nullValues.length) {
+    pieces.push(`null values: ${nullValues.slice(0, 6).join(", ")}`);
+  }
+  if (zeroNumbers.length) {
+    pieces.push(`zero numeric fields: ${zeroNumbers.slice(0, 6).join(", ")}`);
+  }
+  return pieces.length
+    ? `Review this ABI-shaped payload before signing; it contains ${pieces.join(" | ")}. The console does not block these values because optionality is not encoded in the ABI.`
+    : "";
 }
 
 function setRequestAndResponsePreview(requestValue, responseValue) {
@@ -1571,6 +1696,25 @@ async function runRequest() {
     const preview = currentRequestPreview();
     requestPreview.textContent = prettyJson(preview);
     const mode = modeDisplay.value || "view";
+    if (mode === "call") {
+      const confirmed = await confirmSignedMutation({
+        environment: preview.environment,
+        authority: preview.authority || currentAuthority(),
+        contract: state.currentContract?.contract_key || "Selected contract",
+        contractAddress: preview.contract_address,
+        action: "Run Call",
+        entrypoint: preview.entrypoint,
+        gasLimit: preview.gas_limit,
+        requestPath: "/api/call",
+        payload: preview.payload,
+        warningText: collectGenericPayloadWarnings(preview.payload),
+      });
+      if (!confirmed) {
+        setBanner(requestStatus, "Cancelled before submission. No signed call was sent.", "muted");
+        responsePreview.textContent = prettyJson({});
+        return;
+      }
+    }
     setBanner(requestStatus, `Submitting ${mode} request...`, "muted");
 
     const { response, result } = await requestJson(mode === "call" ? "/api/call" : "/api/view", {
@@ -2107,7 +2251,23 @@ async function submitAdvancedPayload(path, editor, type, metaFactory) {
       environment,
       ...payload,
     };
+    const meta = metaFactory(payload, localRequest);
     setRequestAndResponsePreview(localRequest, {});
+    const confirmed = await confirmSignedMutation({
+      environment,
+      authority: localRequest.authority || currentAuthority(),
+      contract: meta.contractKey || BRIDGE_CONTRACT_KEY,
+      contractAddress: meta.contractAddress || bridgeContractForEnvironment(state.currentEnvironment)?.contract_address,
+      action: type,
+      entrypoint: meta.entrypoint,
+      requestPath: path,
+      payload: localRequest,
+    });
+    if (!confirmed) {
+      setBanner(requestStatus, "Cancelled before submission. No signed call was sent.", "muted");
+      setBanner(submissionSummary, `${type} cancelled before submission.`, "muted");
+      return;
+    }
     setBanner(requestStatus, `Submitting ${type}...`, "muted");
     const { response, result } = await requestJson(path, {
       method: "POST",
@@ -2124,7 +2284,7 @@ async function submitAdvancedPayload(path, editor, type, metaFactory) {
     }
     setBanner(requestStatus, `${type} succeeded with upstream status ${result.upstream_status}.`, "success");
     setBanner(submissionSummary, `${type} succeeded.`, "success");
-    recordRequestFromResult(metaFactory(payload), localRequest, result);
+    recordRequestFromResult(meta, localRequest, result);
   } catch (error) {
     setBanner(requestStatus, `${type} failed: ${error}`, "error");
     setBanner(submissionSummary, String(error), "error");
