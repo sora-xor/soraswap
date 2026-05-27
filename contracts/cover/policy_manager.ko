@@ -18,6 +18,14 @@ seiyaku PolicyManager {
   state int CoverAutomationBacklog;
   state int CoverAutomationSafeMode;
 
+  state int CoverLifecycleCadenceSlots;
+  state int CoverLifecycleMaxItems;
+  state int CoverLifecycleEnabled;
+  state int CoverLifecycleNextSlot;
+  state int CoverLifecycleCursor;
+  state int CoverLifecycleLastSlot;
+  state int CoverLifecycleLastProcessed;
+
   state int CoverNextPolicyId;
 
   state CoverPolicyOwner: Map<int, AccountId>;
@@ -38,6 +46,13 @@ seiyaku PolicyManager {
   state CoverPolicyLastObservedPrice: Map<int, int>;
   state CoverPolicyClaimPayout: Map<int, int>;
   state CoverPolicyClaimCount: Map<int, int>;
+
+  register_trigger soraswap_cover_lifecycle_tick {
+    call native_lifecycle_tick;
+    on time pre_commit;
+    repeats indefinitely;
+    metadata { tag: "soraswap"; module: "cover.policy_manager"; __enabled: false; }
+  }
 
   fn assert_initialized() {
     assert(CoverInitialized == 1, "cover manager not initialized");
@@ -186,6 +201,13 @@ seiyaku PolicyManager {
     CoverAutomationBacklogCap = 0;
     CoverAutomationBacklog = 0;
     CoverAutomationSafeMode = 0;
+    CoverLifecycleCadenceSlots = 0;
+    CoverLifecycleMaxItems = 1;
+    CoverLifecycleEnabled = 0;
+    CoverLifecycleNextSlot = 0;
+    CoverLifecycleCursor = 1;
+    CoverLifecycleLastSlot = 0;
+    CoverLifecycleLastProcessed = 0;
     CoverNextPolicyId = 1;
   }
 
@@ -212,6 +234,61 @@ seiyaku PolicyManager {
     CoverAutomationBacklog = current_backlog;
     CoverAutomationSafeMode = safe_mode;
     risk_vault_report_bucket();
+  }
+
+  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
+                                         max_items_per_tick: int,
+                                         enabled: int) permission(Admin) {
+    assert_owner();
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(max_items_per_tick > 0, "invalid max items");
+    assert(max_items_per_tick <= 16, "max items too high");
+    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    CoverLifecycleCadenceSlots = cadence_slots;
+    CoverLifecycleMaxItems = max_items_per_tick;
+    CoverLifecycleEnabled = enabled;
+    CoverLifecycleNextSlot = block_height() + cadence_slots;
+    if CoverLifecycleCursor <= 0 {
+      CoverLifecycleCursor = 1;
+    }
+    set_trigger_enabled(name("soraswap_cover_lifecycle_tick"), enabled);
+  }
+
+  kotoage fn native_lifecycle_tick() permission(AssetOps) {
+    if CoverInitialized == 0 {
+      return;
+    }
+    if CoverLifecycleEnabled == 0 {
+      return;
+    }
+    let current_slot = block_height();
+    if CoverLifecycleNextSlot > 0 && current_slot < CoverLifecycleNextSlot {
+      return;
+    }
+    let processed = 0;
+    let policy_id = CoverLifecycleCursor;
+    if policy_id <= 0 || policy_id >= CoverNextPolicyId {
+      policy_id = 1;
+    }
+    while processed < CoverLifecycleMaxItems && policy_id < CoverNextPolicyId {
+      if CoverPolicyStatus.get_or(policy_id, 0) == 1 {
+        let expiry_slot = CoverPolicyRegistrationSlot.get_or(policy_id, 0) +
+          CoverPolicyMonitoringWindowSlots.get_or(policy_id, 0);
+        if current_slot >= expiry_slot {
+          risk_vault_release_liability(policy_id);
+          CoverPolicyStatus[policy_id] = 5;
+        }
+      }
+      processed = processed + 1;
+      policy_id = policy_id + 1;
+    }
+    if policy_id >= CoverNextPolicyId {
+      policy_id = 1;
+    }
+    CoverLifecycleCursor = policy_id;
+    CoverLifecycleLastSlot = current_slot;
+    CoverLifecycleLastProcessed = processed;
+    CoverLifecycleNextSlot = current_slot + CoverLifecycleCadenceSlots;
   }
 
   kotoage fn bind_contract(contract_id: AccountId) {
@@ -289,6 +366,7 @@ seiyaku PolicyManager {
     assert_initialized();
     assert_policy_exists(policy_id);
     assert(CoverPolicyStatus.get_or(policy_id, 0) != 4, "policy already claimed");
+    assert(CoverPolicyStatus.get_or(policy_id, 0) != 5, "policy expired");
     let oracle = assert_verified_observation(policy_id, oracle_payload, oracle_signature);
     let observed_price = oracle.0;
     let oracle_slot = oracle.1;
@@ -404,6 +482,18 @@ seiyaku PolicyManager {
       CoverAutomationBacklog,
       CoverAutomationSafeMode,
       CoverWithdrawalOnly
+    );
+  }
+
+  view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
+    return (
+      CoverLifecycleEnabled,
+      CoverLifecycleCadenceSlots,
+      CoverLifecycleMaxItems,
+      CoverLifecycleNextSlot,
+      CoverLifecycleCursor,
+      CoverLifecycleLastSlot,
+      CoverLifecycleLastProcessed
     );
   }
 }

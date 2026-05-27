@@ -14,6 +14,23 @@ seiyaku VaultManager {
   state RequestShares: Map<Name, int>;
   state RequestClaimSlot: Map<Name, int>;
   state RequestStatus: Map<Name, int>;
+  state int NextRequestIndex;
+  state RequestByIndex: Map<int, Name>;
+
+  state int VaultLifecycleCadenceSlots;
+  state int VaultLifecycleMaxItems;
+  state int VaultLifecycleEnabled;
+  state int VaultLifecycleNextSlot;
+  state int VaultLifecycleCursor;
+  state int VaultLifecycleLastSlot;
+  state int VaultLifecycleLastProcessed;
+
+  register_trigger soraswap_vault_lifecycle_tick {
+    call native_lifecycle_tick;
+    on time pre_commit;
+    repeats indefinitely;
+    metadata { tag: "soraswap"; module: "vaults.manager"; __enabled: false; }
+  }
 
   fn assert_vault_exists(vault_id: Name) {
     assert(VaultOwner.contains(vault_id), "vault missing");
@@ -32,6 +49,26 @@ seiyaku VaultManager {
 
   kotoage fn main() -> int {
     return 1;
+  }
+
+  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
+                                         max_items_per_tick: int,
+                                         enabled: int) permission(Admin) {
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(max_items_per_tick > 0, "invalid max items");
+    assert(max_items_per_tick <= 16, "max items too high");
+    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    VaultLifecycleCadenceSlots = cadence_slots;
+    VaultLifecycleMaxItems = max_items_per_tick;
+    VaultLifecycleEnabled = enabled;
+    VaultLifecycleNextSlot = block_height() + cadence_slots;
+    if VaultLifecycleCursor <= 0 {
+      VaultLifecycleCursor = 1;
+    }
+    if NextRequestIndex <= 0 {
+      NextRequestIndex = 1;
+    }
+    set_trigger_enabled(name("soraswap_vault_lifecycle_tick"), enabled);
   }
 
   kotoage fn register_vault(vault_id: Name,
@@ -78,18 +115,61 @@ seiyaku VaultManager {
     RequestShares[request_id] = shares;
     RequestClaimSlot[request_id] = claim_slot;
     RequestStatus[request_id] = 1;
+    if NextRequestIndex <= 0 {
+      NextRequestIndex = 1;
+    }
+    let index = NextRequestIndex;
+    NextRequestIndex = index + 1;
+    RequestByIndex[index] = request_id;
   }
 
   kotoage fn claim_redeem(request_id: Name) permission(AssetOps) {
     assert_request_owner(request_id);
-    assert(RequestStatus.ensure(request_id, 0) == 1, "request not open");
+    let status = RequestStatus.ensure(request_id, 0);
+    assert(status == 1 || status == 3, "request not open");
     let current_slot = block_height();
-    assert(current_slot >= RequestClaimSlot.ensure(request_id, 0), "claim not ready");
+    if status == 1 {
+      assert(current_slot >= RequestClaimSlot.ensure(request_id, 0), "claim not ready");
+    }
     let vault_id = RequestVault[request_id];
     let shares = RequestShares.ensure(request_id, 0);
     VaultTotalAssets[vault_id] = VaultTotalAssets.ensure(vault_id, 0) - shares;
     VaultTotalShares[vault_id] = VaultTotalShares.ensure(vault_id, 0) - shares;
     RequestStatus[request_id] = 2;
+  }
+
+  kotoage fn native_lifecycle_tick() {
+    if VaultLifecycleEnabled == 0 {
+      return;
+    }
+    let current_slot = block_height();
+    if VaultLifecycleNextSlot > 0 && current_slot < VaultLifecycleNextSlot {
+      return;
+    }
+    if NextRequestIndex <= 0 {
+      NextRequestIndex = 1;
+    }
+    let processed = 0;
+    let index = VaultLifecycleCursor;
+    if index <= 0 || index >= NextRequestIndex {
+      index = 1;
+    }
+    while processed < VaultLifecycleMaxItems && index < NextRequestIndex {
+      let request_id = RequestByIndex.get_or(index, name!("missing"));
+      if RequestStatus.get_or(request_id, 0) == 1 &&
+        current_slot >= RequestClaimSlot.get_or(request_id, 0) {
+        RequestStatus[request_id] = 3;
+      }
+      processed = processed + 1;
+      index = index + 1;
+    }
+    if index >= NextRequestIndex {
+      index = 1;
+    }
+    VaultLifecycleCursor = index;
+    VaultLifecycleLastSlot = current_slot;
+    VaultLifecycleLastProcessed = processed;
+    VaultLifecycleNextSlot = current_slot + VaultLifecycleCadenceSlots;
   }
 
   view fn vault_state(vault_id: Name) -> (int, int, int, int, int) {
@@ -108,5 +188,29 @@ seiyaku VaultManager {
 
   view fn position_state(position_id: Name) -> int {
     return PositionShares.get_or(position_id, 0);
+  }
+
+  view fn request_state(request_id: Name) -> (int, int, int) {
+    let registered = 0;
+    if RequestOwner.contains(request_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      RequestShares.get_or(request_id, 0),
+      RequestStatus.get_or(request_id, 0)
+    );
+  }
+
+  view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
+    return (
+      VaultLifecycleEnabled,
+      VaultLifecycleCadenceSlots,
+      VaultLifecycleMaxItems,
+      VaultLifecycleNextSlot,
+      VaultLifecycleCursor,
+      VaultLifecycleLastSlot,
+      VaultLifecycleLastProcessed
+    );
   }
 }

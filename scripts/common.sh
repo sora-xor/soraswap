@@ -27,12 +27,14 @@ SORASWAP_SNS_DOMAIN_SUFFIX_ID="${SORASWAP_SNS_DOMAIN_SUFFIX_ID:-4098}"
 # Keep the default aligned with the verified local smoke path and README docs;
 # callers can still override this per-run for heavier scenarios.
 SORASWAP_SMOKE_GAS_LIMIT="${SORASWAP_SMOKE_GAS_LIMIT:-500000}"
-SORASWAP_TESTNET_CHAIN_ID="${SORASWAP_TESTNET_CHAIN_ID:-809574f5-fee7-5e69-bfcf-52451e42d50f}"
-SORASWAP_TESTNET_CHAIN_DISCRIMINANT="${SORASWAP_TESTNET_CHAIN_DISCRIMINANT:-369}"
+SORASWAP_TESTNET_CHAIN_ID_DEFAULT="${SORASWAP_TESTNET_CHAIN_ID_DEFAULT:-809574f5-fee7-5e69-bfcf-52451e42d50f}"
+SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT="${SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT:-369}"
+SORASWAP_TESTNET_CHAIN_ID="${SORASWAP_TESTNET_CHAIN_ID:-}"
+SORASWAP_TESTNET_CHAIN_DISCRIMINANT="${SORASWAP_TESTNET_CHAIN_DISCRIMINANT:-}"
 SORASWAP_PRODUCTION_CHAIN_ID="${SORASWAP_PRODUCTION_CHAIN_ID:-}"
 SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP="${SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP:-1048576}"
 SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS:-45}"
-SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS:-1800}"
+SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS:-3600}"
 SORASWAP_DEPLOY_PIPELINE_WAIT_SECS="${SORASWAP_DEPLOY_PIPELINE_WAIT_SECS:-300}"
 SORASWAP_DEPLOY_COMMITTED_WAIT_SECS="${SORASWAP_DEPLOY_COMMITTED_WAIT_SECS:-120}"
 SORASWAP_DEPLOY_MANIFEST_WAIT_SECS="${SORASWAP_DEPLOY_MANIFEST_WAIT_SECS:-180}"
@@ -242,22 +244,24 @@ soraswap_submit_block_height_tick() {
   fi
 
   iroha_cli_with_gas_metadata "$config" ledger transaction ping \
-    --msg "soraswap-${safe_label}-tick" >/dev/null 2>&1
+    --msg "soraswap-${safe_label}-tick" \
+    --no-wait >/dev/null 2>&1
 }
 
 soraswap_wait_for_block_height_at_least() {
   local config="$1"
   local target_height="$2"
   local label="${3:-block height}"
-  local attempts="${4:-120}"
-  local tick_blocks="${5:-0}"
-  local height
+  local attempts="${4:-${SORASWAP_BLOCK_WAIT_ATTEMPTS:-120}}"
+  local tick_blocks="${5:-${SORASWAP_BLOCK_WAIT_TICK:-0}}"
+  local height last_tick_height
 
   if [[ -z "$target_height" || "$target_height" == "null" || "$target_height" != <-> ]]; then
     echo "invalid target block height for $label: $target_height" >&2
     return 1
   fi
 
+  last_tick_height=""
   while (( attempts > 0 )); do
     height="$(soraswap_current_block_height "$config")"
     if [[ -n "$height" && "$height" != "null" && "$height" == <-> ]]; then
@@ -266,7 +270,10 @@ soraswap_wait_for_block_height_at_least() {
       fi
     fi
     if [[ "$tick_blocks" == "1" || "$tick_blocks" == "true" || "$tick_blocks" == "yes" ]]; then
-      soraswap_submit_block_height_tick "$config" "$label" || true
+      if [[ -z "$height" || "$height" == "null" || "$height" != <-> || "$height" != "$last_tick_height" ]]; then
+        soraswap_submit_block_height_tick "$config" "$label" || true
+        last_tick_height="$height"
+      fi
     fi
     attempts=$(( attempts - 1 ))
     sleep 1
@@ -417,7 +424,7 @@ soraswap_submit_native_defi_attestation() {
     return 1
   fi
 
-  attestation_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-defi-attestation.XXXXXX.json")"
+  attestation_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-defi-attestation.XXXXXX")"
   jq -cn \
     --arg provider "$provider" \
     --argjson domain "$domain" \
@@ -724,6 +731,10 @@ gas_metadata_asset_id_for_config() {
 
   label="$(fee_asset_label_for_config "$config" 2>/dev/null || true)"
   if [[ -n "$label" ]]; then
+    if [[ "$label" == *"#"* ]] && ! asset_definition_alias_exists "$config" "$label"; then
+      fee_asset_definition_id_for_config "$config"
+      return 0
+    fi
     printf '%s\n' "$label"
     return 0
   fi
@@ -1363,15 +1374,24 @@ public_env_for_config() {
 
 chain_id_override_for_config() {
   local config="$1"
-  local public_env
+  local public_env config_chain
 
   public_env="$(public_env_for_config "$config" 2>/dev/null || true)"
   case "$public_env" in
     testnet)
-      printf '%s\n' "$SORASWAP_TESTNET_CHAIN_ID"
+      if [[ -n "$SORASWAP_TESTNET_CHAIN_ID" ]]; then
+        printf '%s\n' "$SORASWAP_TESTNET_CHAIN_ID"
+        return 0
+      fi
+      config_chain="$(awk -F '"' '/^chain = / {print $2; exit}' "$config")"
+      printf '%s\n' "${config_chain:-$SORASWAP_TESTNET_CHAIN_ID_DEFAULT}"
       ;;
     production)
-      printf '%s\n' "$SORASWAP_PRODUCTION_CHAIN_ID"
+      if [[ -n "$SORASWAP_PRODUCTION_CHAIN_ID" ]]; then
+        printf '%s\n' "$SORASWAP_PRODUCTION_CHAIN_ID"
+        return 0
+      fi
+      printf '\n'
       ;;
     *)
       printf '\n'
@@ -1678,11 +1698,100 @@ account_private_key_from_config() {
   awk -F '"' '/^private_key = / {print $2; exit}' "$config"
 }
 
+account_chain_discriminant_from_config() {
+  local config="$1"
+  awk '
+    /^\[account\]/ { in_account = 1; next }
+    /^\[/ { in_account = 0 }
+    in_account && /^[[:space:]]*chain_discriminant[[:space:]]*=/ {
+      sub(/^[[:space:]]*chain_discriminant[[:space:]]*=[[:space:]]*/, "", $0)
+      gsub(/[^0-9]/, "", $0)
+      print $0
+      exit
+    }
+  ' "$config"
+}
+
+account_profile_from_config() {
+  local config="$1"
+  awk -F '"' '
+    /^\[account\]/ { in_account = 1; next }
+    /^\[/ { in_account = 0 }
+    in_account && /^[[:space:]]*profile[[:space:]]*=/ {
+      print $2
+      exit
+    }
+  ' "$config"
+}
+
+chain_discriminant_for_profile() {
+  case "$1" in
+    taira)
+      echo "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT"
+      ;;
+    sora|local|default)
+      echo "${SORASWAP_CHAIN_DISCRIMINANT:-753}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+chain_discriminant_for_env_config() {
+  local env="${1:-testnet}"
+  local config="${2:-}"
+  local config_discriminant profile profile_discriminant
+
+  case "$env" in
+    testnet)
+      if [[ -n "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT" ]]; then
+        echo "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT"
+        return 0
+      fi
+      if [[ -n "$config" && -f "$config" ]]; then
+        config_discriminant="$(account_chain_discriminant_from_config "$config")"
+        if [[ -n "$config_discriminant" ]]; then
+          echo "$config_discriminant"
+          return 0
+        fi
+        profile="$(account_profile_from_config "$config")"
+        if [[ -n "$profile" ]] && profile_discriminant="$(chain_discriminant_for_profile "$profile" 2>/dev/null)"; then
+          echo "$profile_discriminant"
+          return 0
+        fi
+      fi
+      echo "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT"
+      ;;
+    production)
+      if [[ -n "${SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT:-}" ]]; then
+        echo "$SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT"
+        return 0
+      fi
+      if [[ -n "${SORASWAP_CHAIN_DISCRIMINANT:-}" ]]; then
+        echo "$SORASWAP_CHAIN_DISCRIMINANT"
+        return 0
+      fi
+      if [[ -n "$config" && -f "$config" ]]; then
+        config_discriminant="$(account_chain_discriminant_from_config "$config")"
+        if [[ -n "$config_discriminant" ]]; then
+          echo "$config_discriminant"
+          return 0
+        fi
+      fi
+      echo "753"
+      ;;
+    *)
+      echo "${SORASWAP_CHAIN_DISCRIMINANT:-753}"
+      ;;
+  esac
+}
+
 chain_discriminant_for_env() {
   local env="${1:-testnet}"
   case "$env" in
     testnet)
-      echo "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT"
+      echo "${SORASWAP_TESTNET_CHAIN_DISCRIMINANT:-$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT}"
       ;;
     production)
       echo "${SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT:-${SORASWAP_CHAIN_DISCRIMINANT:-753}}"
@@ -2504,11 +2613,11 @@ network_prefix_for_config() {
   public_env="$(public_env_for_config "$config" 2>/dev/null || true)"
   case "$public_env" in
     testnet)
-      echo "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT"
+      chain_discriminant_for_env_config testnet "$config"
       return 0
       ;;
     production)
-      echo "${SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT:-${SORASWAP_CHAIN_DISCRIMINANT:-753}}"
+      chain_discriminant_for_env_config production "$config"
       return 0
       ;;
   esac
@@ -2683,6 +2792,21 @@ read_norito_error_message() {
     return 1
   fi
 
+  if jq -er '
+    if type == "object" then
+      (.code // .error.code // empty) as $code
+      | (.message // .error.message // empty) as $message
+      | if $code != "" and $message != "" then "\($code): \($message)"
+        elif $message != "" then $message
+        elif $code != "" then $code
+        else empty
+        end
+    else empty
+    end
+  ' "$file_path" 2>/dev/null; then
+    return 0
+  fi
+
   /usr/bin/python3 - "$file_path" <<'PY'
 from pathlib import Path
 import sys
@@ -2702,6 +2826,32 @@ if current:
 if parts:
     print(parts[-1])
 PY
+}
+
+norito_error_summary_from_text() {
+  local text="$1"
+  jq -er '
+    if type == "object" then
+      (.code // .error.code // empty) as $code
+      | (.message // .error.message // empty) as $message
+      | if $code != "" and $message != "" then "\($code): \($message)"
+        elif $message != "" then $message
+        elif $code != "" then $code
+        else empty
+        end
+    else empty
+    end
+  ' <<<"$text" 2>/dev/null || true
+}
+
+norito_error_code_from_text() {
+  local text="$1"
+  jq -er '
+    if type == "object" then
+      (.code // .error.code // empty)
+    else empty
+    end
+  ' <<<"$text" 2>/dev/null || true
 }
 
 extract_expected_chain_id_from_error() {
@@ -3077,7 +3227,7 @@ account_positive_asset_balances_json() {
 claim_public_testnet_faucet() {
   local config="$1"
   local account_id="$2"
-  local torii_base puzzle_json nonce_hex payload_json response http_code body tx_hash
+  local torii_base puzzle_json nonce_hex payload_json response http_code body tx_hash error_code error_summary
   local attempt=1
   local max_attempts="${SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS:-3}"
 
@@ -3113,7 +3263,23 @@ claim_public_testnet_faucet() {
     body="${response%$'\n'*}"
 
     if [[ "$http_code" != "200" && "$http_code" != "202" ]]; then
-      echo "faucet claim failed for $account_id: HTTP $http_code: $body" >&2
+      error_code="$(norito_error_code_from_text "$body")"
+      error_summary="$(norito_error_summary_from_text "$body")"
+      case "$error_code:$error_summary:$body" in
+        *faucet_pow_anchor_stale*|*"faucet pow anchor is stale"*|*faucet_pow_solution_invalid*|*"invalid faucet pow solution"*)
+          if (( attempt < max_attempts )); then
+            echo "faucet claim puzzle expired or lost the PoW race for $account_id; retrying with a fresh puzzle (${attempt}/${max_attempts})" >&2
+            sleep 1
+            attempt=$(( attempt + 1 ))
+            continue
+          fi
+          ;;
+      esac
+      if [[ -n "$error_summary" ]]; then
+        echo "faucet claim failed for $account_id: HTTP $http_code: $error_summary" >&2
+      else
+        echo "faucet claim failed for $account_id: HTTP $http_code: $body" >&2
+      fi
       return 1
     fi
 
@@ -3202,7 +3368,7 @@ asset_definition_id_for_alias() {
     attempt=$(( attempt + 1 ))
   done
 
-  fallback_id="$(public_asset_definition_id_fallback_for_alias "$config" "$alias" 2>/dev/null || true)"
+  fallback_id="$(asset_definition_id_fallback_for_alias "$config" "$alias" 2>/dev/null || true)"
   if [[ -n "$fallback_id" ]]; then
     printf '%s\n' "$fallback_id"
     return 0
@@ -3211,11 +3377,23 @@ asset_definition_id_for_alias() {
   return 1
 }
 
-public_asset_definition_id_fallback_for_alias() {
+asset_definition_id_fallback_for_alias() {
   local config="$1"
   local alias="$2"
+  local public_env local_fee_id
 
-  public_env_for_config "$config" >/dev/null 2>&1 || return 1
+  public_env="$(public_env_for_config "$config" 2>/dev/null || true)"
+  if [[ -z "$public_env" && -n "$SORASWAP_LOCAL_FEE_ASSET_LABEL" && "$alias" == "$SORASWAP_LOCAL_FEE_ASSET_LABEL" ]]; then
+    local_fee_id="$(localnet_fee_asset_definition_id_for_config "$config" 2>/dev/null || true)"
+    if [[ -n "$local_fee_id" ]]; then
+      printf '%s\n' "$local_fee_id"
+      return 0
+    fi
+    if [[ -n "$SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID" ]]; then
+      printf '%s\n' "$SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID"
+      return 0
+    fi
+  fi
 
   case "$alias" in
     "$SORASWAP_BASE_ASSET_ALIAS"|"$SORASWAP_FEE_ASSET_ALIAS"|xor#universal)
@@ -3244,6 +3422,18 @@ public_asset_definition_id_fallback_for_alias() {
   esac
 }
 
+public_asset_definition_id_fallback_for_alias() {
+  public_env_for_config "$1" >/dev/null 2>&1 || return 1
+  asset_definition_id_fallback_for_alias "$@"
+}
+
+asset_definition_id_exists() {
+  local config="$1"
+  local asset_id="$2"
+
+  iroha_cli_json --config "$config" ledger asset definition get --id "$asset_id" >/dev/null 2>&1
+}
+
 ensure_asset_definition_alias() {
   local config="$1"
   local asset_id="$2"
@@ -3259,6 +3449,12 @@ ensure_asset_definition_alias() {
       return 1
     fi
     echo "asset definition alias already present: $alias -> $existing_id"
+    return 0
+  fi
+
+  existing_id="$(asset_definition_id_fallback_for_alias "$config" "$alias" 2>/dev/null || true)"
+  if [[ "$existing_id" == "$asset_id" ]] && asset_definition_id_exists "$config" "$asset_id"; then
+    echo "asset definition id already present for configured alias fallback: $alias -> $asset_id"
     return 0
   fi
 
@@ -3743,7 +3939,7 @@ derive_contract_address_for_deploy() {
   local env="${5:-testnet}"
   local chain_discriminant
 
-  chain_discriminant="$(chain_discriminant_for_env "$env")"
+  chain_discriminant="$(chain_discriminant_for_env_config "$env" "$config")"
   iroha_cli_json --config "$config" app contracts derive-address \
     --authority "$authority" \
     --dataspace "$dataspace" \
@@ -4223,7 +4419,7 @@ submit_contract_app_bundle() {
   while (( attempt <= max_attempts )); do
     stderr_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-contract-app-stderr.XXXXXX")"
     set +e
-    output="$(iroha_cli_json --config "$active_config" contract app "$current_action" \
+    output="$(iroha_cli_with_gas_metadata "$active_config" --output-format json contract app "$current_action" \
       --manifest "$manifest_path" \
       --authority "$SORASWAP_AUTHORITY" \
       --private-key "$private_key" 2>"$stderr_file")"
@@ -4275,8 +4471,19 @@ wait_for_contract_alias_activation() {
   local contract_alias="$2"
   local expected_contract_address="$3"
   local timeout_secs="${SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS:-180}"
-  local deadline now resolved_response resolved_address resolve_status
+  local deadline now resolved_response resolved_address resolve_status tick_blocks tick_default tick_interval last_tick_at
 
+  if public_env_for_config "$config" >/dev/null 2>&1; then
+    tick_default=0
+  else
+    tick_default=1
+  fi
+  tick_blocks="${SORASWAP_CONTRACT_APP_ACTIVATION_TICK_BLOCKS:-$tick_default}"
+  tick_interval="${SORASWAP_CONTRACT_APP_ACTIVATION_TICK_INTERVAL_SECS:-10}"
+  if [[ "$tick_interval" != <-> ]]; then
+    tick_interval=10
+  fi
+  last_tick_at=0
   deadline=$(( $(date +%s) + timeout_secs ))
   while true; do
     if resolved_response="$(contract_alias_resolve_json "$config" "$contract_alias" 2>/dev/null)"; then
@@ -4297,6 +4504,11 @@ wait_for_contract_alias_activation() {
     if (( now >= deadline )); then
       echo "timed out waiting for $contract_alias to activate at $expected_contract_address" >&2
       return 1
+    fi
+    if [[ "$tick_blocks" == "1" || "$tick_blocks" == "true" || "$tick_blocks" == "yes" ]] \
+      && (( now - last_tick_at >= tick_interval )); then
+      soraswap_submit_block_height_tick "$config" "contract-activation" || true
+      last_tick_at="$now"
     fi
     sleep 1
   done
@@ -4456,14 +4668,44 @@ deployment_records_json_for_env() {
   jq -sc 'sort_by(.contract_key)' "${record_paths[@]}"
 }
 
+deployment_snapshot_record_json_for_env() {
+  local env="$1"
+  local contract_key="$2"
+  local snapshot
+
+  snapshot="$(contracts_snapshot_latest_path_for_env "$env")"
+  if [[ ! -f "$snapshot" ]]; then
+    return 1
+  fi
+
+  jq -cer --arg key "$contract_key" '
+    def named_record:
+      select((.name? // .contract_key? // .key? // "") == $key);
+    def records:
+      (.contracts? // empty) as $contracts
+      | if ($contracts | type) == "array" then
+          $contracts[] | (., (.contracts[]?))
+        elif ($contracts | type) == "object" then
+          $contracts[]? | (., (.contracts[]?))
+        else
+          empty
+        end;
+    records | named_record
+  ' "$snapshot" | tail -n 1
+}
+
 deployed_contract_id_for_env() {
   local env="$1"
   local contract_key="$2"
-  local record
+  local record snapshot_record
 
   record="$(deployment_record_path_for_env "$env" "$contract_key")"
   if [[ -f "$record" ]]; then
     jq -r '.contract_address // .contract_id // empty' "$record"
+    return 0
+  fi
+  if snapshot_record="$(deployment_snapshot_record_json_for_env "$env" "$contract_key" 2>/dev/null)"; then
+    jq -r '.contract_address // .contract_id // .instance.contract_address // empty' <<<"$snapshot_record"
     return 0
   fi
 
@@ -4473,11 +4715,15 @@ deployed_contract_id_for_env() {
 deployed_contract_dataspace_for_env() {
   local env="$1"
   local contract_key="$2"
-  local record
+  local record snapshot_record
 
   record="$(deployment_record_path_for_env "$env" "$contract_key")"
   if [[ -f "$record" ]]; then
     jq -r '.dataspace // .namespace // "universal"' "$record"
+    return 0
+  fi
+  if snapshot_record="$(deployment_snapshot_record_json_for_env "$env" "$contract_key" 2>/dev/null)"; then
+    jq -r '.dataspace // .namespace // .instance.dataspace // "universal"' <<<"$snapshot_record"
     return 0
   fi
 
@@ -5057,7 +5303,7 @@ deploy_one() {
   compiled_manifest="$(manifest_path_for "$src")"
   expected_code_hash="$(manifest_code_hash_hex "$compiled_manifest")"
   expected_abi_hash="$(manifest_abi_hash_hex "$compiled_manifest")"
-  chain_discriminant="$(chain_discriminant_for_env "$env")"
+  chain_discriminant="$(chain_discriminant_for_env_config "$env" "$config")"
   chain_fingerprint_json="$(chain_fingerprint_json_or_null)"
   chain_fingerprint_json_compact="$(compact_json_or_fail "$contract_key.chain_fingerprint_json" "$chain_fingerprint_json")"
   mkdir -p "$(dirname "$manifest_out")"
@@ -5414,6 +5660,394 @@ ensure_can_register_trigger_permission() {
     echo "CanRegisterTrigger grant for $account_id did not become query-visible" >&2
     return 1
   fi
+}
+
+account_has_can_execute_trigger_permission() {
+  local config="$1"
+  local account_id="$2"
+  local trigger_id="$3"
+  local permissions_json
+
+  permissions_json="$(iroha_cli_json --config "$config" account permission list --id "$account_id")" || return 1
+  jq -e \
+    --arg trigger "$trigger_id" \
+    '.[] | select(.name == "CanExecuteTrigger" and (.payload.trigger // "") == $trigger)' \
+    >/dev/null <<<"$permissions_json"
+}
+
+ensure_can_execute_trigger_permission() {
+  local config="$1"
+  local account_id="$2"
+  local trigger_id="$3"
+  local permission_json grant_output
+
+  if account_has_can_execute_trigger_permission "$config" "$account_id" "$trigger_id"; then
+    return 0
+  fi
+
+  permission_json="$(jq -cn \
+    --arg trigger "$trigger_id" \
+    '{name: "CanExecuteTrigger", payload: {trigger: $trigger}}')"
+  if ! grant_output="$(printf '%s' "$permission_json" | iroha_cli_with_gas_metadata "$config" account permission grant --id "$account_id" 2>&1)"; then
+    echo "failed to grant CanExecuteTrigger($trigger_id) to $account_id" >&2
+    printf '%s\n' "$grant_output" >&2
+    return 1
+  fi
+  if ! account_has_can_execute_trigger_permission "$config" "$account_id" "$trigger_id"; then
+    echo "CanExecuteTrigger grant for $account_id on $trigger_id did not become query-visible" >&2
+    return 1
+  fi
+}
+
+soraswap_set_trigger_enabled() {
+  local config="$1"
+  local trigger_id="$2"
+  local enabled="$3"
+  local command
+
+  case "$enabled" in
+    1|true|yes|on)
+      command="enable"
+      ;;
+    0|false|no|off)
+      command="disable"
+      ;;
+    *)
+      echo "invalid trigger enabled value for $trigger_id: $enabled" >&2
+      return 1
+      ;;
+  esac
+
+  iroha_cli_with_gas_metadata "$config" trigger "$command" "$trigger_id"
+}
+
+soraswap_enable_trigger() {
+  soraswap_set_trigger_enabled "$1" "$2" true
+}
+
+soraswap_disable_trigger() {
+  soraswap_set_trigger_enabled "$1" "$2" false
+}
+
+soraswap_expected_trigger_ids_json() {
+  jq -cn '[
+    "soraswap_epoch_auction_close",
+    "soraswap_twamm_tick",
+    "soraswap_range_governor_tick",
+    "soraswap_options_lifecycle_tick",
+    "soraswap_options_factory_lifecycle_tick",
+    "soraswap_cover_lifecycle_tick",
+    "soraswap_launchpad_lifecycle_tick",
+    "soraswap_vault_lifecycle_tick",
+    "soraswap_perps_lifecycle_tick",
+    "soraswap_escrow_settle"
+  ]'
+}
+
+soraswap_trigger_detail_summary_json() {
+  local config="$1"
+  local trigger_id="$2"
+  local output summary
+
+  if output="$(iroha_cli_json --config "$config" trigger get --id "$trigger_id" 2>&1)" \
+    && summary="$(jq -c --arg id "$trigger_id" '{
+        id: (.id // $id),
+        repeats: (.repeats // null),
+        authority: (.authority // null),
+        filter: (.filter // null),
+        metadata: (.metadata // {})
+      }' <<<"$output" 2>/dev/null)"; then
+    jq -cn \
+      --arg id "$trigger_id" \
+      --argjson trigger "$summary" \
+      '{id: $id, registered: true, trigger: $trigger}'
+    return 0
+  fi
+
+  jq -cn \
+    --arg id "$trigger_id" \
+    --arg error "$output" \
+    '{id: $id, registered: false, error: $error}'
+}
+
+soraswap_collect_trigger_registration_evidence() {
+  local config="$1"
+  local expected_json="${2:-}"
+  local registered_json active_json details_json missing_json detail trigger_id
+
+  if [[ -z "$expected_json" ]]; then
+    expected_json="$(soraswap_expected_trigger_ids_json)"
+  fi
+  expected_json="$(jq -c 'if type == "array" then . else [] end' <<<"$expected_json" 2>/dev/null || echo '[]')"
+
+  registered_json="$(iroha_cli_json --config "$config" trigger list all 2>/dev/null || echo '[]')"
+  registered_json="$(jq -c 'if type == "array" then . else [] end' <<<"$registered_json" 2>/dev/null || echo '[]')"
+  active_json="$(iroha_cli_json --config "$config" trigger list all --active 2>/dev/null || echo '[]')"
+  active_json="$(jq -c 'if type == "array" then . else [] end' <<<"$active_json" 2>/dev/null || echo '[]')"
+
+  details_json='[]'
+  while IFS= read -r trigger_id; do
+    [[ -z "$trigger_id" ]] && continue
+    detail="$(soraswap_trigger_detail_summary_json "$config" "$trigger_id")"
+    details_json="$(jq -cn \
+      --argjson details "$details_json" \
+      --argjson detail "$detail" \
+      '$details + [$detail]')"
+  done < <(jq -r '.[]' <<<"$expected_json")
+
+  missing_json="$(jq -cn \
+    --argjson expected "$expected_json" \
+    --argjson registered "$registered_json" \
+    '$expected - $registered')"
+
+  jq -cn \
+    --argjson registered "$registered_json" \
+    --argjson active "$active_json" \
+    --argjson expected "$expected_json" \
+    --argjson details "$details_json" \
+    --argjson missing "$missing_json" \
+    '{
+      registered_triggers: $registered,
+      registered_trigger_ids: $registered,
+      active_trigger_ids: $active,
+      expected_trigger_ids: $expected,
+      expected_trigger_details: $details,
+      missing_expected_trigger_ids: $missing
+    }'
+}
+
+soraswap_assert_expected_triggers_registered() {
+  local evidence_json="$1"
+  local missing
+
+  if jq -e '.missing_expected_trigger_ids | length == 0' >/dev/null 2>&1 <<<"$evidence_json"; then
+    return 0
+  fi
+
+  missing="$(jq -r '.missing_expected_trigger_ids | join(", ")' <<<"$evidence_json" 2>/dev/null || true)"
+  echo "missing expected registered triggers: ${missing:-unknown}" >&2
+  return 1
+}
+
+soraswap_prove_epoch_auction_native_close() {
+  local config="$1"
+  local contract_id="$2"
+  local gas_limit="${3:-${SORASWAP_SMOKE_GAS_LIMIT:-50000000}}"
+  local initial_view initial_result final_view final_result trigger_detail
+  local epoch_status end_slot last_close enabled_ok waited ticked
+
+  if ! initial_view="$(submit_contract_view "$config" "$contract_id" epoch_state "$gas_limit")"; then
+    echo "failed to query epoch auction state before native close proof" >&2
+    return 1
+  fi
+  initial_result="$(contract_view_result_json "$initial_view")"
+  epoch_status="$(jq -r 'if type == "array" then (.[1] // 0) else 0 end' <<<"$initial_result")"
+  end_slot="$(jq -r 'if type == "array" then (.[3] // 0) else 0 end' <<<"$initial_result")"
+  if [[ -z "$epoch_status" || "$epoch_status" == "null" || "$epoch_status" != <-> ]]; then
+    epoch_status=0
+  fi
+  if [[ -z "$end_slot" || "$end_slot" == "null" || "$end_slot" != <-> ]]; then
+    end_slot=0
+  fi
+
+  waited=0
+  ticked=0
+  if (( epoch_status == 1 && end_slot > 0 )); then
+    soraswap_wait_for_block_height_at_least \
+      "$config" \
+      "$end_slot" \
+      "epoch auction native close" \
+      "${SORASWAP_EPOCH_AUCTION_CLOSE_WAIT_ATTEMPTS:-120}" \
+      1
+    waited=1
+    soraswap_submit_block_height_tick "$config" "epoch-auction-native-close" || true
+    ticked=1
+  fi
+
+  if ! final_view="$(submit_contract_view "$config" "$contract_id" epoch_state "$gas_limit")"; then
+    echo "failed to query epoch auction state after native close proof" >&2
+    return 1
+  fi
+  final_result="$(contract_view_result_json "$final_view")"
+  trigger_detail="$(soraswap_trigger_detail_summary_json "$config" "soraswap_epoch_auction_close")"
+  epoch_status="$(jq -r 'if type == "array" then (.[1] // 0) else 0 end' <<<"$final_result")"
+  last_close="$(jq -r 'if type == "array" then (.[10] // 0) else 0 end' <<<"$final_result")"
+  if [[ -z "$epoch_status" || "$epoch_status" == "null" || "$epoch_status" != <-> ]]; then
+    epoch_status=0
+  fi
+  if [[ -z "$last_close" || "$last_close" == "null" || "$last_close" != <-> ]]; then
+    last_close=0
+  fi
+
+  if (( epoch_status != 2 )); then
+    echo "epoch auction native trigger did not close the epoch; status=$epoch_status" >&2
+    return 1
+  fi
+  if (( end_slot > 0 && last_close < end_slot )); then
+    echo "epoch auction close slot $last_close is before end slot $end_slot" >&2
+    return 1
+  fi
+  if jq -e '(.trigger.metadata.__enabled == false) or (.trigger.metadata.__enabled == 0)' \
+    >/dev/null 2>&1 <<<"$trigger_detail"; then
+    enabled_ok=1
+  else
+    enabled_ok=0
+  fi
+  if (( enabled_ok != 1 )); then
+    echo "epoch auction native trigger did not self-disable" >&2
+    return 1
+  fi
+
+  jq -cn \
+    --argjson before "$initial_result" \
+    --argjson after "$final_result" \
+    --argjson trigger "$trigger_detail" \
+    --argjson end_slot "$end_slot" \
+    --argjson waited "$waited" \
+    --argjson ticked "$ticked" \
+    '{
+      ok: true,
+      end_slot: $end_slot,
+      waited_for_due_slot: ($waited == 1),
+      submitted_final_tick: ($ticked == 1),
+      before_state: $before,
+      after_state: $after,
+      trigger: $trigger
+    }'
+}
+
+soraswap_execute_trigger() {
+  local config="$1"
+  local trigger_id="$2"
+  local args_json="${3:-}"
+  local output tx_hash timeout_ms poll_interval_ms
+
+  if [[ -z "$args_json" ]]; then
+    args_json="{}"
+  fi
+
+  args_json="$(compact_json_or_fail "trigger args" "$args_json")" || return 1
+  timeout_ms="${SORASWAP_TRIGGER_EXECUTE_TIMEOUT_MS:-$(( SORASWAP_TX_COMMITTED_WAIT_SECS * 1000 ))}"
+  poll_interval_ms="${SORASWAP_TRIGGER_EXECUTE_POLL_INTERVAL_MS:-1000}"
+  if ! output="$(iroha_cli_with_gas_metadata "$config" trigger execute "$trigger_id" \
+    --args-json "$args_json" \
+    --timeout-ms "$timeout_ms" \
+    --poll-interval-ms "$poll_interval_ms")"; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  tx_hash="$(jq -er '.hash // .submit.tx_hash_hex // .tx_hash_hex // empty' <<<"$output" 2>/dev/null || true)"
+  if [[ -z "$tx_hash" ]]; then
+    printf '%s\n' "$output"
+  else
+    printf '%s\n' "$tx_hash"
+  fi
+}
+
+soraswap_collect_trigger_completions() {
+  local config="$1"
+  local trigger_id="${2:-}"
+  local timeout_ms="${3:-5000}"
+  local limit="${4:-10}"
+  local output exit_code args
+
+  args=(trigger completed list --timeout-ms "$timeout_ms" --limit "$limit")
+  if [[ -n "$trigger_id" ]]; then
+    args+=(--id "$trigger_id")
+  fi
+  if output="$(iroha_cli_json --config "$config" "${args[@]}" 2>&1)"; then
+    printf '%s\n' "$output"
+    return 0
+  fi
+  exit_code=$?
+  jq -cn \
+    --arg trigger_id "$trigger_id" \
+    --arg error "$output" \
+    --argjson status "$exit_code" \
+    --argjson timeout_ms "$timeout_ms" \
+    --argjson limit "$limit" \
+    '{
+      trigger_id: (if $trigger_id == "" then null else $trigger_id end),
+      timeout_ms: $timeout_ms,
+      limit: $limit,
+      count: 0,
+      completions: [],
+      error: $error,
+      exit_status: $status
+    }'
+}
+
+soraswap_start_trigger_completion_capture() {
+  local config="$1"
+  local trigger_id="$2"
+  local timeout_ms="$3"
+  local limit="$4"
+  local output_path="$5"
+  local error_path="$6"
+
+  iroha_cli_json --config "$config" trigger completed watch \
+    --id "$trigger_id" \
+    --timeout-ms "$timeout_ms" \
+    --limit "$limit" \
+    > "$output_path" 2> "$error_path" &
+  SORASWAP_TRIGGER_COMPLETION_CAPTURE_PID="$!"
+}
+
+soraswap_finish_trigger_completion_capture() {
+  local pid="$1"
+  local trigger_id="$2"
+  local timeout_ms="$3"
+  local limit="$4"
+  local output_path="$5"
+  local error_path="$6"
+  local exit_code output error
+
+  if wait "$pid"; then
+    exit_code=0
+  else
+    exit_code=$?
+  fi
+  output="$(cat "$output_path" 2>/dev/null || true)"
+  error="$(cat "$error_path" 2>/dev/null || true)"
+  rm -f "$output_path" "$error_path"
+  if [[ "$exit_code" -eq 0 && -n "$output" ]] && jq -e . >/dev/null 2>&1 <<<"$output"; then
+    if jq -e 'type == "object" and (has("events") or has("completions"))' >/dev/null 2>&1 <<<"$output"; then
+      printf '%s\n' "$output"
+    else
+      jq -cn \
+        --arg trigger_id "$trigger_id" \
+        --argjson timeout_ms "$timeout_ms" \
+        --argjson limit "$limit" \
+        --slurpfile event <(printf '%s\n' "$output") \
+        '{
+          trigger_id: $trigger_id,
+          timeout_ms: $timeout_ms,
+          limit: $limit,
+          count: ($event | length),
+          events: $event,
+          completions: []
+        }'
+    fi
+    return 0
+  fi
+  jq -cn \
+    --arg trigger_id "$trigger_id" \
+    --arg error "$error" \
+    --arg output "$output" \
+    --argjson status "$exit_code" \
+    --argjson timeout_ms "$timeout_ms" \
+    --argjson limit "$limit" \
+    '{
+      trigger_id: $trigger_id,
+      timeout_ms: $timeout_ms,
+      limit: $limit,
+      count: 0,
+      events: [],
+      completions: [],
+      error: $error,
+      raw_output: $output,
+      exit_status: $status
+    }'
 }
 
 account_address_canonical_hex() {

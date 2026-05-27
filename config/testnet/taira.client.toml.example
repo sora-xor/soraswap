@@ -4,9 +4,10 @@ torii_url = "https://taira.sora.org/"
 # Fill these with your public testnet credentials and keep the copied file
 # untracked. The example stays in git; the real file should not.
 #
-# As observed on March 25, 2026, live Taira still uses the legacy public
-# testnet chain id above. If Taira is redeployed with a new chain id, update
-# this field to match the live network before running any deploy or smoke flow.
+# The canonical Taira profile uses the chain id above and account prefix 369.
+# If the public host is temporarily serving an existing Sora-prefix localnet
+# state, set `chain = "00000000-0000-0000-0000-000000000000"` and replace
+# `profile = "taira"` with `chain_discriminant = 753` in your untracked copy.
 #
 # The SoraSwap testnet scripts will now try, in order:
 # 1. self-registration of the signer on-chain
@@ -17,6 +18,7 @@ torii_url = "https://taira.sora.org/"
 # rejection reason.
 [account]
 domain = "change-me.universal"
+profile = "taira"
 public_key = "ed0120CHANGE_ME"
 private_key = "802620CHANGE_ME"
 

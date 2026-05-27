@@ -170,8 +170,8 @@ Manifest: `iroha.contracts.toml`
 ## dlmm.dlmm_pool
 
 - Interface: `artifacts/compiled/dlmm/dlmm_pool.interface.json`
-- Entrypoints: `22`
-- State keys: `24`
+- Entrypoints: `25`
+- State keys: `33`
 
 ### main
 
@@ -342,6 +342,42 @@ Manifest: `iroha.contracts.toml`
 
 - Kind: `View`
 - Return: `(int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
+### configure_range_governor
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "cadence_slots": 0,
+  "enabled": 0,
+  "max_active_bin_drift": 0,
+  "max_fee_pips": 0,
+  "target_active_bin": 0
+}
+```
+
+### native_range_governor_tick
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
+### range_governor_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int, int)`
 - Sample payload:
 
 ```json
@@ -652,6 +688,156 @@ Manifest: `iroha.contracts.toml`
 }
 ```
 
+## batch_amm.epoch_auction
+
+- Interface: `artifacts/compiled/batch_amm/epoch_auction.interface.json`
+- Entrypoints: `12`
+- State keys: `32`
+
+### main
+
+- Kind: `Public`
+- Return: `int`
+- Sample payload:
+
+```json
+{}
+```
+
+### init_auction
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "base_asset": "xor#universal",
+  "quote_asset": "xor#universal"
+}
+```
+
+### bind_contract
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "contract_id": "ed0120..."
+}
+```
+
+### configure_epoch
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "end_slot": 0,
+  "epoch_id": 0,
+  "lower_tick": 0,
+  "max_orders": 0,
+  "start_slot": 0,
+  "tick_step": 0,
+  "upper_tick": 0
+}
+```
+
+### submit_order
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "amount": 0,
+  "limit_tick": 0,
+  "order_id": "name",
+  "side": 0
+}
+```
+
+### cancel_order
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "order_id": "name"
+}
+```
+
+### close_epoch
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
+### native_epoch_auction_close
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
+### settle_order
+
+- Kind: `Public`
+- Return: `int`
+- Sample payload:
+
+```json
+{
+  "order_id": "name"
+}
+```
+
+### epoch_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
+### auction_config
+
+- Kind: `View`
+- Return: `(int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
+### order_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{
+  "order_id": "name"
+}
+```
+
 ## launchpad.liquidity_executor
 
 - Interface: `artifacts/compiled/launchpad/liquidity_executor.interface.json`
@@ -756,8 +942,8 @@ Manifest: `iroha.contracts.toml`
 ## launchpad.sale_factory
 
 - Interface: `artifacts/compiled/launchpad/sale_factory.interface.json`
-- Entrypoints: `24`
-- State keys: `38`
+- Entrypoints: `27`
+- State keys: `47`
 
 ### main
 
@@ -777,6 +963,20 @@ Manifest: `iroha.contracts.toml`
 
 ```json
 {}
+```
+
+### configure_trigger_lifecycle
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "cadence_slots": 0,
+  "enabled": 0,
+  "max_items_per_tick": 0
+}
 ```
 
 ### mirror_sale
@@ -995,6 +1195,16 @@ Manifest: `iroha.contracts.toml`
 }
 ```
 
+### native_lifecycle_tick
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
 ### seed_liquidity
 
 - Kind: `Public`
@@ -1054,6 +1264,16 @@ Manifest: `iroha.contracts.toml`
 {
   "sale": "name"
 }
+```
+
+### trigger_lifecycle_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
 ```
 
 ## referral.registry
@@ -1694,8 +1914,8 @@ Manifest: `iroha.contracts.toml`
 ## perps.perps_engine
 
 - Interface: `artifacts/compiled/perps/perps_engine.interface.json`
-- Entrypoints: `26`
-- State keys: `58`
+- Entrypoints: `29`
+- State keys: `67`
 
 ### main
 
@@ -1737,6 +1957,30 @@ Manifest: `iroha.contracts.toml`
   "liquidation_job_id": 0,
   "safe_mode": 0
 }
+```
+
+### configure_trigger_lifecycle
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "cadence_slots": 0,
+  "enabled": 0,
+  "max_items_per_tick": 0
+}
+```
+
+### native_lifecycle_tick
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### engine_config
@@ -1795,6 +2039,16 @@ Manifest: `iroha.contracts.toml`
 {
   "market_id": 0
 }
+```
+
+### trigger_lifecycle_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### position_liquidation_state
@@ -2057,8 +2311,8 @@ Manifest: `iroha.contracts.toml`
 ## options.manager
 
 - Interface: `artifacts/compiled/options/manager.interface.json`
-- Entrypoints: `16`
-- State keys: `40`
+- Entrypoints: `19`
+- State keys: `47`
 
 ### main
 
@@ -2083,6 +2337,30 @@ Manifest: `iroha.contracts.toml`
   "oracle_scheme": 0,
   "settlement_asset": "xor#universal"
 }
+```
+
+### configure_trigger_lifecycle
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "cadence_slots": 0,
+  "enabled": 0,
+  "max_items_per_tick": 0
+}
+```
+
+### native_lifecycle_tick
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### sync_automation
@@ -2271,11 +2549,21 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
+### trigger_lifecycle_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
 ## options.factory
 
 - Interface: `artifacts/compiled/options/factory.interface.json`
-- Entrypoints: `21`
-- State keys: `52`
+- Entrypoints: `24`
+- State keys: `59`
 
 ### main
 
@@ -2368,6 +2656,30 @@ Manifest: `iroha.contracts.toml`
   "current_backlog": 0,
   "safe_mode": 0
 }
+```
+
+### configure_trigger_lifecycle
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "cadence_slots": 0,
+  "enabled": 0,
+  "max_items_per_tick": 0
+}
+```
+
+### native_lifecycle_tick
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### enter_withdrawal_only
@@ -2543,6 +2855,16 @@ Manifest: `iroha.contracts.toml`
 ```
 
 ### automation_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
+### trigger_lifecycle_state
 
 - Kind: `View`
 - Return: `(int, int, int, int, int, int, int)`
@@ -3151,8 +3473,8 @@ Manifest: `iroha.contracts.toml`
 ## cover.policy_manager
 
 - Interface: `artifacts/compiled/cover/policy_manager.interface.json`
-- Entrypoints: `15`
-- State keys: `36`
+- Entrypoints: `18`
+- State keys: `43`
 
 ### main
 
@@ -3208,6 +3530,30 @@ Manifest: `iroha.contracts.toml`
   "current_backlog": 0,
   "safe_mode": 0
 }
+```
+
+### configure_trigger_lifecycle
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "cadence_slots": 0,
+  "enabled": 0,
+  "max_items_per_tick": 0
+}
+```
+
+### native_lifecycle_tick
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### bind_contract
@@ -3333,6 +3679,16 @@ Manifest: `iroha.contracts.toml`
 ```
 
 ### automation_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
+### trigger_lifecycle_state
 
 - Kind: `View`
 - Return: `(int, int, int, int, int, int, int)`
@@ -3713,8 +4069,8 @@ Manifest: `iroha.contracts.toml`
 ## vaults.manager
 
 - Interface: `artifacts/compiled/vaults/manager.interface.json`
-- Entrypoints: `7`
-- State keys: `15`
+- Entrypoints: `11`
+- State keys: `24`
 
 ### main
 
@@ -3724,6 +4080,20 @@ Manifest: `iroha.contracts.toml`
 
 ```json
 {}
+```
+
+### configure_trigger_lifecycle
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "cadence_slots": 0,
+  "enabled": 0,
+  "max_items_per_tick": 0
+}
 ```
 
 ### register_vault
@@ -3784,6 +4154,16 @@ Manifest: `iroha.contracts.toml`
 }
 ```
 
+### native_lifecycle_tick
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
 ### vault_state
 
 - Kind: `View`
@@ -3806,6 +4186,28 @@ Manifest: `iroha.contracts.toml`
 {
   "position_id": "name"
 }
+```
+
+### request_state
+
+- Kind: `View`
+- Return: `(int, int, int)`
+- Sample payload:
+
+```json
+{
+  "request_id": "name"
+}
+```
+
+### trigger_lifecycle_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
 ```
 
 ## operators.registry
@@ -4097,8 +4499,8 @@ Manifest: `iroha.contracts.toml`
 ## dlmm_hooks.hook_manager
 
 - Interface: `artifacts/compiled/dlmm_hooks/hook_manager.interface.json`
-- Entrypoints: `7`
-- State keys: `11`
+- Entrypoints: `16`
+- State keys: `39`
 
 ### main
 
@@ -4108,6 +4510,46 @@ Manifest: `iroha.contracts.toml`
 
 ```json
 {}
+```
+
+### init_trigger_twamm
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "base_asset": "xor#universal",
+  "cadence_slots": 0,
+  "enabled": 0,
+  "max_orders_per_tick": 0,
+  "quote_asset": "xor#universal"
+}
+```
+
+### bind_contract
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "contract_id": "ed0120..."
+}
+```
+
+### bind_router
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "router_contract": null
+}
 ```
 
 ### configure_hook_policy
@@ -4156,6 +4598,58 @@ Manifest: `iroha.contracts.toml`
 }
 ```
 
+### schedule_twamm_v2
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "input_is_base": 0,
+  "interval_slots": 0,
+  "min_total_out": 0,
+  "order_id": "name",
+  "slice_in": 0,
+  "start_slot": 0,
+  "total_in": 0
+}
+```
+
+### cancel_twamm
+
+- Kind: `Public`
+- Return: `int`
+- Sample payload:
+
+```json
+{
+  "order_id": "name"
+}
+```
+
+### claim_twamm
+
+- Kind: `Public`
+- Return: `int`
+- Sample payload:
+
+```json
+{
+  "order_id": "name"
+}
+```
+
+### native_twamm_tick
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
 ### record_execution
 
 - Kind: `Public`
@@ -4192,4 +4686,150 @@ Manifest: `iroha.contracts.toml`
 {
   "order_id": "name"
 }
+```
+
+### twamm_order_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{
+  "order_id": "name"
+}
+```
+
+### twamm_trigger_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
+## escrow.conditional_escrow
+
+- Interface: `artifacts/compiled/escrow/conditional_escrow.interface.json`
+- Entrypoints: `10`
+- State keys: `13`
+
+### main
+
+- Kind: `Public`
+- Return: `int`
+- Sample payload:
+
+```json
+{}
+```
+
+### init_escrow
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
+### bind_contract
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "contract_id": "ed0120..."
+}
+```
+
+### open_escrow
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "amount": 0,
+  "asset": "xor#universal",
+  "condition_code": 0,
+  "escrow_id": "name",
+  "expiry_slot": 0,
+  "taker": "ed0120..."
+}
+```
+
+### accept_escrow
+
+- Kind: `Public`
+- Return: `int`
+- Sample payload:
+
+```json
+{
+  "condition_code": 0,
+  "escrow_id": "name"
+}
+```
+
+### native_by_call_settle
+
+- Kind: `Public`
+- Return: `int`
+- Sample payload:
+
+```json
+{}
+```
+
+### cancel_escrow
+
+- Kind: `Public`
+- Return: `int`
+- Sample payload:
+
+```json
+{
+  "escrow_id": "name"
+}
+```
+
+### refund_expired
+
+- Kind: `Public`
+- Return: `int`
+- Sample payload:
+
+```json
+{
+  "escrow_id": "name"
+}
+```
+
+### escrow_state
+
+- Kind: `View`
+- Return: `(int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{
+  "escrow_id": "name"
+}
+```
+
+### escrow_config
+
+- Kind: `View`
+- Return: `(int, int)`
+- Sample payload:
+
+```json
+{}
 ```

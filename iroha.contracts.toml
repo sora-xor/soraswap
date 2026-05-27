@@ -20,6 +20,12 @@ source = "contracts/dlmm/dlmm_router.ko"
 artifact = "artifacts/compiled/dlmm/dlmm_router.to"
 
 [[contracts]]
+name = "batch_amm.epoch_auction"
+alias = "epoch_auction::batch_amm.universal"
+source = "contracts/batch_amm/epoch_auction.ko"
+artifact = "artifacts/compiled/batch_amm/epoch_auction.to"
+
+[[contracts]]
 name = "launchpad.liquidity_executor"
 alias = "liquidity_executor::launchpad.universal"
 source = "contracts/launchpad/liquidity_executor.ko"
@@ -138,6 +144,12 @@ name = "dlmm_hooks.hook_manager"
 alias = "hook_manager::dlmm_hooks.universal"
 source = "contracts/dlmm_hooks/hook_manager.ko"
 artifact = "artifacts/compiled/dlmm_hooks/hook_manager.to"
+
+[[contracts]]
+name = "escrow.conditional_escrow"
+alias = "conditional_escrow::escrow.universal"
+source = "contracts/escrow/conditional_escrow.ko"
+artifact = "artifacts/compiled/escrow/conditional_escrow.to"
 
 [profiles.local]
 client_config = "tmp/iroha-localnet/client.toml"

@@ -16,6 +16,8 @@ Market admin entrypoints:
 - `update_market(market_id, max_leverage_bps, maintenance_margin_bps, liquidation_fee_bps, open_interest_cap, funding_bps, funding_interval_slots, oracle_stale_slots, backlog_limit, utilisation_clamp_bps, liquidation_stress_limit, guard_flags, active)`
 - `admin_repair_orphan_position(position_id, mark_price_bps, index_price_bps)`
 - `heartbeat(market_id, current_backlog, safe_mode)`
+- `configure_trigger_lifecycle(cadence_slots, max_items_per_tick, enabled)`
+- `native_lifecycle_tick()`
 
 Trading and liquidation entrypoints:
 - Verified oracle tuple used below:
@@ -37,6 +39,7 @@ Views:
 - `liquidation_state(market_id) -> (int, int, int, int, int, int, int)`
 - `risk_state(market_id) -> (int, int, int, int, int, int, int, int)`
 - `automation_state() -> (int, int, int, int, int, int, int)`
+- `trigger_lifecycle_state() -> (int, int, int, int, int, int, int)`
 
 Notes:
 - Position ids are contract-assigned integers; caller-chosen position names were removed.
@@ -51,3 +54,4 @@ Notes:
 - Engine-side risk guards clamp openings and modifications on market pause, backlog, utilisation, liquidation stress, withdrawal-only mode, and automation safe mode.
 - The stored `risk_vault_contract` is the deployed `risk_vault` contract address literal carried as a UTF-8 `bytes` field for ABI v1 `call_contract(...)` routing. View surfaces expose that field as hex-encoded bytes.
 - `main()` is a write entrypoint, not a `view fn`; bootstrap and smoke should use the typed views above.
+- `soraswap_perps_lifecycle_tick` is a bounded pre-commit trigger. It consumes the latest valid cached oracle state, can apply funding and liquidation passes without keeper rewards, and does not invent prices.

@@ -5,6 +5,7 @@ These notes describe the current public entrypoint surface of the SoraSwap contr
 - [`n3x_hub.md`](./n3x_hub.md)
 - [`bridge.md`](./bridge.md)
 - [`dlmm.md`](./dlmm.md)
+- [`batch_amm.md`](./batch_amm.md)
 - [`launchpad.md`](./launchpad.md)
 - [`referral.md`](./referral.md)
 - [`automation.md`](./automation.md)
@@ -19,3 +20,4 @@ These notes describe the current public entrypoint surface of the SoraSwap contr
 - [`margin.md`](./margin.md)
 - [`rwa_market.md`](./rwa_market.md)
 - [`dlmm_hooks.md`](./dlmm_hooks.md)
+- [`conditional_escrow.md`](./conditional_escrow.md)

@@ -421,6 +421,8 @@ class ContractConsoleState:
         torii_url_source = "deployment" if deployment_torii_url else ("signer" if signer.torii_url else "none")
         mutation_policy = mutation_policy_for_environment(environment)
         warnings = list(signer.warnings)
+        if deployment_torii_url and signer.torii_url and deployment_torii_url != signer.torii_url:
+            warnings.append("signer config torii_url differs from deployment; using deployment torii_url")
 
         return {
             "name": environment,

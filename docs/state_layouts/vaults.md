@@ -6,5 +6,7 @@ Tracked values:
 - vault owner, underlying asset, share asset, strategy code, async flag
 - total assets, total shares, per-position owner, vault, and shares
 - request owner, vault, shares, claim slot, request status
+- request index maps used by bounded trigger scans
+- trigger lifecycle cadence, enabled flag, next slot, cursor, last slot, and last processed count
 
 Position ids are scoped to the depositing caller and vault. Redemption claim readiness is checked against contract `block_height()`.

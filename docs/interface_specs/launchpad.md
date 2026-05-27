@@ -10,6 +10,8 @@ Contracts:
 - `init_sale(sale, sale_asset, payment_asset, treasury, unit_price, soft_cap, hard_cap, claim_start_slot, claim_end_slot)`
 - `bind_contract(contract_id)`
 - `bind_executor(executor_contract)`
+- `configure_trigger_lifecycle(cadence_slots, max_items_per_tick, enabled)`
+- `native_lifecycle_tick()`
 - `contribute(sale, payment_amount) -> int`
 - `contribute_recorded(sale, allocation, payment_amount) -> int`
 - `close_sale(sale)`
@@ -29,6 +31,7 @@ Contracts:
 - `factory_binding_details() -> (AccountId, bytes, int, int)`
 - `activation_state(sale) -> (int, int)`
 - `mirror_allocation(allocation) -> (int, int, int, int, int)`
+- `trigger_lifecycle_state() -> (int, int, int, int, int, int, int)`
 
 `liquidity_executor.ko` public entrypoints:
 - `main() -> int`
@@ -47,3 +50,4 @@ Notes:
 - `register_seed_liquidity(...)` records the seed plan before activation; it does not require the sale to be closed because `finalize_sale_activation(...)` closes and activates in one signed path.
 - `finalize_sale_activation(...)` is the canonical production activation path. It closes the sale if needed, deposits claim inventory when provided, stages both seed assets through the factory contract subject, then invokes the dedicated executor contract to seed DLMM liquidity on chain.
 - The release path does not rely on an operator-only off-chain seeding workflow. `liquidity_executor.ko` is the only release-eligible bridge between launchpad sale proceeds and DLMM pool seeding.
+- `soraswap_launchpad_lifecycle_tick` is a bounded pre-commit trigger. It closes due sales and auto-seeds only when the seed plan is contract-custodied; otherwise it marks activation pending for explicit completion.

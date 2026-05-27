@@ -25,6 +25,9 @@ Contracts:
 - `swap_exact_in_quote(amount_in, min_out) -> int`
 - `swap_exact_in_base_for(recipient, amount_in, min_out) -> int`
 - `swap_exact_in_quote_for(recipient, amount_in, min_out) -> int`
+- `configure_range_governor(cadence_slots, max_fee_pips, target_active_bin, max_active_bin_drift, enabled)`
+- `native_range_governor_tick()`
+- `range_governor_state() -> (int, int, int, int, int, int, int, int)`
 
 `dlmm_router.ko` public entrypoints:
 - `main() -> int`
@@ -54,3 +57,4 @@ Notes:
 - Successful router swaps now append a router-local fill journal. Use `swap_history_head()` plus `mirror_swap_history(record_id)` to reconstruct exact executed fills and user-facing entry/exit analytics without inferring amounts from the submitted call payload alone.
 - `router_assets()` exposes both the canonical base asset and the currently bound quote asset so charting and journal surfaces can label the traded pair directly from the router state.
 - `mirror_position(...)` exposes stored fee debt and stored credits only. Use `quote_position_fees(...)` to read the fees that would become claimable after an accrual pass, especially before `remove_position_liquidity(...)`.
+- `soraswap_range_governor_tick` is a pre-commit trigger on `dlmm_pool`. It reads internal pool state only, bounds fee/risk drift, and can repair active-bin drift to a populated configured target bin without moving assets.

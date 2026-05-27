@@ -17,6 +17,7 @@ const SUCCESS_STATUSES = new Set(["Approved", "Committed", "Applied"]);
 const FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
 const PRODUCT_DEFINITIONS = [
   { key: "swaps", label: "Swaps", contractKey: "dlmm.dlmm_router" },
+  { key: "batchAuction", label: "Batch Auction", contractKey: "batch_amm.epoch_auction" },
   { key: "n3x", label: "n3x", contractKey: "n3x.n3x_hub" },
   { key: "perps", label: "Perps", contractKey: "perps.perps_engine" },
   { key: "farms", label: "Farms", contractKey: "farms.farm" },
@@ -25,6 +26,7 @@ const PRODUCT_DEFINITIONS = [
   { key: "cover", label: "Cover", contractKey: "cover.policy_manager" },
   { key: "intents", label: "Intents", contractKey: "intents.settlement_router" },
   { key: "vaults", label: "Vaults", contractKey: "vaults.manager" },
+  { key: "escrow", label: "Escrow", contractKey: "escrow.conditional_escrow" },
   { key: "operators", label: "Operators", contractKey: "operators.registry" },
   { key: "margin", label: "Margin", contractKey: "margin.portfolio_margin" },
   { key: "rwa", label: "RWA", contractKey: "rwa.market" },
@@ -63,6 +65,70 @@ const ACTION_RAILS = {
           amount_in: normalizeInteger(draft.amount_in),
           input_is_base: 0,
           min_out: normalizeInteger(draft.min_out),
+        }),
+      },
+    ],
+  },
+  batchAuction: {
+    title: "Epoch Auction",
+    copy: "Submit, cancel, and settle xor/n3x batch auction orders against the trigger-closed epoch.",
+    actions: [
+      {
+        key: "auction_bid",
+        label: "Bid",
+        submitLabel: "Submit Bid",
+        entrypoint: "submit_order",
+        fields: [
+          { key: "order_id", label: "Order ID", type: "text", defaultValue: "bid-1" },
+          { key: "amount", label: "Quote Amount", type: "number", min: 1, step: 1, defaultValue: 100 },
+          { key: "limit_tick", label: "Limit Tick", type: "number", min: 1, step: 1, defaultValue: 1_000_000 },
+        ],
+        buildPayload: (draft) => ({
+          order_id: String(draft.order_id || "bid-1").trim(),
+          side: 1,
+          amount: normalizeInteger(draft.amount),
+          limit_tick: normalizeInteger(draft.limit_tick),
+        }),
+      },
+      {
+        key: "auction_ask",
+        label: "Ask",
+        submitLabel: "Submit Ask",
+        entrypoint: "submit_order",
+        fields: [
+          { key: "order_id", label: "Order ID", type: "text", defaultValue: "ask-1" },
+          { key: "amount", label: "Base Amount", type: "number", min: 1, step: 1, defaultValue: 100 },
+          { key: "limit_tick", label: "Limit Tick", type: "number", min: 1, step: 1, defaultValue: 1_000_000 },
+        ],
+        buildPayload: (draft) => ({
+          order_id: String(draft.order_id || "ask-1").trim(),
+          side: 2,
+          amount: normalizeInteger(draft.amount),
+          limit_tick: normalizeInteger(draft.limit_tick),
+        }),
+      },
+      {
+        key: "auction_cancel",
+        label: "Cancel",
+        submitLabel: "Cancel Order",
+        entrypoint: "cancel_order",
+        fields: [
+          { key: "order_id", label: "Order ID", type: "text", defaultValue: "bid-1" },
+        ],
+        buildPayload: (draft) => ({
+          order_id: String(draft.order_id || "bid-1").trim(),
+        }),
+      },
+      {
+        key: "auction_settle",
+        label: "Settle",
+        submitLabel: "Settle Order",
+        entrypoint: "settle_order",
+        fields: [
+          { key: "order_id", label: "Order ID", type: "text", defaultValue: "bid-1" },
+        ],
+        buildPayload: (draft) => ({
+          order_id: String(draft.order_id || "bid-1").trim(),
         }),
       },
     ],
@@ -484,6 +550,72 @@ const ACTION_RAILS = {
       },
     ],
   },
+  escrow: {
+    title: "Conditional Escrow",
+    copy: "Open, accept, cancel, and refund trigger-resident escrow agreements.",
+    actions: [
+      {
+        key: "escrow_open",
+        label: "Open",
+        submitLabel: "Open Escrow",
+        entrypoint: "open_escrow",
+        fields: [
+          { key: "escrow_id", label: "Escrow ID", type: "text", defaultValue: "escrow-1" },
+          { key: "taker", label: "Taker", type: "text", defaultValue: "i105fixturetaker@universal" },
+          { key: "asset", label: "Asset", type: "text", defaultValue: "n3x#soraswap.universal" },
+          { key: "amount", label: "Amount", type: "number", min: 1, step: 1, defaultValue: 100 },
+          { key: "expiry_slot", label: "Expiry Slot", type: "number", min: 0, step: 1, defaultValue: 1_000_000 },
+          { key: "condition_code", label: "Condition Code", type: "number", min: 1, step: 1, defaultValue: 7 },
+        ],
+        buildPayload: (draft) => ({
+          escrow_id: String(draft.escrow_id || "escrow-1").trim(),
+          taker: String(draft.taker || "").trim(),
+          asset: String(draft.asset || "").trim(),
+          amount: normalizeInteger(draft.amount),
+          expiry_slot: normalizeInteger(draft.expiry_slot),
+          condition_code: normalizeInteger(draft.condition_code),
+        }),
+      },
+      {
+        key: "escrow_accept",
+        label: "Accept",
+        submitLabel: "Accept Escrow",
+        entrypoint: "accept_escrow",
+        fields: [
+          { key: "escrow_id", label: "Escrow ID", type: "text", defaultValue: "escrow-1" },
+          { key: "condition_code", label: "Condition Code", type: "number", min: 1, step: 1, defaultValue: 7 },
+        ],
+        buildPayload: (draft) => ({
+          escrow_id: String(draft.escrow_id || "escrow-1").trim(),
+          condition_code: normalizeInteger(draft.condition_code),
+        }),
+      },
+      {
+        key: "escrow_cancel",
+        label: "Cancel",
+        submitLabel: "Cancel Escrow",
+        entrypoint: "cancel_escrow",
+        fields: [
+          { key: "escrow_id", label: "Escrow ID", type: "text", defaultValue: "escrow-1" },
+        ],
+        buildPayload: (draft) => ({
+          escrow_id: String(draft.escrow_id || "escrow-1").trim(),
+        }),
+      },
+      {
+        key: "escrow_refund",
+        label: "Refund",
+        submitLabel: "Refund Expired",
+        entrypoint: "refund_expired",
+        fields: [
+          { key: "escrow_id", label: "Escrow ID", type: "text", defaultValue: "escrow-1" },
+        ],
+        buildPayload: (draft) => ({
+          escrow_id: String(draft.escrow_id || "escrow-1").trim(),
+        }),
+      },
+    ],
+  },
   operators: {
     title: "Operator Rails",
     copy: "Register bonded operators, post bond, heartbeat, and claim fees.",
@@ -612,6 +744,54 @@ const ACTION_RAILS = {
           hook_id: String(draft.hook_id || "limit"),
           amount_in: normalizeInteger(draft.amount_in),
           min_out: normalizeInteger(draft.min_out),
+        }),
+      },
+      {
+        key: "hook_twamm",
+        label: "TWAMM",
+        submitLabel: "Schedule TWAMM",
+        entrypoint: "schedule_twamm_v2",
+        fields: [
+          { key: "order_id", label: "Order ID", type: "text", defaultValue: "twamm-1" },
+          { key: "input_is_base", label: "Input Is Base", type: "number", min: 0, step: 1, defaultValue: 1 },
+          { key: "total_in", label: "Total In", type: "number", min: 1, step: 1, defaultValue: 1_000 },
+          { key: "slice_in", label: "Slice In", type: "number", min: 1, step: 1, defaultValue: 100 },
+          { key: "min_total_out", label: "Min Total Out", type: "number", min: 0, step: 1, defaultValue: 950 },
+          { key: "interval_slots", label: "Interval Slots", type: "number", min: 1, step: 1, defaultValue: 2 },
+          { key: "start_slot", label: "Start Slot", type: "number", min: 0, step: 1, defaultValue: 1 },
+        ],
+        buildPayload: (draft) => ({
+          order_id: String(draft.order_id || "twamm-1").trim(),
+          input_is_base: normalizeInteger(draft.input_is_base),
+          total_in: normalizeInteger(draft.total_in),
+          slice_in: normalizeInteger(draft.slice_in),
+          min_total_out: normalizeInteger(draft.min_total_out),
+          interval_slots: normalizeInteger(draft.interval_slots),
+          start_slot: normalizeInteger(draft.start_slot),
+        }),
+      },
+      {
+        key: "hook_twamm_cancel",
+        label: "Cancel TWAMM",
+        submitLabel: "Cancel TWAMM",
+        entrypoint: "cancel_twamm",
+        fields: [
+          { key: "order_id", label: "Order ID", type: "text", defaultValue: "twamm-1" },
+        ],
+        buildPayload: (draft) => ({
+          order_id: String(draft.order_id || "twamm-1").trim(),
+        }),
+      },
+      {
+        key: "hook_twamm_claim",
+        label: "Claim TWAMM",
+        submitLabel: "Claim TWAMM",
+        entrypoint: "claim_twamm",
+        fields: [
+          { key: "order_id", label: "Order ID", type: "text", defaultValue: "twamm-1" },
+        ],
+        buildPayload: (draft) => ({
+          order_id: String(draft.order_id || "twamm-1").trim(),
         }),
       },
     ],
@@ -1421,6 +1601,9 @@ function humanizeEntrypoint(entrypoint) {
   }
   const explicit = {
     route_swap: "Route swap",
+    submit_order: "Submitted auction order",
+    cancel_order: "Cancelled auction order",
+    settle_order: "Settled auction order",
     deposit_and_mint: "Minted n3x",
     burn_and_redeem: "Redeemed n3x",
     open_position: "Opened perp",
@@ -1440,6 +1623,13 @@ function humanizeEntrypoint(entrypoint) {
     exercise: "Exercised option",
     register_policy: "Opened cover",
     claim_policy: "Claimed cover",
+    schedule_twamm_v2: "Scheduled TWAMM",
+    cancel_twamm: "Cancelled TWAMM",
+    claim_twamm: "Claimed TWAMM",
+    open_escrow: "Opened escrow",
+    accept_escrow: "Accepted escrow",
+    cancel_escrow: "Cancelled escrow",
+    refund_expired: "Refunded escrow",
   };
   if (explicit[entrypoint]) {
     return explicit[entrypoint];
@@ -2568,6 +2758,7 @@ async function loadProductModules(environment, authority, fills, metrics, symbol
   const modules = [
     buildSwapModule(fills, metrics, symbols, routerContract),
     ...(await Promise.all([
+      loadGenericProductModule(environment, authority, "batchAuction"),
       loadN3xModule(environment, authority),
       loadPerpsModule(environment, authority),
       loadFarmsModule(environment, authority),
@@ -2576,6 +2767,7 @@ async function loadProductModules(environment, authority, fills, metrics, symbol
       loadCoverModule(environment, authority),
       loadGenericProductModule(environment, authority, "intents"),
       loadGenericProductModule(environment, authority, "vaults"),
+      loadGenericProductModule(environment, authority, "escrow"),
       loadGenericProductModule(environment, authority, "operators"),
       loadGenericProductModule(environment, authority, "margin"),
       loadGenericProductModule(environment, authority, "rwa"),
@@ -2614,6 +2806,20 @@ function describeContractActivity(module, activity) {
   const entrypoint = activity.contractEntrypoint || "";
 
   switch (module.key) {
+    case "batchAuction": {
+      const orderId = findPayloadString(payload, ["order_id", "orderId"]);
+      const amount = findPayloadInteger(payload, ["amount"]);
+      const limitTick = findPayloadInteger(payload, ["limit_tick", "limitTick"]);
+      const side = findPayloadInteger(payload, ["side"]);
+      return {
+        action: humanizeEntrypoint(entrypoint),
+        exposure: joinCompact([
+          amount !== null ? `${formatAmount(amount)} ${side === 2 ? "base" : "quote"}` : null,
+          limitTick !== null ? `tick ${formatAmount(limitTick)}` : null,
+        ]) || "Auction order",
+        context: orderId ? `Order ${orderId}` : "Epoch auction",
+      };
+    }
     case "n3x": {
       const usdt = findPayloadInteger(payload, ["usdt_in"]);
       const usdc = findPayloadInteger(payload, ["usdc_in"]);
@@ -2746,6 +2952,19 @@ function describeContractActivity(module, activity) {
         action: humanizeEntrypoint(entrypoint),
         exposure: amount !== null ? formatAmount(amount) : "Vault action",
         context: joinCompact([vaultId, positionId]) || "Vault position",
+      };
+    }
+    case "escrow": {
+      const escrowId = findPayloadString(payload, ["escrow_id", "escrowId"]);
+      const amount = findPayloadInteger(payload, ["amount"]);
+      const conditionCode = findPayloadInteger(payload, ["condition_code", "conditionCode"]);
+      return {
+        action: humanizeEntrypoint(entrypoint),
+        exposure: joinCompact([
+          amount !== null ? formatAmount(amount) : null,
+          conditionCode !== null ? `condition ${conditionCode}` : null,
+        ]) || "Escrow action",
+        context: escrowId ? `Escrow ${escrowId}` : "Conditional escrow",
       };
     }
     case "operators": {

@@ -7,6 +7,8 @@ Lifecycle and control entrypoints:
 - `init_manager(settlement_asset, risk_vault_contract, required_observations, oracle_stale_slots, oracle_public_key, oracle_scheme)`
 - `sync_automation(executor, job_id, cadence_slots, backlog_cap, safe_mode)`
 - `heartbeat(current_backlog, safe_mode)`
+- `configure_trigger_lifecycle(cadence_slots, max_items_per_tick, enabled)`
+- `native_lifecycle_tick()`
 - `bind_risk_vault(risk_vault_contract)`
 - `bind_contract(contract_id)`
 - `enter_withdrawal_only()`
@@ -22,6 +24,7 @@ Views:
 - `manager_config() -> (AssetDefinitionId, bytes, int, int, int, int, int, int, int)`
 - `policy_state(policy_id) -> (int, int, int, int, int, int, int, int, int, int, int, int)`
 - `automation_state() -> (int, int, int, int, int, int, int)`
+- `trigger_lifecycle_state() -> (int, int, int, int, int, int, int)`
 
 Notes:
 - Policy ids are contract-assigned integers with on-chain ownership records; raw caller-chosen policy names were removed.
@@ -34,3 +37,4 @@ Notes:
 - The stored `risk_vault_contract` is the deployed `risk_vault` contract address literal carried as a UTF-8 `bytes` field for ABI v1 `call_contract(...)` routing. View surfaces expose that field as hex-encoded bytes.
 - Raw `record_breach(policy, elapsed_slots)` and `settle_claim(policy, covered_notional)` helpers were removed in favor of `record_observation(...)` plus `route_claim(policy_id)`.
 - `main()` is a write entrypoint, not a `view fn`.
+- `soraswap_cover_lifecycle_tick` is a bounded pre-commit trigger. It auto-expires active policies after their monitoring window has elapsed and releases the bucket-3 liability without paying a keeper reward.

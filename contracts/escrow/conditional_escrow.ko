@@ -1,0 +1,176 @@
+// Trigger-resident conditional escrow primitive.
+
+seiyaku ConditionalEscrow {
+  state int EscrowInitialized;
+  state AccountId EscrowOwner;
+  state AccountId EscrowContractId;
+  state int EscrowContractBound;
+
+  state EscrowMaker: Map<Name, AccountId>;
+  state EscrowTaker: Map<Name, AccountId>;
+  state EscrowAsset: Map<Name, AssetDefinitionId>;
+  state EscrowAmount: Map<Name, int>;
+  state EscrowExpirySlot: Map<Name, int>;
+  state EscrowConditionCode: Map<Name, int>;
+  state EscrowStatus: Map<Name, int>;
+  state EscrowAcceptedSlot: Map<Name, int>;
+  state EscrowRefundedSlot: Map<Name, int>;
+
+  register_trigger soraswap_escrow_settle {
+    call native_by_call_settle;
+    on execute trigger soraswap_escrow_settle;
+    repeats indefinitely;
+    metadata { tag: "soraswap"; module: "escrow.conditional_escrow"; }
+  }
+
+  fn assert_initialized() {
+    assert(EscrowInitialized == 1, "escrow not initialized");
+  }
+
+  fn assert_owner() {
+    assert_initialized();
+    assert(EscrowOwner == authority(), "escrow owner mismatch");
+  }
+
+  fn assert_contract_bound() {
+    assert(EscrowContractBound == 1, "escrow contract unbound");
+  }
+
+  fn assert_escrow_exists(escrow_id: Name) {
+    assert(EscrowMaker.contains(escrow_id), "escrow missing");
+  }
+
+  fn move_asset_if_needed(from: AccountId,
+                          to: AccountId,
+                          asset: AssetDefinitionId,
+                          amount: int) {
+    if amount > 0 {
+      if from != to {
+        transfer_asset(from, to, asset, amount);
+      }
+    }
+  }
+
+  fn accept_impl(escrow_id: Name, condition_code: int) -> int {
+    assert_initialized();
+    assert_contract_bound();
+    assert_escrow_exists(escrow_id);
+    assert(EscrowStatus.get_or(escrow_id, 0) == 1, "escrow not open");
+    assert(EscrowConditionCode.get_or(escrow_id, 0) == condition_code, "condition mismatch");
+    let current_slot = block_height();
+    let expiry_slot = EscrowExpirySlot.get_or(escrow_id, 0);
+    if expiry_slot > 0 {
+      assert(current_slot <= expiry_slot, "escrow expired");
+    }
+    let taker = EscrowTaker[escrow_id];
+    if taker != authority() {
+      assert(EscrowContractId == authority(), "taker mismatch");
+    }
+    let amount = EscrowAmount.get_or(escrow_id, 0);
+    EscrowStatus[escrow_id] = 2;
+    EscrowAcceptedSlot[escrow_id] = current_slot;
+    move_asset_if_needed(EscrowContractId, taker, EscrowAsset[escrow_id], amount);
+    return amount;
+  }
+
+  kotoage fn main() -> int {
+    return EscrowInitialized;
+  }
+
+  kotoage fn init_escrow() {
+    assert(EscrowInitialized == 0, "escrow initialized");
+    EscrowInitialized = 1;
+    EscrowOwner = authority();
+    EscrowContractId = authority();
+    EscrowContractBound = 0;
+  }
+
+  kotoage fn bind_contract(contract_id: AccountId) {
+    assert_owner();
+    EscrowContractId = contract_id;
+    EscrowContractBound = 1;
+  }
+
+  kotoage fn open_escrow(escrow_id: Name,
+                         taker: AccountId,
+                         asset: AssetDefinitionId,
+                         amount: int,
+                         expiry_slot: int,
+                         condition_code: int) permission(AssetOps) {
+    assert_initialized();
+    assert_contract_bound();
+    assert(!EscrowMaker.contains(escrow_id), "escrow exists");
+    assert(amount > 0, "invalid amount");
+    assert(expiry_slot >= 0, "invalid expiry");
+    assert(condition_code > 0, "invalid condition");
+    move_asset_if_needed(authority(), EscrowContractId, asset, amount);
+    EscrowMaker[escrow_id] = authority();
+    EscrowTaker[escrow_id] = taker;
+    EscrowAsset[escrow_id] = asset;
+    EscrowAmount[escrow_id] = amount;
+    EscrowExpirySlot[escrow_id] = expiry_slot;
+    EscrowConditionCode[escrow_id] = condition_code;
+    EscrowStatus[escrow_id] = 1;
+    EscrowAcceptedSlot[escrow_id] = 0;
+    EscrowRefundedSlot[escrow_id] = 0;
+  }
+
+  kotoage fn accept_escrow(escrow_id: Name, condition_code: int) -> int permission(AssetOps) {
+    return accept_impl(escrow_id, condition_code);
+  }
+
+  kotoage fn native_by_call_settle() -> int permission(AssetOps) {
+    let ev = trigger_event();
+    let escrow_id = ev.get_name(name("escrow_id"));
+    let condition_code = ev.get_int(name("condition_code"));
+    return accept_impl(escrow_id, condition_code);
+  }
+
+  kotoage fn cancel_escrow(escrow_id: Name) -> int permission(AssetOps) {
+    assert_initialized();
+    assert_contract_bound();
+    assert_escrow_exists(escrow_id);
+    assert(EscrowMaker[escrow_id] == authority(), "maker mismatch");
+    assert(EscrowStatus.get_or(escrow_id, 0) == 1, "escrow not open");
+    let amount = EscrowAmount.get_or(escrow_id, 0);
+    EscrowStatus[escrow_id] = 3;
+    EscrowRefundedSlot[escrow_id] = block_height();
+    move_asset_if_needed(EscrowContractId, authority(), EscrowAsset[escrow_id], amount);
+    return amount;
+  }
+
+  kotoage fn refund_expired(escrow_id: Name) -> int permission(AssetOps) {
+    assert_initialized();
+    assert_contract_bound();
+    assert_escrow_exists(escrow_id);
+    assert(EscrowStatus.get_or(escrow_id, 0) == 1, "escrow not open");
+    let current_slot = block_height();
+    let expiry_slot = EscrowExpirySlot.get_or(escrow_id, 0);
+    assert(expiry_slot > 0, "no expiry");
+    assert(current_slot > expiry_slot, "escrow live");
+    let amount = EscrowAmount.get_or(escrow_id, 0);
+    EscrowStatus[escrow_id] = 4;
+    EscrowRefundedSlot[escrow_id] = current_slot;
+    move_asset_if_needed(EscrowContractId, EscrowMaker[escrow_id], EscrowAsset[escrow_id], amount);
+    return amount;
+  }
+
+  view fn escrow_state(escrow_id: Name) -> (int, int, int, int, int, int) {
+    let registered = 0;
+    if EscrowMaker.contains(escrow_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      EscrowAmount.get_or(escrow_id, 0),
+      EscrowExpirySlot.get_or(escrow_id, 0),
+      EscrowConditionCode.get_or(escrow_id, 0),
+      EscrowStatus.get_or(escrow_id, 0),
+      EscrowAcceptedSlot.get_or(escrow_id, 0) + EscrowRefundedSlot.get_or(escrow_id, 0)
+    );
+  }
+
+  view fn escrow_config() -> (int, int) {
+    return (EscrowInitialized, EscrowContractBound);
+  }
+}

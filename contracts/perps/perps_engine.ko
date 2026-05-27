@@ -17,6 +17,14 @@ seiyaku PerpsEngine {
   state int PerpsAutomationBacklog;
   state int PerpsAutomationSafeMode;
 
+  state int PerpsLifecycleCadenceSlots;
+  state int PerpsLifecycleMaxItems;
+  state int PerpsLifecycleEnabled;
+  state int PerpsLifecycleNextSlot;
+  state int PerpsLifecycleMarketCursor;
+  state int PerpsLifecycleLastSlot;
+  state int PerpsLifecycleLastProcessed;
+
   state int PerpsNextMarketId;
   state int PerpsNextPositionId;
 
@@ -45,6 +53,8 @@ seiyaku PerpsEngine {
   state PerpsMarketLastPassQueued: Map<int, int>;
   state PerpsMarketLastPassRecovered: Map<int, int>;
   state PerpsMarketLastPassLiquidated: Map<int, int>;
+  state PerpsMarketLastNativeFundingDelta: Map<int, int>;
+  state PerpsMarketLastNativePassSlot: Map<int, int>;
 
   state PerpsPositionOwner: Map<int, AccountId>;
   state PerpsPositionMarketId: Map<int, int>;
@@ -62,6 +72,13 @@ seiyaku PerpsEngine {
   state PerpsPositionLastOwnerResidual: Map<int, int>;
 
   state PerpsActivePositionBySlot: Map<int, int>;
+
+  register_trigger soraswap_perps_lifecycle_tick {
+    call native_lifecycle_tick;
+    on time pre_commit;
+    repeats indefinitely;
+    metadata { tag: "soraswap"; module: "perps.perps_engine"; __enabled: false; }
+  }
 
   fn assert_initialized() {
     assert(PerpsInitialized == 1, "engine not initialized");
@@ -145,6 +162,24 @@ seiyaku PerpsEngine {
     let slot = wrapped_market_slot(cursor, offset, active_count);
     let position_id = PerpsActivePositionBySlot.get_or(market_slot_key(market_id, slot), 0);
     return process_liquidation_candidate(
+      position_id,
+      market_id,
+      mark_price_bps,
+      index_price_bps,
+      current_slot
+    );
+  }
+
+  fn liquidation_action_for_offset_native(market_id: int,
+                                          cursor: int,
+                                          active_count: int,
+                                          offset: int,
+                                          mark_price_bps: int,
+                                          index_price_bps: int,
+                                          current_slot: int) -> int {
+    let slot = wrapped_market_slot(cursor, offset, active_count);
+    let position_id = PerpsActivePositionBySlot.get_or(market_slot_key(market_id, slot), 0);
+    return process_liquidation_candidate_native(
       position_id,
       market_id,
       mark_price_bps,
@@ -458,6 +493,38 @@ seiyaku PerpsEngine {
     remove_active_position(market_id, position_id);
   }
 
+  fn liquidate_position_native(position_id: int,
+                               market_id: int,
+                               mark_price_bps: int,
+                               index_price_bps: int) {
+    let margin = PerpsPositionMargin.get_or(position_id, 0);
+    let equity = position_equity(position_id, mark_price_bps);
+    let owner_residual_request = max_int(equity, 0);
+    let settled_owner_residual = risk_vault_settle_payout(
+      position_id,
+      PerpsPositionOwner[position_id],
+      owner_residual_request
+    );
+    risk_vault_release_liability(position_id);
+    PerpsPositionRealizedPnl[position_id] =
+      PerpsPositionRealizedPnl.get_or(position_id, 0) +
+      settled_owner_residual -
+      margin;
+    PerpsMarketOpenInterest[market_id] =
+      max_int(PerpsMarketOpenInterest.get_or(market_id, 0) - abs_int(PerpsPositionSize.get_or(position_id, 0)), 0);
+    PerpsMarketQueuedLiquidations[market_id] =
+      max_int(PerpsMarketQueuedLiquidations.get_or(market_id, 0) - 1, 0);
+    PerpsPositionSize[position_id] = 0;
+    PerpsPositionMargin[position_id] = 0;
+    PerpsPositionMarkPrice[position_id] = mark_price_bps;
+    PerpsPositionIndexPrice[position_id] = index_price_bps;
+    PerpsPositionStatus[position_id] = 4;
+    PerpsPositionQueuedSlot[position_id] = 0;
+    PerpsPositionLastKeeperReward[position_id] = 0;
+    PerpsPositionLastOwnerResidual[position_id] = settled_owner_residual;
+    remove_active_position(market_id, position_id);
+  }
+
   fn process_liquidation_candidate(position_id: int,
                                    market_id: int,
                                    mark_price_bps: int,
@@ -498,6 +565,46 @@ seiyaku PerpsEngine {
     return 0;
   }
 
+  fn process_liquidation_candidate_native(position_id: int,
+                                          market_id: int,
+                                          mark_price_bps: int,
+                                          index_price_bps: int,
+                                          current_slot: int) -> int {
+    let status = PerpsPositionStatus.get_or(position_id, 0);
+    if status != 1 && status != 3 {
+      return 0;
+    }
+
+    PerpsPositionMarkPrice[position_id] = mark_price_bps;
+    PerpsPositionIndexPrice[position_id] = index_price_bps;
+
+    let maintenance = required_maintenance_margin(
+      PerpsPositionSize.get_or(position_id, 0),
+      PerpsMarketMaintenanceMarginBps.get_or(market_id, 0)
+    );
+    let equity = position_equity(position_id, mark_price_bps);
+
+    if status == 1 {
+      if equity < maintenance {
+        queue_position(position_id, market_id, current_slot, mark_price_bps, index_price_bps);
+        return 1;
+      }
+      return 0;
+    }
+
+    if equity >= maintenance {
+      recover_position(position_id, market_id, mark_price_bps, index_price_bps);
+      return 2;
+    }
+
+    if current_slot > PerpsPositionQueuedSlot.get_or(position_id, 0) {
+      liquidate_position_native(position_id, market_id, mark_price_bps, index_price_bps);
+      return 3;
+    }
+
+    return 0;
+  }
+
   kotoage fn main() -> int {
     if PerpsInitialized == 1 {
       return 1;
@@ -526,6 +633,13 @@ seiyaku PerpsEngine {
     PerpsAutomationBacklogCap = 0;
     PerpsAutomationBacklog = 0;
     PerpsAutomationSafeMode = 0;
+    PerpsLifecycleCadenceSlots = 0;
+    PerpsLifecycleMaxItems = 1;
+    PerpsLifecycleEnabled = 0;
+    PerpsLifecycleNextSlot = 0;
+    PerpsLifecycleMarketCursor = 1;
+    PerpsLifecycleLastSlot = 0;
+    PerpsLifecycleLastProcessed = 0;
     PerpsNextMarketId = 1;
     PerpsNextPositionId = 1;
   }
@@ -547,6 +661,108 @@ seiyaku PerpsEngine {
     PerpsAutomationCadence = cadence_slots;
     PerpsAutomationBacklogCap = backlog_cap;
     PerpsAutomationSafeMode = safe_mode;
+  }
+
+  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
+                                         max_items_per_tick: int,
+                                         enabled: int) permission(Admin) {
+    assert_owner();
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(max_items_per_tick > 0, "invalid max items");
+    assert(max_items_per_tick <= 4, "max items too high");
+    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    PerpsLifecycleCadenceSlots = cadence_slots;
+    PerpsLifecycleMaxItems = max_items_per_tick;
+    PerpsLifecycleEnabled = enabled;
+    PerpsLifecycleNextSlot = block_height() + cadence_slots;
+    if PerpsLifecycleMarketCursor <= 0 {
+      PerpsLifecycleMarketCursor = 1;
+    }
+    set_trigger_enabled(name("soraswap_perps_lifecycle_tick"), enabled);
+  }
+
+  kotoage fn native_lifecycle_tick() permission(AssetOps) {
+    if PerpsInitialized == 0 {
+      return;
+    }
+    if PerpsLifecycleEnabled == 0 || PerpsAutomationSafeMode != 0 {
+      return;
+    }
+    let current_slot = block_height();
+    if PerpsLifecycleNextSlot > 0 && current_slot < PerpsLifecycleNextSlot {
+      return;
+    }
+    let market_id = PerpsLifecycleMarketCursor;
+    if market_id <= 0 || market_id >= PerpsNextMarketId {
+      market_id = 1;
+    }
+    let processed = 0;
+    if market_id < PerpsNextMarketId && PerpsMarketActive.get_or(market_id, 0) == 1 {
+      let mark_price_bps = PerpsMarketLastMarkPrice.get_or(market_id, 0);
+      let index_price_bps = PerpsMarketLastIndexPrice.get_or(market_id, 0);
+      let oracle_slot = PerpsMarketLastOracleSlot.get_or(market_id, 0);
+      if mark_price_bps > 0 && index_price_bps > 0 &&
+        oracle_slot > 0 &&
+        current_slot >= oracle_slot &&
+        current_slot - oracle_slot <= PerpsMarketOracleStaleSlots.get_or(market_id, 0) {
+        let premium_bps = mark_price_bps - index_price_bps;
+        PerpsMarketLastNativeFundingDelta[market_id] =
+          (PerpsMarketFundingBps.get_or(market_id, 0) * premium_bps) / 10_000;
+
+        let active_count = PerpsMarketActivePositionCount.get_or(market_id, 0);
+        let cursor = normalized_scan_cursor(PerpsMarketScanCursor.get_or(market_id, 0), active_count);
+        let scan_limit = min_int(PerpsLifecycleMaxItems, active_count);
+        let queued = 0;
+        let recovered = 0;
+        let liquidated = 0;
+
+        if scan_limit > 0 {
+          let action0 = liquidation_action_for_offset_native(market_id, cursor, active_count, 0, mark_price_bps, index_price_bps, current_slot);
+          if action0 == 1 { queued = queued + 1; }
+          if action0 == 2 { recovered = recovered + 1; }
+          if action0 == 3 { liquidated = liquidated + 1; }
+        }
+        if scan_limit > 1 {
+          let action1 = liquidation_action_for_offset_native(market_id, cursor, active_count, 1, mark_price_bps, index_price_bps, current_slot);
+          if action1 == 1 { queued = queued + 1; }
+          if action1 == 2 { recovered = recovered + 1; }
+          if action1 == 3 { liquidated = liquidated + 1; }
+        }
+        if scan_limit > 2 {
+          let action2 = liquidation_action_for_offset_native(market_id, cursor, active_count, 2, mark_price_bps, index_price_bps, current_slot);
+          if action2 == 1 { queued = queued + 1; }
+          if action2 == 2 { recovered = recovered + 1; }
+          if action2 == 3 { liquidated = liquidated + 1; }
+        }
+        if scan_limit > 3 {
+          let action3 = liquidation_action_for_offset_native(market_id, cursor, active_count, 3, mark_price_bps, index_price_bps, current_slot);
+          if action3 == 1 { queued = queued + 1; }
+          if action3 == 2 { recovered = recovered + 1; }
+          if action3 == 3 { liquidated = liquidated + 1; }
+        }
+        processed = scan_limit;
+        let next_cursor = cursor + scan_limit;
+        let next_active_count = PerpsMarketActivePositionCount.get_or(market_id, 0);
+        if next_active_count <= 0 || next_cursor >= next_active_count {
+          PerpsMarketScanCursor[market_id] = 0;
+        } else {
+          PerpsMarketScanCursor[market_id] = next_cursor;
+        }
+        PerpsMarketLastPassScanned[market_id] = scan_limit;
+        PerpsMarketLastPassQueued[market_id] = queued;
+        PerpsMarketLastPassRecovered[market_id] = recovered;
+        PerpsMarketLastPassLiquidated[market_id] = liquidated;
+        PerpsMarketLastNativePassSlot[market_id] = current_slot;
+      }
+    }
+    market_id = market_id + 1;
+    if market_id >= PerpsNextMarketId {
+      market_id = 1;
+    }
+    PerpsLifecycleMarketCursor = market_id;
+    PerpsLifecycleLastSlot = current_slot;
+    PerpsLifecycleLastProcessed = processed;
+    PerpsLifecycleNextSlot = current_slot + PerpsLifecycleCadenceSlots;
   }
 
   view fn engine_config() -> (AssetDefinitionId, bytes, int, int, int, int, int, int) {
@@ -621,6 +837,18 @@ seiyaku PerpsEngine {
       PerpsMarketLastPassQueued.get_or(market_id, 0),
       PerpsMarketLastPassRecovered.get_or(market_id, 0),
       PerpsMarketLastPassLiquidated.get_or(market_id, 0)
+    );
+  }
+
+  view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
+    return (
+      PerpsLifecycleEnabled,
+      PerpsLifecycleCadenceSlots,
+      PerpsLifecycleMaxItems,
+      PerpsLifecycleNextSlot,
+      PerpsLifecycleMarketCursor,
+      PerpsLifecycleLastSlot,
+      PerpsLifecycleLastProcessed
     );
   }
 
@@ -964,6 +1192,8 @@ seiyaku PerpsEngine {
     PerpsMarketLastPassQueued[market_id] = 0;
     PerpsMarketLastPassRecovered[market_id] = 0;
     PerpsMarketLastPassLiquidated[market_id] = 0;
+    PerpsMarketLastNativeFundingDelta[market_id] = 0;
+    PerpsMarketLastNativePassSlot[market_id] = 0;
     return market_id;
   }
 

@@ -20,6 +20,9 @@ Manager entrypoints:
 - `close_series(series_id, settlement_slot)`
 - `settle_series(series_id, oracle_payload, oracle_signature)`
 - `settle_series_c2c(series_id, final_mark, final_quote_mark, settlement_slot, oracle_slot, attestation_hash) -> int`
+- `configure_trigger_lifecycle(cadence_slots, max_items_per_tick, enabled)`
+- `native_lifecycle_tick()`
+- `trigger_lifecycle_state() -> (int, int, int, int, int, int, int)`
 - `manager_config() -> (AssetDefinitionId, int, int, int, int, int, int, int, int)`
 - `template_state(template_id) -> (int, int, int, int, int, int, int, int)`
 - `series_state(series_id) -> (int, int, int, int, int, int, int, int, int, int, int)`
@@ -30,6 +33,9 @@ Factory entrypoints:
 - `init_factory(settlement_asset, guardian, oracle_public_key, oracle_scheme)`
 - `sync_automation(executor, job_id, cadence_slots, backlog_cap, safe_mode)`
 - `heartbeat(current_backlog, safe_mode)`
+- `configure_trigger_lifecycle(cadence_slots, max_items_per_tick, enabled)`
+- `native_lifecycle_tick()`
+- `trigger_lifecycle_state() -> (int, int, int, int, int, int, int)`
 - `bind_modules(risk_vault_contract, vault_contract, shout_contract, outperformance_contract)`
 - `bind_manager(manager_contract)`
 - `bind_contract(contract_id)`
@@ -103,3 +109,4 @@ Notes:
 - Product and vault settlement entrypoints are owner/controller-only; end users go through the factory surface.
 - The stored `risk_vault_contract`, vault, and product-module bindings are deployed contract address literals carried through UTF-8 `bytes` fields for ABI v1 `call_contract(...)` routing.
 - Each `main()` is a write entrypoint, not a `view fn`; integrations should use the typed views above for bootstrap and smoke checks.
+- `soraswap_options_lifecycle_tick` and `soraswap_options_factory_lifecycle_tick` are bounded pre-commit triggers. They auto-close expired manager series and mark expired factory series settlement-ready; signed oracle settlement and owner/user claim paths remain explicit.

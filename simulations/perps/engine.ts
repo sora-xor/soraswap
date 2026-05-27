@@ -31,6 +31,7 @@ type MarketState = MarketConfig & {
   lastMarkPriceBps: number;
   lastIndexPriceBps: number;
   lastOracleSlot: number;
+  lastOracleAttestationHash: number;
   scanCursor: number;
   lastPassScanned: number;
   lastPassQueued: number;
@@ -86,6 +87,7 @@ export class PerpsEngineModel {
       lastMarkPriceBps: 0,
       lastIndexPriceBps: 0,
       lastOracleSlot: 0,
+      lastOracleAttestationHash: 0,
       scanCursor: 0,
       lastPassScanned: 0,
       lastPassQueued: 0,
@@ -263,6 +265,83 @@ export class PerpsEngineModel {
     market.lastPassRecovered = recovered;
     market.lastPassLiquidated = liquidated;
     this.recordOracle(market, oracle);
+
+    return { scanned: scanLimit, queued, recovered, liquidated };
+  }
+
+  runNativeLifecyclePass(
+    marketId: number,
+    maxPositions: number,
+    currentSlot: number
+  ): { scanned: number; queued: number; recovered: number; liquidated: number } {
+    const market = this.mustMarket(marketId);
+    if (maxPositions <= 0 || maxPositions > 4) {
+      throw new Error("native scan size exceeds cap");
+    }
+    if (this.automationSafeMode) {
+      return { scanned: 0, queued: 0, recovered: 0, liquidated: 0 };
+    }
+    if (
+      market.lastMarkPriceBps <= 0 ||
+      market.lastIndexPriceBps <= 0 ||
+      market.lastOracleSlot <= 0 ||
+      currentSlot < market.lastOracleSlot ||
+      currentSlot - market.lastOracleSlot > market.oracleStaleSlots
+    ) {
+      market.lastPassScanned = 0;
+      market.lastPassQueued = 0;
+      market.lastPassRecovered = 0;
+      market.lastPassLiquidated = 0;
+      return { scanned: 0, queued: 0, recovered: 0, liquidated: 0 };
+    }
+
+    const oracle: OraclePayload = {
+      markPriceBps: market.lastMarkPriceBps,
+      indexPriceBps: market.lastIndexPriceBps,
+      confidenceBps: 0,
+      oracleSlot: market.lastOracleSlot,
+      currentSlot,
+      statusFlags: 0,
+      attestationHash: market.lastOracleAttestationHash
+    };
+
+    const slots = this.mustActiveSlots(marketId);
+    const activeCount = slots.length;
+    const scanLimit = Math.min(maxPositions, activeCount);
+    const cursor = activeCount === 0 || market.scanCursor >= activeCount ? 0 : market.scanCursor;
+    const positionIds: number[] = [];
+
+    for (let index = 0; index < scanLimit; index += 1) {
+      positionIds.push(slots[(cursor + index) % activeCount]);
+    }
+
+    let queued = 0;
+    let recovered = 0;
+    let liquidated = 0;
+
+    for (const positionId of positionIds) {
+      const position = this.positions.get(positionId);
+      if (!position || position.marketId !== marketId) {
+        continue;
+      }
+      const action = this.processNativeLiquidationCandidate(position, market, oracle);
+      if (action === "queued") {
+        queued += 1;
+      }
+      if (action === "recovered") {
+        recovered += 1;
+      }
+      if (action === "liquidated") {
+        liquidated += 1;
+      }
+    }
+
+    const nextActiveCount = this.mustActiveSlots(marketId).length;
+    market.scanCursor = nextActiveCount === 0 || cursor + scanLimit >= nextActiveCount ? 0 : cursor + scanLimit;
+    market.lastPassScanned = scanLimit;
+    market.lastPassQueued = queued;
+    market.lastPassRecovered = recovered;
+    market.lastPassLiquidated = liquidated;
 
     return { scanned: scanLimit, queued, recovered, liquidated };
   }
@@ -478,6 +557,62 @@ export class PerpsEngineModel {
     return "noop";
   }
 
+  private processNativeLiquidationCandidate(
+    position: PositionState,
+    market: MarketState,
+    oracle: OraclePayload
+  ): "queued" | "recovered" | "liquidated" | "noop" {
+    if (position.status !== "open" && position.status !== "queued") {
+      return "noop";
+    }
+
+    position.markPriceBps = oracle.markPriceBps;
+    position.indexPriceBps = oracle.indexPriceBps;
+    const equity = position.margin + unrealizedPnl(position, oracle.markPriceBps);
+    const maintenance = Math.ceil((abs(position.size) * market.maintenanceMarginBps) / 10_000);
+
+    if (position.status === "open") {
+      if (equity < maintenance) {
+        position.status = "queued";
+        position.queuedSlot = oracle.currentSlot;
+        market.queuedLiquidations += 1;
+        this.recordOracle(market, oracle);
+        return "queued";
+      }
+      return "noop";
+    }
+
+    if (equity >= maintenance) {
+      position.status = "open";
+      position.queuedSlot = 0;
+      market.queuedLiquidations = Math.max(0, market.queuedLiquidations - 1);
+      this.recordOracle(market, oracle);
+      return "recovered";
+    }
+
+    if (oracle.currentSlot > position.queuedSlot) {
+      const ownerResidual = this.vault.settlePayout(1, position.positionId, Math.max(equity, 0));
+      this.vault.releaseLiability(1, position.positionId, this.automationBacklog);
+
+      market.openInterest -= abs(position.size);
+      market.queuedLiquidations = Math.max(0, market.queuedLiquidations - 1);
+      position.realizedPnl += ownerResidual - position.margin;
+      position.size = 0;
+      position.margin = 0;
+      position.status = "liquidated";
+      position.queuedSlot = 0;
+      position.lastKeeperReward = 0;
+      position.lastOwnerResidual = ownerResidual;
+      position.markPriceBps = oracle.markPriceBps;
+      position.indexPriceBps = oracle.indexPriceBps;
+      this.removeActivePosition(position.marketId, position.positionId);
+      this.recordOracle(market, oracle);
+      return "liquidated";
+    }
+
+    return "noop";
+  }
+
   private appendActivePosition(marketId: number, positionId: number): void {
     const slots = this.mustActiveSlots(marketId);
     const position = this.mustPosition(positionId);
@@ -554,6 +689,7 @@ export class PerpsEngineModel {
     market.lastMarkPriceBps = oracle.markPriceBps;
     market.lastIndexPriceBps = oracle.indexPriceBps;
     market.lastOracleSlot = oracle.oracleSlot;
+    market.lastOracleAttestationHash = oracle.attestationHash;
   }
 
   private mustActiveSlots(marketId: number): number[] {

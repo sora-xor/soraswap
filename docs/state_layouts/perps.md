@@ -19,6 +19,13 @@ Singleton scalar state:
 - `PerpsAutomationSafeMode`
 - `PerpsNextMarketId`
 - `PerpsNextPositionId`
+- `PerpsLifecycleCadenceSlots`
+- `PerpsLifecycleMaxItems`
+- `PerpsLifecycleEnabled`
+- `PerpsLifecycleNextSlot`
+- `PerpsLifecycleMarketCursor`
+- `PerpsLifecycleLastSlot`
+- `PerpsLifecycleLastProcessed`
 
 Per-market maps:
 - `PerpsMarketAsset`
@@ -46,6 +53,8 @@ Per-market maps:
 - `PerpsMarketLastPassQueued`
 - `PerpsMarketLastPassRecovered`
 - `PerpsMarketLastPassLiquidated`
+- `PerpsMarketLastNativeFundingDelta`
+- `PerpsMarketLastNativePassSlot`
 
 Per-position maps:
 - `PerpsPositionOwner`

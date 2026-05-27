@@ -82,7 +82,7 @@ signer_account_exists=false
 signer_fee_balance=""
 signer_fee_asset_id=""
 signer_fee_asset_label=""
-chain_id="$SORASWAP_TESTNET_CHAIN_ID"
+chain_id="${SORASWAP_TESTNET_CHAIN_ID:-$SORASWAP_TESTNET_CHAIN_ID_DEFAULT}"
 chain_fingerprint_json="null"
 chain_fingerprint_available=false
 chain_snapshot_exists=false
@@ -134,7 +134,7 @@ block_1_json="$(json_get_for "$torii_root/v1/explorer/blocks/1")"
 current_block_height="$(json_get_for "$torii_root/status/blocks" | tr -d '\r\n[:space:]')"
 
 if [[ "$config_exists" == "true" && "$config_has_placeholders" == "false" ]]; then
-  chain_id="$(config_chain_id_from_config "$config" 2>/dev/null || printf '%s' "$SORASWAP_TESTNET_CHAIN_ID")"
+  chain_id="$(config_chain_id_from_config "$config" 2>/dev/null || printf '%s' "${SORASWAP_TESTNET_CHAIN_ID:-$SORASWAP_TESTNET_CHAIN_ID_DEFAULT}")"
 fi
 
 if [[ -n "$block_1_json" ]] && jq -e . >/dev/null 2>&1 <<<"$block_1_json"; then

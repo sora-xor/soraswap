@@ -183,14 +183,17 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#recent-fills")).toContainText("Sold");
   await expect(page.locator("#module-radar")).toContainText("n3x");
   await expect(page.locator("#module-radar")).toContainText("Perps");
+  await expect(page.locator("#module-grid")).toContainText("Batch Auction");
   await expect(page.locator("#module-grid")).toContainText("Launchpad");
   await expect(page.locator("#module-grid")).toContainText("Options");
   await expect(page.locator("#module-grid")).toContainText("Cover");
   await expect(page.locator("#module-grid")).toContainText("Intents");
   await expect(page.locator("#module-grid")).toContainText("Vaults");
+  await expect(page.locator("#module-grid")).toContainText("Escrow");
   await expect(page.locator("#module-grid")).toContainText("Operators");
   await expect(page.locator("#module-grid")).toContainText("Margin");
   await expect(page.locator("#module-grid")).toContainText("RWA");
+  await expect(page.locator("#module-grid")).toContainText("DLMM Hooks");
   await expect(page.locator("#journal-body")).toContainText("Buy Quote");
   await expect(page.locator("#journal-body")).toContainText("Sell Quote");
   await expect(page.locator("#activity-body")).toContainText("Minted n3x");
@@ -238,6 +241,15 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#journal-body")).toContainText("83 USDT");
   await expect(page.locator("#activity-body")).toContainText("9 -> 83");
 
+  await page.locator("#module-grid").getByRole("button", { name: /Batch Auction/i }).click();
+  await expect(page.locator("#trade-title")).toHaveText("Epoch Auction");
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "submit_order"');
+  await expect(page.locator("#trade-preview")).toContainText('"side": 1');
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Settle$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "settle_order"');
+
   await page.locator("#module-grid").getByRole("button", { name: /Launchpad/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "contribute_recorded"');
   await submitTraderAction(page);
@@ -255,6 +267,16 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#trade-result")).toContainText("committed");
   await page.locator("#trade-mode-bar").getByRole("button", { name: /^Redeem$/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "request_redeem"');
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+
+  await page.locator("#module-grid").getByRole("button", { name: /Escrow/i }).click();
+  await expect(page.locator("#trade-title")).toHaveText("Conditional Escrow");
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "open_escrow"');
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Accept$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "accept_escrow"');
   await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
 
@@ -276,4 +298,13 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "request_redemption"');
   await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
+
+  await page.locator("#module-grid").getByRole("button", { name: /DLMM Hooks/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "place_limit_order"');
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^TWAMM$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "schedule_twamm_v2"');
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Claim TWAMM$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "claim_twamm"');
 });

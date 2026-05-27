@@ -32,6 +32,7 @@ spec.loader.exec_module(trader_ui)
 
 
 FIXTURE_ROUTER_ADDRESS = "tairac1fixturerouter00000000000000000000000000000000000"
+FIXTURE_BATCH_AUCTION_ADDRESS = "tairac1fixtureauction000000000000000000000000000000"
 FIXTURE_N3X_ADDRESS = "tairac1fixturen3x000000000000000000000000000000000000"
 FIXTURE_PERPS_ADDRESS = "tairac1fixtureperps000000000000000000000000000000000"
 FIXTURE_FARMS_ADDRESS = "tairac1fixturefarms000000000000000000000000000000000"
@@ -41,6 +42,7 @@ FIXTURE_OPTIONS_FACTORY_ADDRESS = "tairac1fixtureoptfactory000000000000000000000
 FIXTURE_COVER_ADDRESS = "tairac1fixturecover000000000000000000000000000000000"
 FIXTURE_INTENTS_ADDRESS = "tairac1fixtureintents000000000000000000000000000000"
 FIXTURE_VAULTS_ADDRESS = "tairac1fixturevaults0000000000000000000000000000000"
+FIXTURE_ESCROW_ADDRESS = "tairac1fixtureescrow0000000000000000000000000000000"
 FIXTURE_OPERATORS_ADDRESS = "tairac1fixtureoperators0000000000000000000000000000"
 FIXTURE_MARGIN_ADDRESS = "tairac1fixturemargin00000000000000000000000000000"
 FIXTURE_RWA_ADDRESS = "tairac1fixturerwa0000000000000000000000000000000"
@@ -61,6 +63,12 @@ CONTRACTS = [
         "contract_source": "contracts/dlmm/dlmm_router.ko",
         "contract_address": FIXTURE_ROUTER_ADDRESS,
         "deploy_nonce": 4,
+    },
+    {
+        "contract_key": "batch_amm.epoch_auction",
+        "contract_source": "contracts/batch_amm/epoch_auction.ko",
+        "contract_address": FIXTURE_BATCH_AUCTION_ADDRESS,
+        "deploy_nonce": 18,
     },
     {
         "contract_key": "n3x.n3x_hub",
@@ -117,6 +125,12 @@ CONTRACTS = [
         "deploy_nonce": 13,
     },
     {
+        "contract_key": "escrow.conditional_escrow",
+        "contract_source": "contracts/escrow/conditional_escrow.ko",
+        "contract_address": FIXTURE_ESCROW_ADDRESS,
+        "deploy_nonce": 19,
+    },
+    {
         "contract_key": "operators.registry",
         "contract_source": "contracts/operators/registry.ko",
         "contract_address": FIXTURE_OPERATORS_ADDRESS,
@@ -146,6 +160,7 @@ ALIAS_TO_ADDRESS = {contract["contract_key"]: contract["contract_address"] for c
 ADDRESS_TO_ALIAS = {contract["contract_address"]: contract["contract_key"] for contract in CONTRACTS}
 MODULE_TO_CONTRACT_KEY = {
     "swaps": "dlmm.dlmm_router",
+    "batchAuction": "batch_amm.epoch_auction",
     "n3x": "n3x.n3x_hub",
     "perps": "perps.perps_engine",
     "farms": "farms.farm",
@@ -154,6 +169,7 @@ MODULE_TO_CONTRACT_KEY = {
     "cover": "cover.policy_manager",
     "intents": "intents.settlement_router",
     "vaults": "vaults.manager",
+    "escrow": "escrow.conditional_escrow",
     "operators": "operators.registry",
     "margin": "margin.portfolio_margin",
     "rwa": "rwa.market",
@@ -161,6 +177,7 @@ MODULE_TO_CONTRACT_KEY = {
 }
 MODULE_LABELS = {
     "swaps": "Swaps",
+    "batchAuction": "Batch Auction",
     "n3x": "n3x",
     "perps": "Perps",
     "farms": "Farms",
@@ -169,6 +186,7 @@ MODULE_LABELS = {
     "cover": "Cover",
     "intents": "Intents",
     "vaults": "Vaults",
+    "escrow": "Escrow",
     "operators": "Operators",
     "margin": "Margin",
     "rwa": "RWA",
@@ -176,6 +194,7 @@ MODULE_LABELS = {
 }
 MODULE_ORDER = [
     "swaps",
+    "batchAuction",
     "n3x",
     "perps",
     "farms",
@@ -184,6 +203,7 @@ MODULE_ORDER = [
     "cover",
     "intents",
     "vaults",
+    "escrow",
     "operators",
     "margin",
     "rwa",
@@ -191,6 +211,7 @@ MODULE_ORDER = [
 ]
 ALIAS_TO_MODULE = {
     "dlmm.dlmm_router": "swaps",
+    "batch_amm.epoch_auction": "batchAuction",
     "n3x.n3x_hub": "n3x",
     "perps.perps_engine": "perps",
     "farms.farm": "farms",
@@ -200,6 +221,7 @@ ALIAS_TO_MODULE = {
     "cover.policy_manager": "cover",
     "intents.settlement_router": "intents",
     "vaults.manager": "vaults",
+    "escrow.conditional_escrow": "escrow",
     "operators.registry": "operators",
     "margin.portfolio_margin": "margin",
     "rwa.market": "rwa",
@@ -207,6 +229,9 @@ ALIAS_TO_MODULE = {
 }
 ENTRYPOINT_TO_EVENT_KIND = {
     "route_swap": "swap_executed",
+    "submit_order": "batch_auction_order_submitted",
+    "cancel_order": "batch_auction_order_cancelled",
+    "settle_order": "batch_auction_order_settled",
     "deposit_and_mint": "n3x_minted",
     "burn_and_redeem": "n3x_redeemed",
     "open_position": "perps_position_opened",
@@ -241,6 +266,10 @@ ENTRYPOINT_TO_EVENT_KIND = {
     "deposit": "vault_deposited",
     "request_redeem": "vault_redeem_requested",
     "claim_redeem": "vault_redeem_claimed",
+    "open_escrow": "escrow_opened",
+    "accept_escrow": "escrow_accepted",
+    "cancel_escrow": "escrow_cancelled",
+    "refund_expired": "escrow_refunded",
     "register_operator": "operator_registered",
     "bond": "operator_bonded",
     "heartbeat": "operator_heartbeat",
@@ -258,6 +287,9 @@ ENTRYPOINT_TO_EVENT_KIND = {
     "configure_hook_policy": "dlmm_hook_configured",
     "place_limit_order": "dlmm_hook_limit_order_placed",
     "schedule_twamm": "dlmm_hook_twamm_scheduled",
+    "schedule_twamm_v2": "dlmm_hook_twamm_scheduled",
+    "cancel_twamm": "dlmm_hook_twamm_cancelled",
+    "claim_twamm": "dlmm_hook_twamm_claimed",
     "record_execution": "dlmm_hook_execution_recorded",
 }
 SUPPORTED_ENTRYPOINTS = set(ENTRYPOINT_TO_EVENT_KIND)
@@ -407,6 +439,12 @@ class MockToriiState:
         self.append_swap_fill(OTHER_AUTHORITY, 1, 90, 83, 80)
         self.append_swap_fill(FIXTURE_AUTHORITY, 0, 60, 68, 64)
 
+        self.append_event("batch_amm.epoch_auction", "submit_order", FIXTURE_AUTHORITY, {
+            "order_id": "bid-alpha",
+            "side": 1,
+            "amount": 250,
+            "limit_tick": 1000000,
+        })
         self.append_event("n3x.n3x_hub", "deposit_and_mint", FIXTURE_AUTHORITY, {
             "usdt_in": 160,
             "usdc_in": 40,
@@ -442,6 +480,23 @@ class MockToriiState:
             "notional": 900,
             "payout_amount": 240,
             "premium_paid": 30,
+        })
+        self.append_event("escrow.conditional_escrow", "open_escrow", FIXTURE_AUTHORITY, {
+            "escrow_id": "escrow-alpha",
+            "taker": "i105fixturetaker@universal",
+            "asset": N3X_ASSET_ID,
+            "amount": 75,
+            "expiry_slot": 1000000,
+            "condition_code": 7,
+        })
+        self.append_event("dlmm_hooks.hook_manager", "schedule_twamm_v2", FIXTURE_AUTHORITY, {
+            "order_id": "twamm-alpha",
+            "input_is_base": 1,
+            "total_in": 1000,
+            "slice_in": 100,
+            "min_total_out": 950,
+            "interval_slots": 2,
+            "start_slot": 1,
         })
 
     def next_hash_hex(self) -> str:
@@ -813,6 +868,25 @@ class MockToriiState:
             action = "Bought quote" if input_is_base == 1 else "Sold quote"
             exposure = f"{format_amount(amount_in, 0)} -> {format_amount(amount_out, 0)}"
             context = f"Min out {format_amount(min_out, 0)}"
+        elif module == "batchAuction":
+            order_id = payload.get("order_id")
+            amount = payload.get("amount")
+            limit_tick = payload.get("limit_tick")
+            side = payload.get("side")
+            action = {
+                "batch_auction_order_submitted": "Submitted auction order",
+                "batch_auction_order_cancelled": "Cancelled auction order",
+                "batch_auction_order_settled": "Settled auction order",
+            }.get(event_kind, action)
+            exposure = " · ".join(
+                part
+                for part in [
+                    f"{format_amount(float(amount), 0)} {'base' if side == 2 else 'quote'}" if isinstance(amount, (int, float)) else "",
+                    f"tick {format_amount(float(limit_tick), 0)}" if isinstance(limit_tick, (int, float)) else "",
+                ]
+                if part
+            ) or "Auction order"
+            context = f"Order {order_id}" if isinstance(order_id, str) and order_id else "Epoch auction"
         elif event_kind in {"n3x_minted", "n3x_redeemed"}:
             amount = int(payload.get("amount", payload.get("n3x_amount", 0)) or 0)
             action = "Minted n3x" if event_kind == "n3x_minted" else "Redeemed n3x"
@@ -912,6 +986,25 @@ class MockToriiState:
             amount = payload.get("amount", payload.get("shares"))
             exposure = format_amount(float(amount), 0) if isinstance(amount, (int, float)) else "Vault action"
             context = " · ".join(part for part in [vault_id, position_id] if isinstance(part, str) and part) or "Vault position"
+        elif module == "escrow":
+            escrow_id = payload.get("escrow_id")
+            amount = payload.get("amount")
+            condition_code = payload.get("condition_code")
+            action = {
+                "escrow_opened": "Opened escrow",
+                "escrow_accepted": "Accepted escrow",
+                "escrow_cancelled": "Cancelled escrow",
+                "escrow_refunded": "Refunded escrow",
+            }.get(event_kind, action)
+            exposure = " · ".join(
+                part
+                for part in [
+                    format_amount(float(amount), 0) if isinstance(amount, (int, float)) else "",
+                    f"condition {condition_code}" if isinstance(condition_code, int) else "",
+                ]
+                if part
+            ) or "Escrow action"
+            context = f"Escrow {escrow_id}" if isinstance(escrow_id, str) and escrow_id else "Conditional escrow"
         elif module == "operators":
             service = payload.get("service")
             amount = payload.get("amount", payload.get("min_bond", payload.get("fees_accrued")))
@@ -1172,6 +1265,13 @@ class MockToriiState:
             normalized.setdefault("amount_in", 100)
             normalized.setdefault("input_is_base", 1)
             normalized.setdefault("min_out", 95)
+        elif entrypoint == "submit_order":
+            normalized.setdefault("order_id", "bid-1")
+            normalized.setdefault("side", 1)
+            normalized.setdefault("amount", 100)
+            normalized.setdefault("limit_tick", 1000000)
+        elif entrypoint in {"cancel_order", "settle_order"}:
+            normalized.setdefault("order_id", "bid-1")
         elif entrypoint == "deposit_and_mint":
             normalized.setdefault("usdt_in", 150)
             normalized.setdefault("usdc_in", 35)
@@ -1262,6 +1362,18 @@ class MockToriiState:
             normalized.setdefault("shares", 40)
         elif entrypoint == "claim_redeem":
             normalized.setdefault("request_id", "redeem-1")
+        elif entrypoint == "open_escrow":
+            normalized.setdefault("escrow_id", "escrow-1")
+            normalized.setdefault("taker", "i105fixturetaker@universal")
+            normalized.setdefault("asset", N3X_ASSET_ID)
+            normalized.setdefault("amount", 100)
+            normalized.setdefault("expiry_slot", 1000000)
+            normalized.setdefault("condition_code", 7)
+        elif entrypoint == "accept_escrow":
+            normalized.setdefault("escrow_id", "escrow-1")
+            normalized.setdefault("condition_code", 7)
+        elif entrypoint in {"cancel_escrow", "refund_expired"}:
+            normalized.setdefault("escrow_id", "escrow-1")
         elif entrypoint == "register_operator":
             normalized.setdefault("service", "solver")
             normalized.setdefault("min_bond", 1000)
@@ -1316,6 +1428,16 @@ class MockToriiState:
             normalized.setdefault("hook_id", "twamm")
             normalized.setdefault("amount_in", 1000)
             normalized.setdefault("min_out", 990)
+        elif entrypoint == "schedule_twamm_v2":
+            normalized.setdefault("order_id", "twamm-1")
+            normalized.setdefault("input_is_base", 1)
+            normalized.setdefault("total_in", 1000)
+            normalized.setdefault("slice_in", 100)
+            normalized.setdefault("min_total_out", 950)
+            normalized.setdefault("interval_slots", 2)
+            normalized.setdefault("start_slot", 1)
+        elif entrypoint in {"cancel_twamm", "claim_twamm"}:
+            normalized.setdefault("order_id", "twamm-1")
         elif entrypoint == "record_execution":
             normalized.setdefault("order_id", "order-1")
             normalized.setdefault("amount_in", 100)

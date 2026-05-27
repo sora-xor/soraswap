@@ -22,6 +22,7 @@ deploy_report_set_phase local preflight completed "$(jq -cn \
   --arg fee_asset_id "$(fee_asset_definition_id_for_config "$config")" \
   --arg balance "$(asset_value_for_account_id "$config" "$(fee_asset_definition_id_for_config "$config")" "$SORASWAP_AUTHORITY")" \
   '{authority: $authority, fee_asset: $fee_asset, fee_asset_id: $fee_asset_id, balance: $balance}')"
+ensure_can_register_trigger_permission "$config" "$SORASWAP_AUTHORITY"
 
 deploy_report_set_phase local bootstrap_assets running null
 "$SORASWAP_ROOT/scripts/bootstrap_assets.sh" local

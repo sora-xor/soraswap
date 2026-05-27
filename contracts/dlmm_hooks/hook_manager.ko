@@ -11,13 +11,165 @@ seiyaku DlmmHookManager {
   state OrderExecutedIn: Map<Name, int>;
   state OrderExecutedOut: Map<Name, int>;
 
+  state int TwammInitialized;
+  state AccountId TwammOwner;
+  state AccountId TwammContractId;
+  state int TwammContractBound;
+  state bytes TwammRouterContract;
+  state int TwammRouterBound;
+  state AssetDefinitionId TwammBaseAsset;
+  state AssetDefinitionId TwammQuoteAsset;
+  state int TwammCadenceSlots;
+  state int TwammMaxOrdersPerTick;
+  state int TwammEnabled;
+  state int TwammNextOrderIndex;
+  state int TwammScanCursor;
+  state int TwammLastTickSlot;
+  state int TwammLastTickProcessed;
+
+  state TwammOrderByIndex: Map<int, Name>;
+  state TwammOrderOwner: Map<Name, AccountId>;
+  state TwammOrderInputIsBase: Map<Name, int>;
+  state TwammOrderTotalIn: Map<Name, int>;
+  state TwammOrderSliceIn: Map<Name, int>;
+  state TwammOrderMinTotalOut: Map<Name, int>;
+  state TwammOrderRemainingIn: Map<Name, int>;
+  state TwammOrderExecutedIn: Map<Name, int>;
+  state TwammOrderExecutedOut: Map<Name, int>;
+  state TwammOrderClaimedOut: Map<Name, int>;
+  state TwammOrderNextSlot: Map<Name, int>;
+  state TwammOrderIntervalSlots: Map<Name, int>;
+  state TwammOrderStatus: Map<Name, int>;
+
+  register_trigger soraswap_twamm_tick {
+    call native_twamm_tick;
+    on time pre_commit;
+    repeats indefinitely;
+    metadata { tag: "soraswap"; module: "dlmm_hooks.hook_manager"; __enabled: false; }
+  }
+
   fn assert_hook_owner(hook_id: Name) {
     assert(HookOwner.contains(hook_id), "hook missing");
     assert(HookOwner[hook_id] == authority(), "hook owner mismatch");
   }
 
+  fn min_int(a: int, b: int) -> int {
+    if a <= b {
+      return a;
+    }
+    return b;
+  }
+
+  fn assert_twamm_initialized() {
+    assert(TwammInitialized == 1, "twamm not initialized");
+  }
+
+  fn assert_twamm_owner() {
+    assert_twamm_initialized();
+    assert(TwammOwner == authority(), "twamm owner mismatch");
+  }
+
+  fn assert_twamm_contract_bound() {
+    assert(TwammContractBound == 1, "twamm contract unbound");
+  }
+
+  fn assert_twamm_router_bound() {
+    assert(TwammRouterBound == 1, "twamm router unbound");
+  }
+
+  fn assert_twamm_order_exists(order_id: Name) {
+    assert(TwammOrderOwner.contains(order_id), "twamm order missing");
+  }
+
+  fn move_asset_if_needed(from: AccountId,
+                          to: AccountId,
+                          asset: AssetDefinitionId,
+                          amount: int) {
+    if amount > 0 {
+      if from != to {
+        transfer_asset(from, to, asset, amount);
+      }
+    }
+  }
+
+  fn twamm_execute_order(order_id: Name, current_slot: int) -> int {
+    if TwammOrderStatus.get_or(order_id, 0) != 1 {
+      return 0;
+    }
+    if current_slot < TwammOrderNextSlot.get_or(order_id, 0) {
+      return 0;
+    }
+    let remaining = TwammOrderRemainingIn.get_or(order_id, 0);
+    if remaining <= 0 {
+      TwammOrderStatus[order_id] = 3;
+      return 0;
+    }
+    let amount_in = min_int(remaining, TwammOrderSliceIn.get_or(order_id, 0));
+    if amount_in <= 0 {
+      return 0;
+    }
+    let total_in = TwammOrderTotalIn.get_or(order_id, 0);
+    let min_slice_out = 0;
+    if total_in > 0 {
+      min_slice_out = (TwammOrderMinTotalOut.get_or(order_id, 0) * amount_in) / total_in;
+    }
+    let payload = json_object();
+    let payload = json_set_int(payload, name("amount_in"), amount_in);
+    let payload = json_set_int(payload, name("input_is_base"), TwammOrderInputIsBase.get_or(order_id, 0));
+    let payload = json_set_int(payload, name("min_out"), min_slice_out);
+    let amount_out = decode_int(call_contract(TwammRouterContract, "route_swap", payload));
+    TwammOrderRemainingIn[order_id] = remaining - amount_in;
+    TwammOrderExecutedIn[order_id] = TwammOrderExecutedIn.get_or(order_id, 0) + amount_in;
+    TwammOrderExecutedOut[order_id] = TwammOrderExecutedOut.get_or(order_id, 0) + amount_out;
+    TwammOrderNextSlot[order_id] = current_slot + TwammOrderIntervalSlots.get_or(order_id, 1);
+    if TwammOrderRemainingIn.get_or(order_id, 0) <= 0 {
+      TwammOrderStatus[order_id] = 3;
+    }
+    return 1;
+  }
+
   kotoage fn main() -> int {
     return 1;
+  }
+
+  kotoage fn init_trigger_twamm(base_asset: AssetDefinitionId,
+                                quote_asset: AssetDefinitionId,
+                                cadence_slots: int,
+                                max_orders_per_tick: int,
+                                enabled: int) permission(Admin) {
+    assert(TwammInitialized == 0, "twamm initialized");
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(max_orders_per_tick > 0, "invalid max orders");
+    assert(max_orders_per_tick <= 16, "max orders too high");
+    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    TwammInitialized = 1;
+    TwammOwner = authority();
+    TwammContractId = authority();
+    TwammContractBound = 0;
+    TwammRouterContract = blob("");
+    TwammRouterBound = 0;
+    TwammBaseAsset = base_asset;
+    TwammQuoteAsset = quote_asset;
+    TwammCadenceSlots = cadence_slots;
+    TwammMaxOrdersPerTick = max_orders_per_tick;
+    TwammEnabled = enabled;
+    TwammNextOrderIndex = 1;
+    TwammScanCursor = 1;
+    TwammLastTickSlot = 0;
+    TwammLastTickProcessed = 0;
+    set_trigger_enabled(name("soraswap_twamm_tick"), enabled);
+  }
+
+  kotoage fn bind_contract(contract_id: AccountId) {
+    assert_twamm_owner();
+    TwammContractId = contract_id;
+    TwammContractBound = 1;
+  }
+
+  kotoage fn bind_router(router_contract: bytes) {
+    assert_twamm_owner();
+    TwammRouterContract = router_contract;
+    TwammRouterBound = 1;
   }
 
   kotoage fn configure_hook_policy(hook_id: Name, phase: int, max_fee_pips: int, enabled: int) {
@@ -48,6 +200,116 @@ seiyaku DlmmHookManager {
     place_limit_order(order_id, hook_id, amount_in, min_out);
     assert(interval_slots > 0, "invalid interval");
     OrderIntervalSlots[order_id] = interval_slots;
+  }
+
+  kotoage fn schedule_twamm_v2(order_id: Name,
+                               input_is_base: int,
+                               total_in: int,
+                               slice_in: int,
+                               min_total_out: int,
+                               interval_slots: int,
+                               start_slot: int) permission(AssetOps) {
+    assert_twamm_initialized();
+    assert_twamm_contract_bound();
+    assert_twamm_router_bound();
+    assert(TwammEnabled == 1, "twamm disabled");
+    assert(!TwammOrderOwner.contains(order_id), "twamm order exists");
+    assert(input_is_base == 0 || input_is_base == 1, "invalid direction");
+    assert(total_in > 0, "invalid total in");
+    assert(slice_in > 0, "invalid slice in");
+    assert(min_total_out >= 0, "invalid min total out");
+    assert(interval_slots > 0, "invalid interval");
+    assert(start_slot >= 0, "invalid start slot");
+
+    if input_is_base == 1 {
+      move_asset_if_needed(authority(), TwammContractId, TwammBaseAsset, total_in);
+    } else {
+      move_asset_if_needed(authority(), TwammContractId, TwammQuoteAsset, total_in);
+    }
+
+    let index = TwammNextOrderIndex;
+    TwammNextOrderIndex = index + 1;
+    TwammOrderByIndex[index] = order_id;
+    TwammOrderOwner[order_id] = authority();
+    TwammOrderInputIsBase[order_id] = input_is_base;
+    TwammOrderTotalIn[order_id] = total_in;
+    TwammOrderSliceIn[order_id] = slice_in;
+    TwammOrderMinTotalOut[order_id] = min_total_out;
+    TwammOrderRemainingIn[order_id] = total_in;
+    TwammOrderExecutedIn[order_id] = 0;
+    TwammOrderExecutedOut[order_id] = 0;
+    TwammOrderClaimedOut[order_id] = 0;
+    TwammOrderNextSlot[order_id] = start_slot;
+    TwammOrderIntervalSlots[order_id] = interval_slots;
+    TwammOrderStatus[order_id] = 1;
+  }
+
+  kotoage fn cancel_twamm(order_id: Name) -> int permission(AssetOps) {
+    assert_twamm_initialized();
+    assert_twamm_contract_bound();
+    assert_twamm_order_exists(order_id);
+    assert(TwammOrderOwner[order_id] == authority(), "twamm owner mismatch");
+    assert(TwammOrderStatus.get_or(order_id, 0) == 1, "twamm not active");
+    let remaining = TwammOrderRemainingIn.get_or(order_id, 0);
+    TwammOrderStatus[order_id] = 4;
+    TwammOrderRemainingIn[order_id] = 0;
+    if TwammOrderInputIsBase.get_or(order_id, 0) == 1 {
+      move_asset_if_needed(TwammContractId, authority(), TwammBaseAsset, remaining);
+    } else {
+      move_asset_if_needed(TwammContractId, authority(), TwammQuoteAsset, remaining);
+    }
+    return remaining;
+  }
+
+  kotoage fn claim_twamm(order_id: Name) -> int permission(AssetOps) {
+    assert_twamm_initialized();
+    assert_twamm_contract_bound();
+    assert_twamm_order_exists(order_id);
+    assert(TwammOrderOwner[order_id] == authority(), "twamm owner mismatch");
+    let status = TwammOrderStatus.get_or(order_id, 0);
+    assert(status == 3 || status == 4, "twamm not claimable");
+    let claimable = TwammOrderExecutedOut.get_or(order_id, 0) - TwammOrderClaimedOut.get_or(order_id, 0);
+    assert(claimable > 0, "nothing claimable");
+    TwammOrderClaimedOut[order_id] = TwammOrderClaimedOut.get_or(order_id, 0) + claimable;
+    if TwammOrderInputIsBase.get_or(order_id, 0) == 1 {
+      move_asset_if_needed(TwammContractId, authority(), TwammQuoteAsset, claimable);
+    } else {
+      move_asset_if_needed(TwammContractId, authority(), TwammBaseAsset, claimable);
+    }
+    return claimable;
+  }
+
+  kotoage fn native_twamm_tick() permission(AssetOps) {
+    if TwammInitialized == 0 {
+      return;
+    }
+    if TwammEnabled == 0 {
+      return;
+    }
+    let current_slot = block_height();
+    if TwammCadenceSlots > 0 && TwammLastTickSlot > 0 {
+      if current_slot < TwammLastTickSlot + TwammCadenceSlots {
+        return;
+      }
+    }
+    let processed = 0;
+    let scanned = 0;
+    let index = TwammScanCursor;
+    if index <= 0 || index >= TwammNextOrderIndex {
+      index = 1;
+    }
+    while scanned < TwammMaxOrdersPerTick && index < TwammNextOrderIndex {
+      let order_id = TwammOrderByIndex.get_or(index, name!("missing"));
+      processed = processed + twamm_execute_order(order_id, current_slot);
+      index = index + 1;
+      scanned = scanned + 1;
+    }
+    if index >= TwammNextOrderIndex {
+      index = 1;
+    }
+    TwammScanCursor = index;
+    TwammLastTickSlot = current_slot;
+    TwammLastTickProcessed = processed;
   }
 
   kotoage fn record_execution(order_id: Name, amount_in: int, amount_out: int) {
@@ -83,6 +345,36 @@ seiyaku DlmmHookManager {
       OrderMinOut.get_or(order_id, 0),
       OrderExecutedIn.get_or(order_id, 0),
       OrderExecutedOut.get_or(order_id, 0)
+    );
+  }
+
+  view fn twamm_order_state(order_id: Name) -> (int, int, int, int, int, int, int, int, int) {
+    let registered = 0;
+    if TwammOrderOwner.contains(order_id) {
+      registered = 1;
+    }
+    return (
+      registered,
+      TwammOrderInputIsBase.get_or(order_id, 0),
+      TwammOrderTotalIn.get_or(order_id, 0),
+      TwammOrderRemainingIn.get_or(order_id, 0),
+      TwammOrderExecutedIn.get_or(order_id, 0),
+      TwammOrderExecutedOut.get_or(order_id, 0),
+      TwammOrderClaimedOut.get_or(order_id, 0),
+      TwammOrderNextSlot.get_or(order_id, 0),
+      TwammOrderStatus.get_or(order_id, 0)
+    );
+  }
+
+  view fn twamm_trigger_state() -> (int, int, int, int, int, int, int) {
+    return (
+      TwammInitialized,
+      TwammContractBound,
+      TwammRouterBound,
+      TwammCadenceSlots,
+      TwammMaxOrdersPerTick,
+      TwammLastTickSlot,
+      TwammLastTickProcessed
     );
   }
 }

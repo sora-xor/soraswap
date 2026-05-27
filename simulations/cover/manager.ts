@@ -80,6 +80,13 @@ export class CoverManagerModel {
 
   recordObservation(policyId: number, observedPrice: number, oracle: { oracleSlot: number; currentSlot: number; statusFlags: number }): PolicyState {
     const policy = this.mustPolicy(policyId);
+    if (policy.status === "claimed") {
+      throw new Error("policy already claimed");
+    }
+    if (policy.status === "expired") {
+      throw new Error("policy expired");
+    }
+
     const previousSlot = policy.lastObservationSlot;
     policy.lastObservationSlot = oracle.currentSlot;
     policy.lastObservedPrice = observedPrice;

@@ -18,6 +18,13 @@ Manager singleton state:
 - `OptMgrAutomationSafeMode`
 - `OptMgrNextTemplateId`
 - `OptMgrNextSeriesId`
+- `OptMgrLifecycleCadenceSlots`
+- `OptMgrLifecycleMaxItems`
+- `OptMgrLifecycleEnabled`
+- `OptMgrLifecycleNextSlot`
+- `OptMgrLifecycleCursor`
+- `OptMgrLifecycleLastSlot`
+- `OptMgrLifecycleLastProcessed`
 
 Manager template maps:
 - `OptMgrTemplateKind`
@@ -68,6 +75,13 @@ Factory singleton state:
 - `OptFactoryAutomationBacklog`
 - `OptFactoryAutomationSafeMode`
 - `OptFactoryNextPositionId`
+- `OptFactoryLifecycleCadenceSlots`
+- `OptFactoryLifecycleMaxItems`
+- `OptFactoryLifecycleEnabled`
+- `OptFactoryLifecycleNextSlot`
+- `OptFactoryLifecycleCursor`
+- `OptFactoryLifecycleLastSlot`
+- `OptFactoryLifecycleLastProcessed`
 
 Factory series and guard maps:
 - `OptFactorySeriesKind`

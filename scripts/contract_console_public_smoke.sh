@@ -178,7 +178,11 @@ poll_tx_status() {
     attempt=$(( attempt + 1 ))
   done
 
-  printf '%s\n' "${result:-{}}"
+  if [[ -n "$result" ]]; then
+    printf '%s\n' "$result"
+  else
+    printf '%s\n' '{}'
+  fi
   return 0
 }
 

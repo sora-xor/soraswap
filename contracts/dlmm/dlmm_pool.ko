@@ -3,6 +3,7 @@
 
 seiyaku DlmmPool {
   state int PoolInitialized;
+  state AccountId PoolOwner;
   state AssetDefinitionId BaseAsset;
   state AssetDefinitionId QuoteAsset;
   state AccountId VaultAccount;
@@ -27,6 +28,22 @@ seiyaku DlmmPool {
   state PositionFeeDebtQuote: Map<Name, int>;
   state PositionCreditBase: Map<Name, int>;
   state PositionCreditQuote: Map<Name, int>;
+
+  state int RangeGovernorEnabled;
+  state int RangeGovernorCadenceSlots;
+  state int RangeGovernorNextSlot;
+  state int RangeGovernorMaxFeePips;
+  state int RangeGovernorTargetActiveBin;
+  state int RangeGovernorMaxActiveBinDrift;
+  state int RangeGovernorLastSlot;
+  state int RangeGovernorLastAction;
+
+  register_trigger soraswap_range_governor_tick {
+    call native_range_governor_tick;
+    on time pre_commit;
+    repeats indefinitely;
+    metadata { tag: "soraswap"; module: "dlmm.dlmm_pool"; __enabled: false; }
+  }
 
   fn ppm_scale() -> int {
     return 1_000_000;
@@ -124,6 +141,11 @@ seiyaku DlmmPool {
 
   fn assert_pool_initialized() {
     assert(PoolInitialized == 1, "pool not initialized");
+  }
+
+  fn assert_pool_owner() {
+    assert_pool_initialized();
+    assert(PoolOwner == authority(), "pool owner mismatch");
   }
 
   fn assert_vault_operator() {
@@ -384,6 +406,7 @@ seiyaku DlmmPool {
     assert_valid_bin_id(active_bin);
 
     PoolInitialized = 1;
+    PoolOwner = authority();
     BaseAsset = base_asset;
     QuoteAsset = quote_asset;
     VaultAccount = vault_account;
@@ -395,6 +418,14 @@ seiyaku DlmmPool {
     MinReserveQuote = 0;
     MaxBinsPerSwap = default_max_bins_per_swap();
     BinLiquidityCap = 0;
+    RangeGovernorEnabled = 0;
+    RangeGovernorCadenceSlots = 0;
+    RangeGovernorNextSlot = 0;
+    RangeGovernorMaxFeePips = fee_pips;
+    RangeGovernorTargetActiveBin = active_bin;
+    RangeGovernorMaxActiveBinDrift = 0;
+    RangeGovernorLastSlot = 0;
+    RangeGovernorLastAction = 0;
   }
 
   fn apply_risk_config(impact_cap_bps: int,
@@ -707,6 +738,70 @@ seiyaku DlmmPool {
       MinReserveQuote,
       MaxBinsPerSwap,
       BinLiquidityCap
+    );
+  }
+
+  kotoage fn configure_range_governor(cadence_slots: int,
+                                      max_fee_pips: int,
+                                      target_active_bin: int,
+                                      max_active_bin_drift: int,
+                                      enabled: int) permission(Admin) {
+    assert_pool_owner();
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert_valid_fee(max_fee_pips);
+    assert_valid_bin_id(target_active_bin);
+    assert(max_active_bin_drift >= 0, "invalid drift");
+    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    RangeGovernorCadenceSlots = cadence_slots;
+    RangeGovernorMaxFeePips = max_fee_pips;
+    RangeGovernorTargetActiveBin = target_active_bin;
+    RangeGovernorMaxActiveBinDrift = max_active_bin_drift;
+    RangeGovernorEnabled = enabled;
+    RangeGovernorNextSlot = block_height() + cadence_slots;
+    set_trigger_enabled(name("soraswap_range_governor_tick"), enabled);
+  }
+
+  kotoage fn native_range_governor_tick() {
+    if PoolInitialized == 0 {
+      return;
+    }
+    if RangeGovernorEnabled == 0 {
+      return;
+    }
+    let current_slot = block_height();
+    if RangeGovernorNextSlot > 0 && current_slot < RangeGovernorNextSlot {
+      return;
+    }
+    let action = 0;
+    if FeePips > RangeGovernorMaxFeePips {
+      FeePips = RangeGovernorMaxFeePips;
+      action = 1;
+    }
+    let drift = abs_int(ActiveBin - RangeGovernorTargetActiveBin);
+    if RangeGovernorMaxActiveBinDrift > 0 && drift > RangeGovernorMaxActiveBinDrift {
+      if bin_reserve_base_value(RangeGovernorTargetActiveBin) > 0 ||
+        bin_reserve_quote_value(RangeGovernorTargetActiveBin) > 0 ||
+        bin_share_supply_value(RangeGovernorTargetActiveBin) > 0 {
+        ActiveBin = RangeGovernorTargetActiveBin;
+        action = action + 2;
+      }
+    }
+    RangeGovernorLastSlot = current_slot;
+    RangeGovernorLastAction = action;
+    RangeGovernorNextSlot = current_slot + RangeGovernorCadenceSlots;
+  }
+
+  view fn range_governor_state() -> (int, int, int, int, int, int, int, int) {
+    assert_pool_initialized();
+    return (
+      RangeGovernorEnabled,
+      RangeGovernorCadenceSlots,
+      RangeGovernorNextSlot,
+      RangeGovernorMaxFeePips,
+      RangeGovernorTargetActiveBin,
+      RangeGovernorMaxActiveBinDrift,
+      RangeGovernorLastSlot,
+      RangeGovernorLastAction
     );
   }
 

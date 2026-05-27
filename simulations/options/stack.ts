@@ -278,6 +278,13 @@ export class OptionsStackModel {
   }
 
   private settlePosition(position: PositionState, requestedPayout: number): number {
+    if (position.kind === "shout" && position.status !== "active") {
+      throw new Error("position not active");
+    }
+    if (position.kind === "outperformance" && position.status !== "settled") {
+      throw new Error("position not settled");
+    }
+
     const series = this.mustSeries(position.seriesId);
     const ledger = this.mustVault(position.seriesId);
     const finalPayout = this.vault.settlePayout(2, position.positionId, Math.min(requestedPayout, position.collateralLocked));

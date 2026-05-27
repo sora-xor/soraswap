@@ -16,6 +16,14 @@ seiyaku OptionsManager {
   state int OptMgrAutomationBacklog;
   state int OptMgrAutomationSafeMode;
 
+  state int OptMgrLifecycleCadenceSlots;
+  state int OptMgrLifecycleMaxItems;
+  state int OptMgrLifecycleEnabled;
+  state int OptMgrLifecycleNextSlot;
+  state int OptMgrLifecycleCursor;
+  state int OptMgrLifecycleLastSlot;
+  state int OptMgrLifecycleLastProcessed;
+
   state int OptMgrNextTemplateId;
   state int OptMgrNextSeriesId;
 
@@ -43,6 +51,13 @@ seiyaku OptionsManager {
   state OptMgrSeriesAttestationHash: Map<int, int>;
   state OptMgrSeriesFinalMark: Map<int, int>;
   state OptMgrSeriesFinalQuoteMark: Map<int, int>;
+
+  register_trigger soraswap_options_lifecycle_tick {
+    call native_lifecycle_tick;
+    on time pre_commit;
+    repeats indefinitely;
+    metadata { tag: "soraswap"; module: "options.manager"; __enabled: false; }
+  }
 
   fn assert_initialized() {
     assert(OptMgrInitialized == 1, "manager not initialized");
@@ -159,8 +174,67 @@ seiyaku OptionsManager {
     OptMgrAutomationBacklogCap = 0;
     OptMgrAutomationBacklog = 0;
     OptMgrAutomationSafeMode = 0;
+    OptMgrLifecycleCadenceSlots = 0;
+    OptMgrLifecycleMaxItems = 1;
+    OptMgrLifecycleEnabled = 0;
+    OptMgrLifecycleNextSlot = 0;
+    OptMgrLifecycleCursor = 1;
+    OptMgrLifecycleLastSlot = 0;
+    OptMgrLifecycleLastProcessed = 0;
     OptMgrNextTemplateId = 1;
     OptMgrNextSeriesId = 1;
+  }
+
+  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
+                                         max_items_per_tick: int,
+                                         enabled: int) permission(Admin) {
+    assert_owner();
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(max_items_per_tick > 0, "invalid max items");
+    assert(max_items_per_tick <= 16, "max items too high");
+    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    OptMgrLifecycleCadenceSlots = cadence_slots;
+    OptMgrLifecycleMaxItems = max_items_per_tick;
+    OptMgrLifecycleEnabled = enabled;
+    OptMgrLifecycleNextSlot = block_height() + cadence_slots;
+    if OptMgrLifecycleCursor <= 0 {
+      OptMgrLifecycleCursor = 1;
+    }
+    set_trigger_enabled(name("soraswap_options_lifecycle_tick"), enabled);
+  }
+
+  kotoage fn native_lifecycle_tick() {
+    if OptMgrInitialized == 0 {
+      return;
+    }
+    if OptMgrLifecycleEnabled == 0 {
+      return;
+    }
+    let current_slot = block_height();
+    if OptMgrLifecycleNextSlot > 0 && current_slot < OptMgrLifecycleNextSlot {
+      return;
+    }
+    let processed = 0;
+    let series_id = OptMgrLifecycleCursor;
+    if series_id <= 0 || series_id >= OptMgrNextSeriesId {
+      series_id = 1;
+    }
+    while processed < OptMgrLifecycleMaxItems && series_id < OptMgrNextSeriesId {
+      if OptMgrSeriesStatus.get_or(series_id, 0) == 1 &&
+        current_slot >= OptMgrSeriesExpirySlot.get_or(series_id, 0) {
+        OptMgrSeriesStatus[series_id] = 2;
+        OptMgrSeriesSettlementSlot[series_id] = current_slot;
+      }
+      processed = processed + 1;
+      series_id = series_id + 1;
+    }
+    if series_id >= OptMgrNextSeriesId {
+      series_id = 1;
+    }
+    OptMgrLifecycleCursor = series_id;
+    OptMgrLifecycleLastSlot = current_slot;
+    OptMgrLifecycleLastProcessed = processed;
+    OptMgrLifecycleNextSlot = current_slot + OptMgrLifecycleCadenceSlots;
   }
 
   kotoage fn sync_automation(executor: AccountId,
@@ -351,6 +425,18 @@ seiyaku OptionsManager {
       OptMgrAutomationBacklogCap,
       OptMgrAutomationBacklog,
       OptMgrAutomationSafeMode
+    );
+  }
+
+  view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
+    return (
+      OptMgrLifecycleEnabled,
+      OptMgrLifecycleCadenceSlots,
+      OptMgrLifecycleMaxItems,
+      OptMgrLifecycleNextSlot,
+      OptMgrLifecycleCursor,
+      OptMgrLifecycleLastSlot,
+      OptMgrLifecycleLastProcessed
     );
   }
 }

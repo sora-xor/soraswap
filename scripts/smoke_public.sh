@@ -26,6 +26,7 @@ dlmm_pool_contract="$(deployed_contract_id_for_env "$public_env" dlmm.dlmm_pool)
 dlmm_pool_dataspace="$(deployed_contract_dataspace_for_env "$public_env" dlmm.dlmm_pool)"
 dlmm_router_contract="$(deployed_contract_id_for_env "$public_env" dlmm.dlmm_router)"
 dlmm_router_dataspace="$(deployed_contract_dataspace_for_env "$public_env" dlmm.dlmm_router)"
+batch_epoch_auction_contract="$(deployed_contract_id_for_env "$public_env" batch_amm.epoch_auction)"
 risk_vault_contract="$(deployed_contract_id_for_env "$public_env" risk.risk_vault)"
 perps_engine_contract="$(deployed_contract_id_for_env "$public_env" perps.perps_engine)"
 options_manager_contract="$(deployed_contract_id_for_env "$public_env" options.manager)"
@@ -40,6 +41,7 @@ operators_registry_contract="$(deployed_contract_id_for_env "$public_env" operat
 margin_portfolio_margin_contract="$(deployed_contract_id_for_env "$public_env" margin.portfolio_margin)"
 rwa_market_contract="$(deployed_contract_id_for_env "$public_env" rwa.market)"
 dlmm_hooks_manager_contract="$(deployed_contract_id_for_env "$public_env" dlmm_hooks.hook_manager)"
+escrow_conditional_escrow_contract="$(deployed_contract_id_for_env "$public_env" escrow.conditional_escrow)"
 
 report_dir="$(deployments_dir_for_env "$public_env")"
 timestamp="$(env TZ=UTC date '+%Y%m%dT%H%M%SZ')"
@@ -207,6 +209,19 @@ launch_margin_market_view_json="$(view_if_initialized "$margin_portfolio_margin_
 launch_margin_account_view_json="$(view_if_initialized "$margin_portfolio_margin_contract" account_health "$(jq -cn --arg account_key "$soraswap_launch_margin_account_key" '{account_key:$account_key}')")"
 launch_rwa_market_view_json="$(view_if_initialized "$rwa_market_contract" rwa_market_state "$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" '{market_id:$market_id}')")"
 launch_dlmm_hook_policy_view_json="$(view_if_initialized "$dlmm_hooks_manager_contract" hook_policy "$(jq -cn --arg hook_id "$soraswap_launch_dlmm_hook_id" '{hook_id:$hook_id}')")"
+trigger_registration_evidence_json="$(soraswap_collect_trigger_registration_evidence "$config")"
+soraswap_assert_expected_triggers_registered "$trigger_registration_evidence_json"
+trigger_completion_probe_json="$(soraswap_collect_trigger_completions "$config" "" "${SORASWAP_TRIGGER_COMPLETION_PROBE_MS:-1000}" "${SORASWAP_TRIGGER_COMPLETION_PROBE_LIMIT:-5}")"
+epoch_auction_state_view_json="$(view_if_initialized "$batch_epoch_auction_contract" epoch_state)"
+dlmm_range_governor_view_json="$(view_if_initialized "$dlmm_pool_contract" range_governor_state)"
+twamm_trigger_state_view_json="$(view_if_initialized "$dlmm_hooks_manager_contract" twamm_trigger_state)"
+options_manager_lifecycle_view_json="$(view_if_initialized "$options_manager_contract" trigger_lifecycle_state)"
+options_factory_lifecycle_view_json="$(view_if_initialized "$options_factory_contract" trigger_lifecycle_state)"
+cover_lifecycle_view_json="$(view_if_initialized "$cover_policy_manager_contract" trigger_lifecycle_state)"
+launchpad_lifecycle_view_json="$(view_if_initialized "$launchpad_sale_factory_contract" trigger_lifecycle_state)"
+vault_lifecycle_view_json="$(view_if_initialized "$vaults_manager_contract" trigger_lifecycle_state)"
+perps_lifecycle_view_json="$(view_if_initialized "$perps_engine_contract" trigger_lifecycle_state)"
+conditional_escrow_state_view_json="$(view_if_initialized "$escrow_conditional_escrow_contract" escrow_state "$(jq -cn --arg escrow_id "readonly_probe" '{escrow_id:$escrow_id}')")"
 
 decoded_state_ints='{}'
 decoded_state_ints="$(jq -c '. + $add' \
@@ -341,7 +356,19 @@ report_json="$(jq -n \
   --argjson launch_margin_account_result "$(contract_view_result_json "$launch_margin_account_view_json")" \
   --argjson launch_rwa_market_result "$(contract_view_result_json "$launch_rwa_market_view_json")" \
   --argjson launch_dlmm_hook_policy_result "$(contract_view_result_json "$launch_dlmm_hook_policy_view_json")" \
+  --argjson trigger_registration_evidence "$trigger_registration_evidence_json" \
+  --argjson epoch_auction_state_result "$(contract_view_result_json "$epoch_auction_state_view_json")" \
+  --argjson dlmm_range_governor_result "$(contract_view_result_json "$dlmm_range_governor_view_json")" \
+  --argjson twamm_trigger_state_result "$(contract_view_result_json "$twamm_trigger_state_view_json")" \
+  --argjson options_manager_lifecycle_result "$(contract_view_result_json "$options_manager_lifecycle_view_json")" \
+  --argjson options_factory_lifecycle_result "$(contract_view_result_json "$options_factory_lifecycle_view_json")" \
+  --argjson cover_lifecycle_result "$(contract_view_result_json "$cover_lifecycle_view_json")" \
+  --argjson launchpad_lifecycle_result "$(contract_view_result_json "$launchpad_lifecycle_view_json")" \
+  --argjson vault_lifecycle_result "$(contract_view_result_json "$vault_lifecycle_view_json")" \
+  --argjson perps_lifecycle_result "$(contract_view_result_json "$perps_lifecycle_view_json")" \
+  --argjson conditional_escrow_state_result "$(contract_view_result_json "$conditional_escrow_state_view_json")" \
   --argjson decoded_state_ints "$decoded_state_ints" \
+  --argjson trigger_completion_probe "$trigger_completion_probe_json" \
   '{
     generated_at: $generated_at,
     authority: $authority,
@@ -352,6 +379,9 @@ report_json="$(jq -n \
     chain_fingerprint: $chain_fingerprint,
     manifest_verified_count: $manifest_verified,
     contracts: $contracts,
+    trigger_evidence: ($trigger_registration_evidence + {
+      completion_probe: $trigger_completion_probe
+    }),
     view_results: {
       n3x_quote_mint: $n3x_quote_result,
       dlmm_router_quote_bin: $router_quote_result,
@@ -390,7 +420,17 @@ report_json="$(jq -n \
       launch_margin_market: $launch_margin_market_result,
       launch_margin_account: $launch_margin_account_result,
       launch_rwa_market: $launch_rwa_market_result,
-      launch_dlmm_hook_policy: $launch_dlmm_hook_policy_result
+      launch_dlmm_hook_policy: $launch_dlmm_hook_policy_result,
+      epoch_auction_state: $epoch_auction_state_result,
+      dlmm_range_governor: $dlmm_range_governor_result,
+      twamm_trigger_state: $twamm_trigger_state_result,
+      options_manager_lifecycle: $options_manager_lifecycle_result,
+      options_factory_lifecycle: $options_factory_lifecycle_result,
+      cover_lifecycle: $cover_lifecycle_result,
+      launchpad_lifecycle: $launchpad_lifecycle_result,
+      vault_lifecycle: $vault_lifecycle_result,
+      perps_lifecycle: $perps_lifecycle_result,
+      conditional_escrow_state: $conditional_escrow_state_result
     },
     decoded_state_ints: $decoded_state_ints
   }')"

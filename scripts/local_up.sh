@@ -4,7 +4,11 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
 localnet_dir="$DEFAULT_LOCALNET_DIR"
+if [[ "$localnet_dir" != /* ]]; then
+  localnet_dir="$SORASWAP_ROOT/$localnet_dir"
+fi
 peer_pid_file="$localnet_dir/peer0.pid"
+local_client="$localnet_dir/client.toml"
 base_api_port="${SORASWAP_LOCALNET_BASE_API_PORT:-8080}"
 base_p2p_port="${SORASWAP_LOCALNET_BASE_P2P_PORT:-1337}"
 consensus_mode="${SORASWAP_LOCALNET_CONSENSUS_MODE:-npos}"
@@ -12,7 +16,7 @@ localnet_guest_stack_bytes="${SORASWAP_LOCALNET_GUEST_STACK_BYTES:-8388608}"
 localnet_gas_to_stack_multiplier="${SORASWAP_LOCALNET_GAS_TO_STACK_MULTIPLIER:-8}"
 localnet_memory_budget_profile="${SORASWAP_LOCALNET_MEMORY_BUDGET_PROFILE:-soraswap-dlmm}"
 localnet_max_stack_bytes="${SORASWAP_LOCALNET_MAX_STACK_BYTES:-$localnet_guest_stack_bytes}"
-localnet_commit_inflight_timeout_ms="${SORASWAP_LOCALNET_COMMIT_INFLIGHT_TIMEOUT_MS:-}"
+localnet_commit_inflight_timeout_ms="${SORASWAP_LOCALNET_COMMIT_INFLIGHT_TIMEOUT_MS:-120000}"
 localnet_block_time_ms="${SORASWAP_LOCALNET_BLOCK_TIME_MS:-}"
 localnet_commit_time_ms="${SORASWAP_LOCALNET_COMMIT_TIME_MS:-}"
 
@@ -54,12 +58,12 @@ IROHA_LOCALNET_GAS_TO_STACK_MULTIPLIER="$localnet_gas_to_stack_multiplier" \
 IROHA_LOCALNET_MEMORY_BUDGET_PROFILE="$localnet_memory_budget_profile" \
 IROHA_LOCALNET_MAX_STACK_BYTES="$localnet_max_stack_bytes" \
 IROHA_LOCALNET_COMMIT_INFLIGHT_TIMEOUT_MS="$localnet_commit_inflight_timeout_ms" \
-IROHA_LOCALNET_EXTRA_GAS_ASSETS="${IROHA_LOCALNET_EXTRA_GAS_ASSETS:-$SORASWAP_LOCAL_FEE_ASSET_LABEL}" \
+IROHA_LOCALNET_EXTRA_GAS_ASSETS="${IROHA_LOCALNET_EXTRA_GAS_ASSETS:-}" \
 NORITO_SKIP_BINDINGS_SYNC=1 SKIP_TOOL_BUILD=true \
   "$SORASWAP_IROHA_ROOT/scripts/deploy_localnet.sh" "${localnet_args[@]}"
 
-torii_url="$(torii_url_from_config "$DEFAULT_LOCAL_CLIENT")"
+torii_url="$(torii_url_from_config "$local_client")"
 
 echo "started local Nexus using generated localnet in $localnet_dir"
-echo "client config: $DEFAULT_LOCAL_CLIENT"
+echo "client config: $local_client"
 echo "torii url: $torii_url"

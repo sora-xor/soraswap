@@ -5,6 +5,15 @@ seiyaku SaleFactory {
   state AccountId FactoryContractId;
   state int SeedExecutorBound;
   state bytes SeedExecutorContract;
+  state int NextSaleIndex;
+  state SaleByIndex: Map<int, Name>;
+  state int LaunchLifecycleCadenceSlots;
+  state int LaunchLifecycleMaxItems;
+  state int LaunchLifecycleEnabled;
+  state int LaunchLifecycleNextSlot;
+  state int LaunchLifecycleCursor;
+  state int LaunchLifecycleLastSlot;
+  state int LaunchLifecycleLastProcessed;
   state SaleOwner: Map<Name, AccountId>;
   state SaleAsset: Map<Name, AssetDefinitionId>;
   state PaymentAsset: Map<Name, AssetDefinitionId>;
@@ -37,6 +46,13 @@ seiyaku SaleFactory {
   state AllocationSaleAmount: Map<Name, int>;
   state AllocationClaimed: Map<Name, int>;
   state AllocationRefunded: Map<Name, int>;
+
+  register_trigger soraswap_launchpad_lifecycle_tick {
+    call native_lifecycle_tick;
+    on time pre_commit;
+    repeats indefinitely;
+    metadata { tag: "soraswap"; module: "launchpad.sale_factory"; __enabled: false; }
+  }
 
   fn move_asset_if_needed(from: AccountId,
                           to: AccountId,
@@ -146,6 +162,35 @@ seiyaku SaleFactory {
     assert(FactoryOwnerSet == 0, "factory initialized");
     FactoryOwner = authority();
     FactoryOwnerSet = 1;
+    NextSaleIndex = 1;
+    LaunchLifecycleCadenceSlots = 0;
+    LaunchLifecycleMaxItems = 1;
+    LaunchLifecycleEnabled = 0;
+    LaunchLifecycleNextSlot = 0;
+    LaunchLifecycleCursor = 1;
+    LaunchLifecycleLastSlot = 0;
+    LaunchLifecycleLastProcessed = 0;
+  }
+
+  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
+                                         max_items_per_tick: int,
+                                         enabled: int) permission(Admin) {
+    ensure_factory_admin();
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(max_items_per_tick > 0, "invalid max items");
+    assert(max_items_per_tick <= 16, "max items too high");
+    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    LaunchLifecycleCadenceSlots = cadence_slots;
+    LaunchLifecycleMaxItems = max_items_per_tick;
+    LaunchLifecycleEnabled = enabled;
+    LaunchLifecycleNextSlot = block_height() + cadence_slots;
+    if LaunchLifecycleCursor <= 0 {
+      LaunchLifecycleCursor = 1;
+    }
+    if NextSaleIndex <= 0 {
+      NextSaleIndex = 1;
+    }
+    set_trigger_enabled(name("soraswap_launchpad_lifecycle_tick"), enabled);
   }
 
   view fn mirror_sale(sale: Name) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
@@ -265,6 +310,12 @@ seiyaku SaleFactory {
     validate_sale_config(unit_price, soft_cap, hard_cap);
     validate_vesting_config(claim_start_slot, claim_end_slot);
     SaleOwner[sale] = authority();
+    if NextSaleIndex <= 0 {
+      NextSaleIndex = 1;
+    }
+    let sale_index = NextSaleIndex;
+    NextSaleIndex = sale_index + 1;
+    SaleByIndex[sale_index] = sale;
     SaleAsset[sale] = sale_asset;
     PaymentAsset[sale] = payment_asset;
     Treasury[sale] = treasury;
@@ -403,6 +454,79 @@ seiyaku SaleFactory {
     return seeded_value;
   }
 
+  fn activate_seed_if_contract_custodied(sale: Name) -> int {
+    assert_sale_exists(sale);
+    assert_factory_contract_bound();
+    assert_executor_bound();
+    assert(Closed.get_or(sale, 0) == 1, "sale open");
+    assert(Successful.get_or(sale, 0) == 1, "sale failed");
+    assert(Seeded.get_or(sale, 0) == 0, "sale seeded");
+    assert(SeedPositionId.contains(sale), "seed plan missing");
+    assert(Treasury[sale] == FactoryContractId, "seed activation pending");
+    let payment_amount = SeedPaymentAmount.get_or(sale, 0);
+    let sale_amount = SeedSaleAmount.get_or(sale, 0);
+    assert(payment_amount > 0, "seed payment missing");
+    assert(sale_amount > 0, "seed sale missing");
+    assert(available_payment_for_seed(sale) >= payment_amount, "insufficient payment proceeds");
+    assert(SeedInventory.get_or(sale, 0) >= sale_amount, "insufficient seed inventory");
+    let payload = json_object();
+    let payload = json_set_account_id(payload, name("funding_account"), FactoryContractId);
+    let payload = json_set_int(payload, name("bin_id"), SeedBinId.get_or(sale, 0));
+    let payload = json_set_int(payload, name("base_amount"), payment_amount);
+    let payload = json_set_int(payload, name("quote_amount"), sale_amount);
+    let seeded_value = decode_int(call_contract(SeedExecutorContract, "seed_liquidity", payload));
+    SeedInventory[sale] = SeedInventory.get_or(sale, 0) - sale_amount;
+    SeedPaymentUsed[sale] = SeedPaymentUsed.get_or(sale, 0) + payment_amount;
+    SeedSaleUsed[sale] = SeedSaleUsed.get_or(sale, 0) + sale_amount;
+    Seeded[sale] = 1;
+    SeedActivationValue[sale] = seeded_value;
+    return seeded_value;
+  }
+
+  kotoage fn native_lifecycle_tick() permission(AssetOps) {
+    if LaunchLifecycleEnabled == 0 {
+      return;
+    }
+    let current_slot = block_height();
+    if LaunchLifecycleNextSlot > 0 && current_slot < LaunchLifecycleNextSlot {
+      return;
+    }
+    if NextSaleIndex <= 0 {
+      NextSaleIndex = 1;
+    }
+    let processed = 0;
+    let index = LaunchLifecycleCursor;
+    if index <= 0 || index >= NextSaleIndex {
+      index = 1;
+    }
+    while processed < LaunchLifecycleMaxItems && index < NextSaleIndex {
+      let sale = SaleByIndex.get_or(index, name!("missing"));
+      if SaleAsset.contains(sale) && Closed.get_or(sale, 0) == 0 &&
+        current_slot >= ClaimStartSlot.get_or(sale, 0) {
+        close_sale_impl(sale);
+      }
+      if SaleAsset.contains(sale) && Closed.get_or(sale, 0) == 1 &&
+        Successful.get_or(sale, 0) == 1 &&
+        SeedPositionId.contains(sale) &&
+        Seeded.get_or(sale, 0) == 0 {
+        if Treasury[sale] == FactoryContractId {
+          activate_seed_if_contract_custodied(sale);
+        } else {
+          SeedActivationValue[sale] = -1;
+        }
+      }
+      processed = processed + 1;
+      index = index + 1;
+    }
+    if index >= NextSaleIndex {
+      index = 1;
+    }
+    LaunchLifecycleCursor = index;
+    LaunchLifecycleLastSlot = current_slot;
+    LaunchLifecycleLastProcessed = processed;
+    LaunchLifecycleNextSlot = current_slot + LaunchLifecycleCadenceSlots;
+  }
+
   kotoage fn seed_liquidity(sale: Name) -> int permission(AssetOps) {
     return activate_seed_with_executor(sale);
   }
@@ -458,5 +582,17 @@ seiyaku SaleFactory {
 
   kotoage fn mark_seeded(sale: Name) permission(AssetOps) {
     activate_seed_with_executor(sale);
+  }
+
+  view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
+    return (
+      LaunchLifecycleEnabled,
+      LaunchLifecycleCadenceSlots,
+      LaunchLifecycleMaxItems,
+      LaunchLifecycleNextSlot,
+      LaunchLifecycleCursor,
+      LaunchLifecycleLastSlot,
+      LaunchLifecycleLastProcessed
+    );
   }
 }

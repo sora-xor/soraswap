@@ -19,6 +19,13 @@ Singleton scalar state:
 - `CoverAutomationBacklog`
 - `CoverAutomationSafeMode`
 - `CoverNextPolicyId`
+- `CoverLifecycleCadenceSlots`
+- `CoverLifecycleMaxItems`
+- `CoverLifecycleEnabled`
+- `CoverLifecycleNextSlot`
+- `CoverLifecycleCursor`
+- `CoverLifecycleLastSlot`
+- `CoverLifecycleLastProcessed`
 
 Per-policy maps:
 - `CoverPolicyOwner`

@@ -11,6 +11,7 @@ ensure_authority "$config"
 n3x_hub_contract="$(deployed_contract_id_for_env "$mode" n3x.n3x_hub)"
 dlmm_router_contract="$(deployed_contract_id_for_env "$mode" dlmm.dlmm_router)"
 dlmm_pool_contract="$(deployed_contract_id_for_env "$mode" dlmm.dlmm_pool)"
+batch_epoch_auction_contract="$(deployed_contract_id_for_env "$mode" batch_amm.epoch_auction)"
 launchpad_liquidity_executor_contract="$(deployed_contract_id_for_env "$mode" launchpad.liquidity_executor)"
 launchpad_sale_factory_contract="$(deployed_contract_id_for_env "$mode" launchpad.sale_factory)"
 referral_registry_contract="$(deployed_contract_id_for_env "$mode" referral.registry)"
@@ -30,8 +31,10 @@ operators_registry_contract="$(deployed_contract_id_for_env "$mode" operators.re
 margin_portfolio_margin_contract="$(deployed_contract_id_for_env "$mode" margin.portfolio_margin)"
 rwa_market_contract="$(deployed_contract_id_for_env "$mode" rwa.market)"
 dlmm_hooks_manager_contract="$(deployed_contract_id_for_env "$mode" dlmm_hooks.hook_manager)"
+escrow_conditional_escrow_contract="$(deployed_contract_id_for_env "$mode" escrow.conditional_escrow)"
 n3x_hub_contract_subject="$(contract_subject_account_for_literal "$config" "$n3x_hub_contract")"
 dlmm_pool_contract_subject="$(contract_subject_account_for_literal "$config" "$dlmm_pool_contract")"
+batch_epoch_auction_contract_subject="$(contract_subject_account_for_literal "$config" "$batch_epoch_auction_contract")"
 launchpad_liquidity_executor_contract_subject="$(contract_subject_account_for_literal "$config" "$launchpad_liquidity_executor_contract")"
 launchpad_sale_factory_contract_subject="$(contract_subject_account_for_literal "$config" "$launchpad_sale_factory_contract")"
 risk_vault_contract_subject="$(contract_subject_account_for_literal "$config" "$risk_vault_contract")"
@@ -45,7 +48,9 @@ operators_registry_contract_subject="$(contract_subject_account_for_literal "$co
 margin_portfolio_margin_contract_subject="$(contract_subject_account_for_literal "$config" "$margin_portfolio_margin_contract")"
 rwa_market_contract_subject="$(contract_subject_account_for_literal "$config" "$rwa_market_contract")"
 dlmm_hooks_manager_contract_subject="$(contract_subject_account_for_literal "$config" "$dlmm_hooks_manager_contract")"
+escrow_conditional_escrow_contract_subject="$(contract_subject_account_for_literal "$config" "$escrow_conditional_escrow_contract")"
 dlmm_pool_contract_blob_hex="0x$(printf '%s' "$dlmm_pool_contract" | xxd -p -c 256 | tr -d '\n')"
+dlmm_router_contract_blob_hex="0x$(printf '%s' "$dlmm_router_contract" | xxd -p -c 256 | tr -d '\n')"
 launchpad_liquidity_executor_contract_blob_hex="0x$(printf '%s' "$launchpad_liquidity_executor_contract" | xxd -p -c 256 | tr -d '\n')"
 risk_vault_contract_blob_hex="0x$(printf '%s' "$risk_vault_contract" | xxd -p -c 256 | tr -d '\n')"
 options_manager_contract_blob_hex="0x$(printf '%s' "$options_manager_contract" | xxd -p -c 256 | tr -d '\n')"
@@ -129,6 +134,24 @@ pool_min_reserve_base="${SORASWAP_POOL_MIN_RESERVE_BASE:-0}"
 pool_min_reserve_quote="${SORASWAP_POOL_MIN_RESERVE_QUOTE:-0}"
 pool_max_bins_per_swap="${SORASWAP_POOL_MAX_BINS_PER_SWAP:-8}"
 pool_bin_liquidity_cap="${SORASWAP_POOL_BIN_LIQUIDITY_CAP:-0}"
+trigger_lifecycle_cadence_slots="${SORASWAP_TRIGGER_LIFECYCLE_CADENCE_SLOTS:-4}"
+trigger_lifecycle_max_items="${SORASWAP_TRIGGER_LIFECYCLE_MAX_ITEMS:-4}"
+trigger_lifecycle_enabled="${SORASWAP_TRIGGER_LIFECYCLE_ENABLED:-0}"
+perps_trigger_lifecycle_max_items="${SORASWAP_PERPS_TRIGGER_LIFECYCLE_MAX_ITEMS:-4}"
+dlmm_range_governor_cadence_slots="${SORASWAP_DLMM_RANGE_GOVERNOR_CADENCE_SLOTS:-4}"
+dlmm_range_governor_max_fee_pips="${SORASWAP_DLMM_RANGE_GOVERNOR_MAX_FEE_PIPS:-$pool_fee_pips}"
+dlmm_range_governor_target_active_bin="${SORASWAP_DLMM_RANGE_GOVERNOR_TARGET_ACTIVE_BIN:-$pool_active_bin}"
+dlmm_range_governor_max_active_bin_drift="${SORASWAP_DLMM_RANGE_GOVERNOR_MAX_ACTIVE_BIN_DRIFT:-2}"
+dlmm_range_governor_enabled="${SORASWAP_DLMM_RANGE_GOVERNOR_ENABLED:-1}"
+twamm_trigger_cadence_slots="${SORASWAP_TWAMM_TRIGGER_CADENCE_SLOTS:-2}"
+twamm_trigger_max_orders_per_tick="${SORASWAP_TWAMM_TRIGGER_MAX_ORDERS_PER_TICK:-4}"
+twamm_trigger_enabled="${SORASWAP_TWAMM_TRIGGER_ENABLED:-1}"
+epoch_auction_epoch_id="${SORASWAP_EPOCH_AUCTION_EPOCH_ID:-1}"
+epoch_auction_duration_slots="${SORASWAP_EPOCH_AUCTION_DURATION_SLOTS:-12}"
+epoch_auction_lower_tick="${SORASWAP_EPOCH_AUCTION_LOWER_TICK:-900000}"
+epoch_auction_upper_tick="${SORASWAP_EPOCH_AUCTION_UPPER_TICK:-1100000}"
+epoch_auction_tick_step="${SORASWAP_EPOCH_AUCTION_TICK_STEP:-10000}"
+epoch_auction_max_orders="${SORASWAP_EPOCH_AUCTION_MAX_ORDERS:-32}"
 n3x_target_usdt_bps="${SORASWAP_N3X_TARGET_USDT_BPS:-3334}"
 n3x_target_usdc_bps="${SORASWAP_N3X_TARGET_USDC_BPS:-3333}"
 n3x_target_kusd_bps="${SORASWAP_N3X_TARGET_KUSD_BPS:-3333}"
@@ -208,6 +231,15 @@ usdc_id="$(asset_definition_id_for_alias "$config" usdc#soraswap.universal)"
 kusd_id="$(asset_definition_id_for_alias "$config" kusd#soraswap.universal)"
 n3x_id="$(asset_definition_id_for_alias "$config" n3x#soraswap.universal)"
 bridge_local_asset="${SORASWAP_BRIDGE_LOCAL_ASSET:-$usdt_id}"
+current_slot="$(soraswap_current_block_height "$config")"
+if [[ -z "$current_slot" || "$current_slot" == "null" || "$current_slot" != <-> ]]; then
+  current_slot=0
+fi
+epoch_auction_start_slot="${SORASWAP_EPOCH_AUCTION_START_SLOT:-$current_slot}"
+epoch_auction_end_slot="${SORASWAP_EPOCH_AUCTION_END_SLOT:-$(( epoch_auction_start_slot + epoch_auction_duration_slots ))}"
+if (( epoch_auction_end_slot <= epoch_auction_start_slot )); then
+  epoch_auction_end_slot=$(( epoch_auction_start_slot + 1 ))
+fi
 if [[ "$mode" == "local" ]]; then
   default_launchpad_sale_asset_id="$usdt_id"
 else
@@ -239,12 +271,14 @@ ensure_account_registered "$config" "$vault_account" soraswap
 ensure_account_registered "$config" "$n3x_hub_contract_subject" contract-subject
 ensure_account_registered "$config" "$dlmm_pool_contract_subject" contract-subject
 ensure_account_registered "$config" "$dlmm_router_contract_subject" contract-subject
+ensure_account_registered "$config" "$batch_epoch_auction_contract_subject" contract-subject
 ensure_account_registered "$config" "$intents_settlement_router_contract_subject" contract-subject
 ensure_account_registered "$config" "$vaults_manager_contract_subject" contract-subject
 ensure_account_registered "$config" "$operators_registry_contract_subject" contract-subject
 ensure_account_registered "$config" "$margin_portfolio_margin_contract_subject" contract-subject
 ensure_account_registered "$config" "$rwa_market_contract_subject" contract-subject
 ensure_account_registered "$config" "$dlmm_hooks_manager_contract_subject" contract-subject
+ensure_account_registered "$config" "$escrow_conditional_escrow_contract_subject" contract-subject
 
 warm_view() {
   local contract_id="$1"
@@ -473,8 +507,7 @@ ensure_risk_vault_init_or_skip() {
     return 0
   fi
   if json_equals "$actual_json" "$live_json"; then
-    echo "bootstrap skip: risk vault init already exposes the live exit state"
-    return 0
+    echo "bootstrap note: risk vault init exposes the live exit view; attempting init to disambiguate zero-state from initialized live state"
   fi
   if [[ "$mode" != "local" && -n "$live_predicate_jq" ]] && jq -en \
     --argjson actual "$actual_json" \
@@ -538,6 +571,39 @@ apply_step_and_expect() {
   call_contract_and_wait "$config" "$contract_id" "$call_entrypoint" "$call_payload_json" >/dev/null
   actual_json="$(view_result_json "$contract_id" "$view_entrypoint" "$view_payload_json")"
   if ! json_equals "$actual_json" "$expected_json"; then
+    fail_bootstrap_diff "$label" "$expected_json" "$actual_json"
+  fi
+}
+
+ensure_view_predicate_or_apply() {
+  local label="$1"
+  local contract_id="$2"
+  local view_entrypoint="$3"
+  local view_payload_json="$4"
+  local expected_json="$5"
+  local call_entrypoint="$6"
+  local call_payload_json="$7"
+  local live_predicate_jq="$8"
+  local actual_json
+
+  actual_json="$(view_result_json "$contract_id" "$view_entrypoint" "$view_payload_json" 2>/dev/null || true)"
+  if json_value_present "$actual_json" && jq -en \
+    --argjson actual "$actual_json" \
+    --argjson expected "$expected_json" \
+    "$live_predicate_jq" \
+    >/dev/null; then
+    echo "bootstrap skip: $label already matches expected live state"
+    return 0
+  fi
+
+  echo "bootstrap apply: $label"
+  call_contract_and_wait "$config" "$contract_id" "$call_entrypoint" "$call_payload_json" >/dev/null
+  actual_json="$(view_result_json_with_retry "$contract_id" "$view_entrypoint" "$view_payload_json")"
+  if ! jq -en \
+    --argjson actual "$actual_json" \
+    --argjson expected "$expected_json" \
+    "$live_predicate_jq" \
+    >/dev/null; then
     fail_bootstrap_diff "$label" "$expected_json" "$actual_json"
   fi
 }
@@ -915,7 +981,7 @@ ensure_dlmm_seed_state() {
     echo "bootstrap skip: dlmm pool seed state already matches expected snapshot"
     return 0
   fi
-  if [[ "$mode" == "testnet" || "$mode" == "production" ]] && jq -en \
+  if jq -en \
     --argjson actual "$actual_state_json" \
     --argjson expected "$expected_state_json" \
     '
@@ -948,7 +1014,7 @@ ensure_dlmm_seed_state() {
       and (($actual.position[5] // 0) >= 0)
       and (($actual.position[6] // 0) >= 0)
     ' >/dev/null; then
-    echo "bootstrap skip: dlmm pool seed state already reflects live $mode liquidity"
+    echo "bootstrap skip: dlmm pool seed state already reflects live liquidity"
     return 0
   fi
   if ! json_equals "$actual_state_json" "$empty_state_json"; then
@@ -1020,6 +1086,7 @@ warmup_template_payload='{"template_id":1}'
 warmup_series_payload='{"series_id":1}'
 warmup_policy_payload='{"policy_id":1}'
 warmup_job_payload="$(jq -cn --arg job "warmup" '{job: $job}')"
+warmup_escrow_payload="$(jq -cn --arg escrow_id "warmup" '{escrow_id: $escrow_id}')"
 warmup_quote_mint_payload='{"usdt_in":0,"usdc_in":0,"kusd_in":0}'
 warmup_quote_direct_payload='{"reserve_in":1,"reserve_out":1,"amount_in":1,"fee_pips":0}'
 
@@ -1029,6 +1096,7 @@ warmup_quote_direct_payload='{"reserve_in":1,"reserve_out":1,"amount_in":1,"fee_
 warm_view "$n3x_hub_contract" quote_mint "$warmup_quote_mint_payload"
 warm_view "$dlmm_router_contract" quote_direct "$warmup_quote_direct_payload"
 warm_view "$dlmm_pool_contract" pool_config
+warm_view "$batch_epoch_auction_contract" epoch_state
 warm_view "$launchpad_liquidity_executor_contract" executor_config
 warm_view "$launchpad_sale_factory_contract" sale_config "$warmup_sale_payload"
 warm_view "$referral_registry_contract" registry_config
@@ -1047,6 +1115,7 @@ warm_view "$options_outperformance_option_contract" series_state "$warmup_series
 warm_view "$cover_policy_manager_contract" manager_config
 warm_view "$cover_policy_manager_contract" policy_state "$warmup_policy_payload"
 warm_view "$automation_job_queue_contract" mirror_job "$warmup_job_payload"
+warm_view "$escrow_conditional_escrow_contract" escrow_state "$warmup_escrow_payload"
 if [[ -n "$sccp_bridge_contract" ]]; then
   warm_view "$sccp_bridge_contract" listing_config
 fi
@@ -1269,6 +1338,82 @@ else
     fi
   fi
 fi
+
+ensure_view_predicate_or_apply \
+  "epoch auction init" \
+  "$batch_epoch_auction_contract" \
+  "auction_config" \
+  null \
+  '[1, 0]' \
+  "init_auction" \
+  "$(jq -cn --arg base_asset "$xor_id" --arg quote_asset "$n3x_id" '{ base_asset: $base_asset, quote_asset: $quote_asset }')" \
+  '(($actual[0] // 0) == 1)'
+echo "bootstrap apply: epoch auction contract binding"
+call_contract_and_wait \
+  "$config" \
+  "$batch_epoch_auction_contract" \
+  "bind_contract" \
+  "$(jq -cn --arg contract_id "$batch_epoch_auction_contract_subject" '{ contract_id: $contract_id }')" \
+  >/dev/null
+epoch_auction_expected_json="$(jq -cn \
+  --argjson epoch_id "$epoch_auction_epoch_id" \
+  --argjson start_slot "$epoch_auction_start_slot" \
+  --argjson end_slot "$epoch_auction_end_slot" \
+  --argjson lower_tick "$epoch_auction_lower_tick" \
+  --argjson upper_tick "$epoch_auction_upper_tick" \
+  --argjson tick_step "$epoch_auction_tick_step" \
+  '[ $epoch_id, 1, $start_slot, $end_slot, $lower_tick, $upper_tick, $tick_step, 0, 0, 0, 0 ]')"
+ensure_view_predicate_or_apply \
+  "epoch auction current epoch" \
+  "$batch_epoch_auction_contract" \
+  "epoch_state" \
+  null \
+  "$epoch_auction_expected_json" \
+  "configure_epoch" \
+  "$(jq -cn \
+    --argjson epoch_id "$epoch_auction_epoch_id" \
+    --argjson start_slot "$epoch_auction_start_slot" \
+    --argjson end_slot "$epoch_auction_end_slot" \
+    --argjson lower_tick "$epoch_auction_lower_tick" \
+    --argjson upper_tick "$epoch_auction_upper_tick" \
+    --argjson tick_step "$epoch_auction_tick_step" \
+    --argjson max_orders "$epoch_auction_max_orders" \
+    '{
+      epoch_id: $epoch_id,
+      start_slot: $start_slot,
+      end_slot: $end_slot,
+      lower_tick: $lower_tick,
+      upper_tick: $upper_tick,
+      tick_step: $tick_step,
+      max_orders: $max_orders
+    }')" \
+  '(
+      (($actual[0] // 0) > ($expected[0] // 0))
+      or (
+        (($actual[0] // 0) == ($expected[0] // 0))
+        and (($actual[1] // 0) >= 1)
+        and (($actual[4] // 0) == ($expected[4] // 0))
+        and (($actual[5] // 0) == ($expected[5] // 0))
+        and (($actual[6] // 0) == ($expected[6] // 0))
+      )
+    )'
+
+ensure_view_predicate_or_apply \
+  "conditional escrow init" \
+  "$escrow_conditional_escrow_contract" \
+  "escrow_config" \
+  null \
+  '[1, 0]' \
+  "init_escrow" \
+  null \
+  '(($actual[0] // 0) == 1)'
+echo "bootstrap apply: conditional escrow contract binding"
+call_contract_and_wait \
+  "$config" \
+  "$escrow_conditional_escrow_contract" \
+  "bind_contract" \
+  "$(jq -cn --arg contract_id "$escrow_conditional_escrow_contract_subject" '{ contract_id: $contract_id }')" \
+  >/dev/null
 
 router_expected_json="$(jq -cn --arg base_asset "$xor_id" --argjson default_fee_pips "$pool_fee_pips" '[ $base_asset, $default_fee_pips ]')"
 router_init_payload="$(jq -cn \
@@ -1570,6 +1715,42 @@ if (( dlmm_pool_balance_source_cleanup == 1 )); then
   rm -f "$dlmm_pool_balance_source_signer_config"
 fi
 
+dlmm_range_governor_expected_json="$(jq -cn \
+  --argjson enabled "$dlmm_range_governor_enabled" \
+  --argjson cadence_slots "$dlmm_range_governor_cadence_slots" \
+  --argjson max_fee_pips "$dlmm_range_governor_max_fee_pips" \
+  --argjson target_active_bin "$dlmm_range_governor_target_active_bin" \
+  --argjson max_active_bin_drift "$dlmm_range_governor_max_active_bin_drift" \
+  '[ $enabled, $cadence_slots, 0, $max_fee_pips, $target_active_bin, $max_active_bin_drift, 0, 0 ]')"
+ensure_view_predicate_or_apply \
+  "dlmm range governor" \
+  "$dlmm_pool_contract" \
+  "range_governor_state" \
+  null \
+  "$dlmm_range_governor_expected_json" \
+  "configure_range_governor" \
+  "$(jq -cn \
+    --argjson cadence_slots "$dlmm_range_governor_cadence_slots" \
+    --argjson max_fee_pips "$dlmm_range_governor_max_fee_pips" \
+    --argjson target_active_bin "$dlmm_range_governor_target_active_bin" \
+    --argjson max_active_bin_drift "$dlmm_range_governor_max_active_bin_drift" \
+    --argjson enabled "$dlmm_range_governor_enabled" \
+    '{
+      cadence_slots: $cadence_slots,
+      max_fee_pips: $max_fee_pips,
+      target_active_bin: $target_active_bin,
+      max_active_bin_drift: $max_active_bin_drift,
+      enabled: $enabled
+    }')" \
+  '$actual[0] == $expected[0]
+   and $actual[1] == $expected[1]
+   and (($actual[2] // 0) >= 0)
+   and $actual[3] == $expected[3]
+   and $actual[4] == $expected[4]
+   and $actual[5] == $expected[5]
+   and (($actual[6] // 0) >= 0)
+   and (($actual[7] // 0) >= 0)'
+
 if [[ "$bootstrap_scope" == "foundation" ]]; then
   echo "post-deploy foundation contract state initialized"
   exit 0
@@ -1721,6 +1902,34 @@ ensure_init_or_skip \
   "$sale_expected_json" \
   "init_sale" \
   "$sale_init_payload"
+
+product_trigger_lifecycle_expected_json="$(jq -cn \
+  --argjson enabled "$trigger_lifecycle_enabled" \
+  --argjson cadence_slots "$trigger_lifecycle_cadence_slots" \
+  --argjson max_items "$trigger_lifecycle_max_items" \
+  '[ $enabled, $cadence_slots, $max_items, 0, 0, 0, 0 ]')"
+trigger_lifecycle_predicate='
+  $actual[0] == $expected[0]
+  and $actual[1] == $expected[1]
+  and $actual[2] == $expected[2]
+  and (($actual[3] // 0) >= 0)
+  and (($actual[4] // 0) >= 0)
+  and (($actual[5] // 0) >= 0)
+  and (($actual[6] // 0) >= 0)
+'
+ensure_view_predicate_or_apply \
+  "launchpad trigger lifecycle" \
+  "$launchpad_sale_factory_contract" \
+  "trigger_lifecycle_state" \
+  null \
+  "$product_trigger_lifecycle_expected_json" \
+  "configure_trigger_lifecycle" \
+  "$(jq -cn \
+    --argjson cadence_slots "$trigger_lifecycle_cadence_slots" \
+    --argjson max_items_per_tick "$trigger_lifecycle_max_items" \
+    --argjson enabled "$trigger_lifecycle_enabled" \
+    '{ cadence_slots: $cadence_slots, max_items_per_tick: $max_items_per_tick, enabled: $enabled }')" \
+  "$trigger_lifecycle_predicate"
 
 referral_expected_json="$(jq -cn \
   --arg reward_asset "$xor_id" \
@@ -2337,6 +2546,33 @@ ensure_step_from_prior_or_skip_with_live_predicate \
    and (($actual[11] // 0) >= 0)
    and (($actual[12] // 0) == ($expected[12] // 0))'
 repair_orphaned_perps_positions
+trigger_lifecycle_predicate='
+  $actual[0] == $expected[0]
+  and $actual[1] == $expected[1]
+  and $actual[2] == $expected[2]
+  and (($actual[3] // 0) >= 0)
+  and (($actual[4] // 0) >= 0)
+  and (($actual[5] // 0) >= 0)
+  and (($actual[6] // 0) >= 0)
+'
+perps_trigger_lifecycle_expected_json="$(jq -cn \
+  --argjson enabled "$trigger_lifecycle_enabled" \
+  --argjson cadence_slots "$trigger_lifecycle_cadence_slots" \
+  --argjson max_items "$perps_trigger_lifecycle_max_items" \
+  '[ $enabled, $cadence_slots, $max_items, 0, 0, 0, 0 ]')"
+ensure_view_predicate_or_apply \
+  "perps trigger lifecycle" \
+  "$perps_engine_contract" \
+  "trigger_lifecycle_state" \
+  null \
+  "$perps_trigger_lifecycle_expected_json" \
+  "configure_trigger_lifecycle" \
+  "$(jq -cn \
+    --argjson cadence_slots "$trigger_lifecycle_cadence_slots" \
+    --argjson max_items_per_tick "$perps_trigger_lifecycle_max_items" \
+    --argjson enabled "$trigger_lifecycle_enabled" \
+    '{ cadence_slots: $cadence_slots, max_items_per_tick: $max_items_per_tick, enabled: $enabled }')" \
+  "$trigger_lifecycle_predicate"
 
 options_manager_expected_json="$(jq -cn --arg settlement_asset "$usdt_id" '[ $settlement_asset, 1, 1, 1, 0, 0, 0, 0, 0 ]')"
 ensure_init_or_skip_with_live_predicate \
@@ -2494,7 +2730,7 @@ else
 fi
 
 if [[ "$mode" == "local" ]]; then
-  ensure_step_from_prior_or_skip \
+  ensure_step_from_prior_or_skip_with_live_predicate \
     "options vault init" \
     "$options_vault_contract" \
     "vault_state" \
@@ -2502,7 +2738,14 @@ if [[ "$mode" == "local" ]]; then
     '[1,0,0,0,0]' \
     '[1,0,0,0,1]' \
     "init_vault" \
-    "$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" '{ settlement_asset: $settlement_asset, risk_vault_contract: $risk_vault_contract }')"
+    "$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" '{ settlement_asset: $settlement_asset, risk_vault_contract: $risk_vault_contract }')" \
+    '$actual[0] == $expected[0]
+     and (($actual[1] // 0) >= 0)
+     and (($actual[2] // 0) >= 0)
+     and (($actual[3] // 0) >= 0)
+     and (($actual[4] // 0) >= 0)
+     and (($actual[4] // 0) <= 1)
+     and ((($actual[1] // 0) > 0) or (($actual[2] // 0) > 0) or (($actual[3] // 0) > 0))'
 else
   if ! call_contract_and_wait \
     "$config" \
@@ -2649,6 +2892,38 @@ ensure_step_from_prior_or_skip_with_live_predicate \
   "configure_utilisation_guard" \
   "$(jq -cn --argjson series_id 2 --argjson bump_activate_bps "$options_factory_bump_activate_bps" --argjson bump_deactivate_bps "$options_factory_bump_deactivate_bps" --argjson pause_threshold_bps "$options_factory_pause_threshold_bps" --argjson bump_percent_bps "$options_factory_bump_percent_bps" '{ series_id: $series_id, bump_activate_bps: $bump_activate_bps, bump_deactivate_bps: $bump_deactivate_bps, pause_threshold_bps: $pause_threshold_bps, bump_percent_bps: $bump_percent_bps }')" \
   "$options_factory_guard_live_predicate"
+
+product_trigger_lifecycle_expected_json="$(jq -cn \
+  --argjson enabled "$trigger_lifecycle_enabled" \
+  --argjson cadence_slots "$trigger_lifecycle_cadence_slots" \
+  --argjson max_items "$trigger_lifecycle_max_items" \
+  '[ $enabled, $cadence_slots, $max_items, 0, 0, 0, 0 ]')"
+ensure_view_predicate_or_apply \
+  "options manager trigger lifecycle" \
+  "$options_manager_contract" \
+  "trigger_lifecycle_state" \
+  null \
+  "$product_trigger_lifecycle_expected_json" \
+  "configure_trigger_lifecycle" \
+  "$(jq -cn \
+    --argjson cadence_slots "$trigger_lifecycle_cadence_slots" \
+    --argjson max_items_per_tick "$trigger_lifecycle_max_items" \
+    --argjson enabled "$trigger_lifecycle_enabled" \
+    '{ cadence_slots: $cadence_slots, max_items_per_tick: $max_items_per_tick, enabled: $enabled }')" \
+  "$trigger_lifecycle_predicate"
+ensure_view_predicate_or_apply \
+  "options factory trigger lifecycle" \
+  "$options_factory_contract" \
+  "trigger_lifecycle_state" \
+  null \
+  "$product_trigger_lifecycle_expected_json" \
+  "configure_trigger_lifecycle" \
+  "$(jq -cn \
+    --argjson cadence_slots "$trigger_lifecycle_cadence_slots" \
+    --argjson max_items_per_tick "$trigger_lifecycle_max_items" \
+    --argjson enabled "$trigger_lifecycle_enabled" \
+    '{ cadence_slots: $cadence_slots, max_items_per_tick: $max_items_per_tick, enabled: $enabled }')" \
+  "$trigger_lifecycle_predicate"
 
 cover_manager_init_json="$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson oracle_stale_slots "$cover_oracle_stale_slots" '[ $settlement_asset, $risk_vault_contract, 1, $required_observations, $oracle_stale_slots, 0, 0, 0, 0 ]')"
 cover_manager_live_json="$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson oracle_stale_slots "$cover_oracle_stale_slots" '[ $settlement_asset, $risk_vault_contract, 0, $required_observations, $oracle_stale_slots, 0, 0, 0, 0 ]')"
@@ -2797,6 +3072,19 @@ else
     echo "bootstrap note: cover heartbeat returned a non-fatal public-chain error; continuing" >&2
   fi
 fi
+ensure_view_predicate_or_apply \
+  "cover trigger lifecycle" \
+  "$cover_policy_manager_contract" \
+  "trigger_lifecycle_state" \
+  null \
+  "$product_trigger_lifecycle_expected_json" \
+  "configure_trigger_lifecycle" \
+  "$(jq -cn \
+    --argjson cadence_slots "$trigger_lifecycle_cadence_slots" \
+    --argjson max_items_per_tick "$trigger_lifecycle_max_items" \
+    --argjson enabled "$trigger_lifecycle_enabled" \
+    '{ cadence_slots: $cadence_slots, max_items_per_tick: $max_items_per_tick, enabled: $enabled }')" \
+  "$trigger_lifecycle_predicate"
 
 if [[ -n "$sccp_bridge_contract" ]]; then
   bridge_registry_requires_governed=0
@@ -3000,6 +3288,19 @@ ensure_step_from_prior_or_skip \
     --argjson strategy_code "$soraswap_launch_vault_strategy_code" \
     --argjson async_redeem "$soraswap_launch_vault_async_redeem" \
     '{vault_id:$vault_id, underlying_asset:$underlying_asset, share_asset:$share_asset, strategy_code:$strategy_code, async_redeem:$async_redeem}')"
+ensure_view_predicate_or_apply \
+  "vaults trigger lifecycle" \
+  "$vaults_manager_contract" \
+  "trigger_lifecycle_state" \
+  null \
+  "$product_trigger_lifecycle_expected_json" \
+  "configure_trigger_lifecycle" \
+  "$(jq -cn \
+    --argjson cadence_slots "$trigger_lifecycle_cadence_slots" \
+    --argjson max_items_per_tick "$trigger_lifecycle_max_items" \
+    --argjson enabled "$trigger_lifecycle_enabled" \
+    '{ cadence_slots: $cadence_slots, max_items_per_tick: $max_items_per_tick, enabled: $enabled }')" \
+  "$trigger_lifecycle_predicate"
 
 launch_operator_view_payload="$(jq -cn --arg service "$soraswap_launch_operator_service" '{service: $service}')"
 launch_operator_registered_json="$(jq -cn --argjson min_bond "$soraswap_launch_operator_min_bond" '[1,$min_bond,0,10000,0,0,0]')"
@@ -3068,6 +3369,68 @@ ensure_step_from_prior_or_skip \
   "$(jq -cn --argjson nav "$soraswap_launch_rwa_nav" --argjson shares "$soraswap_launch_rwa_shares" '[1,$nav,$shares,1]')" \
   "issue_lot" \
   "$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" --arg share_asset "$n3x_id" --arg nav_asset "$usdt_id" --argjson initial_nav_per_share "$soraswap_launch_rwa_nav" --argjson total_shares "$soraswap_launch_rwa_shares" '{market_id:$market_id, share_asset:$share_asset, nav_asset:$nav_asset, initial_nav_per_share:$initial_nav_per_share, total_shares:$total_shares}')"
+
+twamm_init_expected_json="$(jq -cn \
+  --argjson cadence_slots "$twamm_trigger_cadence_slots" \
+  --argjson max_orders_per_tick "$twamm_trigger_max_orders_per_tick" \
+  '[ 1, 0, 0, $cadence_slots, $max_orders_per_tick, 0, 0 ]')"
+twamm_bound_expected_json="$(jq -cn \
+  --argjson cadence_slots "$twamm_trigger_cadence_slots" \
+  --argjson max_orders_per_tick "$twamm_trigger_max_orders_per_tick" \
+  '[ 1, 1, 1, $cadence_slots, $max_orders_per_tick, 0, 0 ]')"
+ensure_view_predicate_or_apply \
+  "dlmm hook manager trigger twamm init" \
+  "$dlmm_hooks_manager_contract" \
+  "twamm_trigger_state" \
+  null \
+  "$twamm_init_expected_json" \
+  "init_trigger_twamm" \
+  "$(jq -cn \
+    --arg base_asset "$xor_id" \
+    --arg quote_asset "$usdt_id" \
+    --argjson cadence_slots "$twamm_trigger_cadence_slots" \
+    --argjson max_orders_per_tick "$twamm_trigger_max_orders_per_tick" \
+    --argjson enabled "$twamm_trigger_enabled" \
+    '{
+      base_asset: $base_asset,
+      quote_asset: $quote_asset,
+      cadence_slots: $cadence_slots,
+      max_orders_per_tick: $max_orders_per_tick,
+      enabled: $enabled
+    }')" \
+  '$actual[0] == $expected[0]
+   and $actual[3] == $expected[3]
+   and $actual[4] == $expected[4]
+   and (($actual[5] // 0) >= 0)
+   and (($actual[6] // 0) >= 0)'
+echo "bootstrap apply: dlmm hook manager twamm contract binding"
+call_contract_and_wait \
+  "$config" \
+  "$dlmm_hooks_manager_contract" \
+  "bind_contract" \
+  "$(jq -cn --arg contract_id "$dlmm_hooks_manager_contract_subject" '{ contract_id: $contract_id }')" \
+  >/dev/null
+echo "bootstrap apply: dlmm hook manager twamm router binding"
+call_contract_and_wait \
+  "$config" \
+  "$dlmm_hooks_manager_contract" \
+  "bind_router" \
+  "$(jq -cn --arg router_contract "$dlmm_router_contract_blob_hex" '{ router_contract: $router_contract }')" \
+  >/dev/null
+twamm_actual_json="$(view_result_json "$dlmm_hooks_manager_contract" "twamm_trigger_state" null)"
+if ! jq -en \
+  --argjson actual "$twamm_actual_json" \
+  --argjson expected "$twamm_bound_expected_json" \
+  '$actual[0] == $expected[0]
+   and $actual[1] == $expected[1]
+   and $actual[2] == $expected[2]
+   and $actual[3] == $expected[3]
+   and $actual[4] == $expected[4]
+   and (($actual[5] // 0) >= 0)
+   and (($actual[6] // 0) >= 0)' \
+  >/dev/null; then
+  fail_bootstrap_diff "dlmm hook manager trigger twamm binding" "$twamm_bound_expected_json" "$twamm_actual_json"
+fi
 
 launch_hook_view_payload="$(jq -cn --arg hook_id "$soraswap_launch_dlmm_hook_id" '{hook_id: $hook_id}')"
 ensure_step_from_prior_or_skip \

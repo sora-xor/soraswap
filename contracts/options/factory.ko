@@ -21,6 +21,14 @@ seiyaku OptionsFactory {
   state int OptFactoryAutomationBacklog;
   state int OptFactoryAutomationSafeMode;
 
+  state int OptFactoryLifecycleCadenceSlots;
+  state int OptFactoryLifecycleMaxItems;
+  state int OptFactoryLifecycleEnabled;
+  state int OptFactoryLifecycleNextSlot;
+  state int OptFactoryLifecycleCursor;
+  state int OptFactoryLifecycleLastSlot;
+  state int OptFactoryLifecycleLastProcessed;
+
   state int OptFactoryNextPositionId;
 
   state OptFactorySeriesKind: Map<int, int>;
@@ -55,6 +63,13 @@ seiyaku OptionsFactory {
   state OptFactoryPositionLastOracleMark: Map<int, int>;
   state OptFactoryPositionLastOracleSlot: Map<int, int>;
   state OptFactoryPositionLastAttestationHash: Map<int, int>;
+
+  register_trigger soraswap_options_factory_lifecycle_tick {
+    call native_lifecycle_tick;
+    on time pre_commit;
+    repeats indefinitely;
+    metadata { tag: "soraswap"; module: "options.factory"; __enabled: false; }
+  }
 
   fn assert_initialized() {
     assert(OptFactoryInitialized == 1, "factory not initialized");
@@ -487,6 +502,13 @@ seiyaku OptionsFactory {
     OptFactoryAutomationBacklogCap = 0;
     OptFactoryAutomationBacklog = 0;
     OptFactoryAutomationSafeMode = 0;
+    OptFactoryLifecycleCadenceSlots = 0;
+    OptFactoryLifecycleMaxItems = 1;
+    OptFactoryLifecycleEnabled = 0;
+    OptFactoryLifecycleNextSlot = 0;
+    OptFactoryLifecycleCursor = 1;
+    OptFactoryLifecycleLastSlot = 0;
+    OptFactoryLifecycleLastProcessed = 0;
     OptFactoryNextPositionId = 1;
   }
 
@@ -535,6 +557,65 @@ seiyaku OptionsFactory {
     OptFactoryAutomationBacklog = current_backlog;
     OptFactoryAutomationSafeMode = safe_mode;
     risk_vault_report_bucket();
+  }
+
+  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
+                                         max_items_per_tick: int,
+                                         enabled: int) permission(Admin) {
+    assert_owner();
+    assert(cadence_slots >= 0, "invalid cadence");
+    assert(max_items_per_tick > 0, "invalid max items");
+    assert(max_items_per_tick <= 16, "max items too high");
+    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    OptFactoryLifecycleCadenceSlots = cadence_slots;
+    OptFactoryLifecycleMaxItems = max_items_per_tick;
+    OptFactoryLifecycleEnabled = enabled;
+    OptFactoryLifecycleNextSlot = block_height() + cadence_slots;
+    if OptFactoryLifecycleCursor <= 0 {
+      OptFactoryLifecycleCursor = 1;
+    }
+    set_trigger_enabled(name("soraswap_options_factory_lifecycle_tick"), enabled);
+  }
+
+  kotoage fn native_lifecycle_tick() {
+    if OptFactoryInitialized == 0 {
+      return;
+    }
+    if OptFactoryLifecycleEnabled == 0 {
+      return;
+    }
+    let current_slot = block_height();
+    if OptFactoryLifecycleNextSlot > 0 && current_slot < OptFactoryLifecycleNextSlot {
+      return;
+    }
+    let processed = 0;
+    let series_id = OptFactoryLifecycleCursor;
+    if series_id <= 0 {
+      series_id = 1;
+    }
+    while processed < OptFactoryLifecycleMaxItems && series_id < 1_000_000 {
+      if OptFactorySeriesKind.contains(series_id) {
+        if OptFactorySeriesSettlementReady.get_or(series_id, 0) == 0 &&
+          current_slot >= OptFactorySeriesExpirySlot.get_or(series_id, 0) {
+          OptFactorySeriesSettlementReady[series_id] = 2;
+        }
+        processed = processed + 1;
+      } else {
+        if series_id > 32 {
+          processed = OptFactoryLifecycleMaxItems;
+        } else {
+          processed = processed + 1;
+        }
+      }
+      series_id = series_id + 1;
+    }
+    if series_id >= 1_000_000 {
+      series_id = 1;
+    }
+    OptFactoryLifecycleCursor = series_id;
+    OptFactoryLifecycleLastSlot = current_slot;
+    OptFactoryLifecycleLastProcessed = processed;
+    OptFactoryLifecycleNextSlot = current_slot + OptFactoryLifecycleCadenceSlots;
   }
 
   kotoage fn enter_withdrawal_only() {
@@ -793,6 +874,18 @@ seiyaku OptionsFactory {
       OptFactoryAutomationBacklog,
       OptFactoryAutomationSafeMode,
       OptFactoryWithdrawalOnly
+    );
+  }
+
+  view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
+    return (
+      OptFactoryLifecycleEnabled,
+      OptFactoryLifecycleCadenceSlots,
+      OptFactoryLifecycleMaxItems,
+      OptFactoryLifecycleNextSlot,
+      OptFactoryLifecycleCursor,
+      OptFactoryLifecycleLastSlot,
+      OptFactoryLifecycleLastProcessed
     );
   }
 }

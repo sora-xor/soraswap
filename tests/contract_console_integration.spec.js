@@ -57,6 +57,14 @@ async function stopFixtureServer(child) {
   });
 }
 
+async function confirmSignedCall(page) {
+  const dialog = page.locator("#signed-confirmation-dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Confirm signed call");
+  await dialog.getByRole("button", { name: "Confirm signed call" }).click();
+  await expect(dialog).toBeHidden();
+}
+
 test.beforeAll(async () => {
   const started = await startFixtureServer();
   fixtureServer = started.child;
@@ -94,6 +102,7 @@ test("drives the real Python console server against a local mock Torii", async (
   await page.locator("#bridge-amount-input").fill("25");
   await page.locator("#build-bridge-request").click();
   await page.locator("#run-request").click();
+  await confirmSignedCall(page);
 
   await expect(page.locator("#transaction-history-list")).toContainText("contract call");
   await expect(page.locator("#transaction-history-list")).toContainText("Committed");
@@ -106,10 +115,12 @@ test("drives the real Python console server against a local mock Torii", async (
 
   await page.locator("#load-looked-up-bundle").click();
   await page.locator("#submit-bridge-proof").click();
+  await confirmSignedCall(page);
   await expect(page.locator("#transaction-history-list")).toContainText("bridge proof submit");
 
   await page.locator("#insert-settlement-helper").click();
   await page.locator("#submit-bridge-message").click();
+  await confirmSignedCall(page);
   await expect(page.locator("#transaction-history-list")).toContainText("bridge message submit");
   await expect(page.locator("#transaction-history-list")).toContainText("fixture_lane");
 
