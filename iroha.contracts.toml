@@ -169,6 +169,12 @@ fee_asset_id = "xor#universal"
 [[tests]]
 path = "tests/kotodama/prelude_smoke.ko"
 
+[[tests]]
+path = "tests/kotodama/epoch_auction_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/dlmm_hooks_twamm_regressions.test.ko"
+
 [[smoke]]
 id = "n3x_state_view"
 contract = "n3x.n3x_hub"

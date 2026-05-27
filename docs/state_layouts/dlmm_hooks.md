@@ -8,3 +8,5 @@ Tracked values:
 - cumulative executed input and output
 - trigger-native TWAMM config: owner, base/quote assets, contract subject, router contract, cadence, per-tick order cap, enabled flag, scan cursor, and last tick counters
 - TWAMM v2 orders: owner, input side, total/remaining/executed input, executed/claimed output, slice size, minimum total output, interval, next slot, and status
+
+Completed TWAMM orders must meet stored `minimum total output` before claim; cancelled orders keep the aggregate minimum for audit but can claim already executed output.

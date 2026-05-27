@@ -25,3 +25,5 @@ Notes:
 - Side `1` is a quote-escrowed bid; side `2` is a base-escrowed ask.
 - Closing scans bounded price ticks, stores one uniform clearing tick, and leaves settlement user-driven.
 - Pro-rata allocation is applied at the clearing tick; non-crossing and unfilled balances are refunded through `settle_order`.
+- Closed epoch clearing data is retained by epoch id, so unsettled prior-epoch orders settle against their own epoch even after a later epoch is configured.
+- `cancel_order` is scoped to the order's epoch and only succeeds while that epoch is active.

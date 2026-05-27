@@ -60,6 +60,13 @@ seiyaku DlmmHookManager {
     return b;
   }
 
+  fn max_int(a: int, b: int) -> int {
+    if a >= b {
+      return a;
+    }
+    return b;
+  }
+
   fn assert_twamm_initialized() {
     assert(TwammInitialized == 1, "twamm not initialized");
   }
@@ -92,6 +99,20 @@ seiyaku DlmmHookManager {
     }
   }
 
+  fn twamm_min_slice_out(order_id: Name, amount_in: int, remaining: int) -> int {
+    let total_in = TwammOrderTotalIn.get_or(order_id, 0);
+    let min_total_out = TwammOrderMinTotalOut.get_or(order_id, 0);
+    let min_slice_out = 0;
+    if total_in > 0 {
+      min_slice_out = (min_total_out * amount_in) / total_in;
+    }
+    if amount_in >= remaining {
+      let residual_min = min_total_out - TwammOrderExecutedOut.get_or(order_id, 0);
+      return max_int(min_slice_out, max_int(residual_min, 0));
+    }
+    return min_slice_out;
+  }
+
   fn twamm_execute_order(order_id: Name, current_slot: int) -> int {
     if TwammOrderStatus.get_or(order_id, 0) != 1 {
       return 0;
@@ -108,16 +129,13 @@ seiyaku DlmmHookManager {
     if amount_in <= 0 {
       return 0;
     }
-    let total_in = TwammOrderTotalIn.get_or(order_id, 0);
-    let min_slice_out = 0;
-    if total_in > 0 {
-      min_slice_out = (TwammOrderMinTotalOut.get_or(order_id, 0) * amount_in) / total_in;
-    }
+    let min_slice_out = twamm_min_slice_out(order_id, amount_in, remaining);
     let payload = json_object();
     let payload = json_set_int(payload, name("amount_in"), amount_in);
     let payload = json_set_int(payload, name("input_is_base"), TwammOrderInputIsBase.get_or(order_id, 0));
     let payload = json_set_int(payload, name("min_out"), min_slice_out);
     let amount_out = decode_int(call_contract(TwammRouterContract, "route_swap", payload));
+    assert(amount_out >= min_slice_out, "twamm insufficient output");
     TwammOrderRemainingIn[order_id] = remaining - amount_in;
     TwammOrderExecutedIn[order_id] = TwammOrderExecutedIn.get_or(order_id, 0) + amount_in;
     TwammOrderExecutedOut[order_id] = TwammOrderExecutedOut.get_or(order_id, 0) + amount_out;
@@ -268,6 +286,12 @@ seiyaku DlmmHookManager {
     assert(TwammOrderOwner[order_id] == authority(), "twamm owner mismatch");
     let status = TwammOrderStatus.get_or(order_id, 0);
     assert(status == 3 || status == 4, "twamm not claimable");
+    if status == 3 {
+      assert(
+        TwammOrderExecutedOut.get_or(order_id, 0) >= TwammOrderMinTotalOut.get_or(order_id, 0),
+        "twamm min total out"
+      );
+    }
     let claimable = TwammOrderExecutedOut.get_or(order_id, 0) - TwammOrderClaimedOut.get_or(order_id, 0);
     assert(claimable > 0, "nothing claimable");
     TwammOrderClaimedOut[order_id] = TwammOrderClaimedOut.get_or(order_id, 0) + claimable;

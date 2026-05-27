@@ -1,0 +1,81 @@
+koto_test { target: "../../contracts/batch_amm/epoch_auction.ko" }
+
+fixture auction_actors {
+  actor("owner", account_id("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+  grant_permission("owner", "Admin");
+  grant_permission("owner", "AssetOps");
+}
+
+fn seed_auction(owner: AccountId) {
+  AuctionInitialized = 1;
+  AuctionOwner = owner;
+  AuctionContractId = owner;
+  AuctionContractBound = 1;
+  AuctionBaseAsset = asset_definition("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+  AuctionQuoteAsset = asset_definition("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+  NextOrderIndex = 1;
+}
+
+fn seed_bid(order_id: Name, owner: AccountId, order_epoch: int, amount: int, limit_tick: int) {
+  OrderOwner[order_id] = owner;
+  OrderEpoch[order_id] = order_epoch;
+  OrderSide[order_id] = 1;
+  OrderAmount[order_id] = amount;
+  OrderLimitTick[order_id] = limit_tick;
+  OrderStatus[order_id] = 1;
+  OrderBaseOut[order_id] = 0;
+  OrderQuoteOut[order_id] = 0;
+  OrderBaseRefund[order_id] = 0;
+  OrderQuoteRefund[order_id] = 0;
+}
+
+#[test(fixture="auction_actors")]
+fn prior_epoch_order_settles_against_stored_clearing_after_new_epoch() {
+  let owner = actor_account("owner");
+  let order_id = name("oldbid");
+  seed_auction(owner);
+
+  EpochId = 2;
+  EpochStatus = 1;
+  EpochStatusById[1] = 2;
+  EpochClearingTickById[1] = 1_000_000;
+  EpochClearingBaseById[1] = 5;
+  EpochBidBaseAtClearingById[1] = 10;
+  EpochAskBaseAtClearingById[1] = 5;
+  seed_bid(order_id, owner, 1, 10, 1_000_000);
+
+  let base_out = invoke_entrypoint_as("owner", "settle_order", json("{\"order_id\":\"oldbid\"}"));
+  assert(base_out == 5, "old epoch base output");
+  assert(OrderStatus[order_id] == 3, "old order settled");
+  assert(OrderBaseOut[order_id] == 5, "stored base output");
+  assert(OrderQuoteRefund[order_id] == 5, "stored quote refund");
+}
+
+#[test(fixture="auction_actors")]
+fn prior_closed_epoch_order_cannot_cancel_during_new_active_epoch() {
+  let owner = actor_account("owner");
+  let order_id = name("oldbidcancel");
+  seed_auction(owner);
+
+  EpochId = 2;
+  EpochStatus = 1;
+  EpochStatusById[1] = 2;
+  seed_bid(order_id, owner, 1, 10, 1_000_000);
+
+  expect_reject_as("owner", "cancel_order", json("{\"order_id\":\"oldbidcancel\"}"));
+}
+
+#[test(fixture="auction_actors")]
+fn configure_epoch_rejects_while_current_epoch_is_active() {
+  let owner = actor_account("owner");
+  seed_auction(owner);
+
+  EpochId = 1;
+  EpochStatus = 1;
+
+  expect_reject_as(
+    "owner",
+    "configure_epoch",
+    json("{\"epoch_id\":2,\"start_slot\":0,\"end_slot\":1,\"lower_tick\":1,\"upper_tick\":1,\"tick_step\":1,\"max_orders\":1}")
+  );
+}

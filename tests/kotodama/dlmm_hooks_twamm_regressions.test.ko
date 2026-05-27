@@ -1,0 +1,59 @@
+koto_test { target: "../../contracts/dlmm_hooks/hook_manager.ko" }
+
+fixture twamm_actors {
+  actor("owner", account_id("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+  grant_permission("owner", "AssetOps");
+}
+
+fn seed_twamm_claimable_order(order_id: Name,
+                              owner: AccountId,
+                              status: int,
+                              executed_out: int,
+                              claimed_out: int,
+                              min_total_out: int) {
+  TwammInitialized = 1;
+  TwammContractId = owner;
+  TwammContractBound = 1;
+  TwammBaseAsset = asset_definition("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+  TwammQuoteAsset = asset_definition("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+  TwammOrderOwner[order_id] = owner;
+  TwammOrderInputIsBase[order_id] = 1;
+  TwammOrderMinTotalOut[order_id] = min_total_out;
+  TwammOrderExecutedOut[order_id] = executed_out;
+  TwammOrderClaimedOut[order_id] = claimed_out;
+  TwammOrderStatus[order_id] = status;
+}
+
+#[test]
+fn final_twamm_slice_min_out_carries_rounding_remainder() {
+  let order_id = name("twmin");
+  TwammOrderTotalIn[order_id] = 3;
+  TwammOrderMinTotalOut[order_id] = 2;
+  TwammOrderExecutedOut[order_id] = 0;
+
+  let first_slice_min = twamm_min_slice_out(order_id, 1, 3);
+  let final_slice_min = twamm_min_slice_out(order_id, 1, 1);
+
+  assert(first_slice_min == 0, "non-final slice keeps proportional floor");
+  assert(final_slice_min == 2, "final slice carries aggregate remainder");
+}
+
+#[test(fixture="twamm_actors")]
+fn completed_twamm_claim_rejects_below_total_min_out() {
+  let owner = actor_account("owner");
+  let order_id = name("under");
+  seed_twamm_claimable_order(order_id, owner, 3, 1, 0, 2);
+
+  expect_reject_as("owner", "claim_twamm", json("{\"order_id\":\"under\"}"));
+}
+
+#[test(fixture="twamm_actors")]
+fn cancelled_twamm_can_claim_executed_output_below_total_min_out() {
+  let owner = actor_account("owner");
+  let order_id = name("cancelclaim");
+  seed_twamm_claimable_order(order_id, owner, 4, 1, 0, 2);
+
+  let claimed = invoke_entrypoint_as("owner", "claim_twamm", json("{\"order_id\":\"cancelclaim\"}"));
+  assert(claimed == 1, "cancelled order claim");
+  assert(TwammOrderClaimedOut[order_id] == 1, "claimed output stored");
+}

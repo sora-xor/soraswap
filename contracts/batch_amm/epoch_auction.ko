@@ -22,6 +22,11 @@ seiyaku EpochAuction {
   state int EpochBidBaseAtClearing;
   state int EpochAskBaseAtClearing;
   state int EpochLastCloseSlot;
+  state EpochStatusById: Map<int, int>;
+  state EpochClearingTickById: Map<int, int>;
+  state EpochClearingBaseById: Map<int, int>;
+  state EpochBidBaseAtClearingById: Map<int, int>;
+  state EpochAskBaseAtClearingById: Map<int, int>;
 
   state int NextOrderIndex;
   state OrderByIndex: Map<int, Name>;
@@ -74,6 +79,65 @@ seiyaku EpochAuction {
 
   fn assert_order_exists(order_id: Name) {
     assert(OrderOwner.contains(order_id), "order missing");
+  }
+
+  fn persist_current_epoch_state() {
+    if EpochId > 0 {
+      EpochStatusById[EpochId] = EpochStatus;
+      EpochClearingTickById[EpochId] = EpochClearingTick;
+      EpochClearingBaseById[EpochId] = EpochClearingBase;
+      EpochBidBaseAtClearingById[EpochId] = EpochBidBaseAtClearing;
+      EpochAskBaseAtClearingById[EpochId] = EpochAskBaseAtClearing;
+    }
+  }
+
+  fn epoch_status_for(order_epoch: int) -> int {
+    if order_epoch == EpochId {
+      return EpochStatus;
+    }
+    return EpochStatusById.get_or(order_epoch, 0);
+  }
+
+  fn epoch_clearing_tick_for(order_epoch: int) -> int {
+    if order_epoch == EpochId && !EpochClearingTickById.contains(order_epoch) {
+      return EpochClearingTick;
+    }
+    return EpochClearingTickById.get_or(order_epoch, 0);
+  }
+
+  fn epoch_clearing_base_for(order_epoch: int) -> int {
+    if order_epoch == EpochId && !EpochClearingBaseById.contains(order_epoch) {
+      return EpochClearingBase;
+    }
+    return EpochClearingBaseById.get_or(order_epoch, 0);
+  }
+
+  fn epoch_bid_base_at_clearing_for(order_epoch: int) -> int {
+    if order_epoch == EpochId && !EpochBidBaseAtClearingById.contains(order_epoch) {
+      return EpochBidBaseAtClearing;
+    }
+    return EpochBidBaseAtClearingById.get_or(order_epoch, 0);
+  }
+
+  fn epoch_ask_base_at_clearing_for(order_epoch: int) -> int {
+    if order_epoch == EpochId && !EpochAskBaseAtClearingById.contains(order_epoch) {
+      return EpochAskBaseAtClearing;
+    }
+    return EpochAskBaseAtClearingById.get_or(order_epoch, 0);
+  }
+
+  fn close_current_epoch(clearing_tick: int,
+                         clearing_base: int,
+                         bid_base_at_clearing: int,
+                         ask_base_at_clearing: int,
+                         close_slot: int) {
+    EpochClearingTick = clearing_tick;
+    EpochClearingBase = clearing_base;
+    EpochBidBaseAtClearing = bid_base_at_clearing;
+    EpochAskBaseAtClearing = ask_base_at_clearing;
+    EpochLastCloseSlot = close_slot;
+    EpochStatus = 2;
+    persist_current_epoch_state();
   }
 
   fn base_capacity_for_bid(quote_amount: int, tick: int) -> int {
@@ -195,6 +259,8 @@ seiyaku EpochAuction {
                              tick_step: int,
                              max_orders: int) permission(Admin) {
     assert_owner();
+    assert(EpochStatus != 1, "epoch active");
+    persist_current_epoch_state();
     assert(epoch_id > EpochId, "stale epoch");
     assert(start_slot >= 0, "invalid start slot");
     assert(end_slot > start_slot, "invalid end slot");
@@ -217,6 +283,7 @@ seiyaku EpochAuction {
     EpochBidBaseAtClearing = 0;
     EpochAskBaseAtClearing = 0;
     EpochLastCloseSlot = 0;
+    persist_current_epoch_state();
     set_trigger_enabled(name("soraswap_epoch_auction_close"), 1);
   }
 
@@ -261,7 +328,8 @@ seiyaku EpochAuction {
     assert_order_exists(order_id);
     assert(OrderOwner[order_id] == authority(), "order owner mismatch");
     assert(OrderStatus.get_or(order_id, 0) == 1, "order not active");
-    assert(EpochStatus == 1, "epoch not active");
+    let order_epoch = OrderEpoch.get_or(order_id, 0);
+    assert(epoch_status_for(order_epoch) == 1, "epoch not active");
     let side = OrderSide.get_or(order_id, 0);
     let amount = OrderAmount.get_or(order_id, 0);
     OrderStatus[order_id] = 2;
@@ -281,21 +349,11 @@ seiyaku EpochAuction {
       return;
     }
     if EpochOrderCount == 0 {
-      EpochClearingTick = 0;
-      EpochClearingBase = 0;
-      EpochBidBaseAtClearing = 0;
-      EpochAskBaseAtClearing = 0;
-      EpochLastCloseSlot = current_slot;
-      EpochStatus = 2;
+      close_current_epoch(0, 0, 0, 0, current_slot);
       return;
     }
     let clearing = compute_clearing();
-    EpochClearingTick = clearing.0;
-    EpochClearingBase = clearing.1;
-    EpochBidBaseAtClearing = clearing.2;
-    EpochAskBaseAtClearing = clearing.3;
-    EpochLastCloseSlot = current_slot;
-    EpochStatus = 2;
+    close_current_epoch(clearing.0, clearing.1, clearing.2, clearing.3, current_slot);
   }
 
   kotoage fn native_epoch_auction_close() permission(Admin) {
@@ -312,33 +370,26 @@ seiyaku EpochAuction {
       return;
     }
     if EpochOrderCount == 0 {
-      EpochClearingTick = 0;
-      EpochClearingBase = 0;
-      EpochBidBaseAtClearing = 0;
-      EpochAskBaseAtClearing = 0;
-      EpochLastCloseSlot = current_slot;
-      EpochStatus = 2;
+      close_current_epoch(0, 0, 0, 0, current_slot);
     } else {
       let clearing = compute_clearing();
-      EpochClearingTick = clearing.0;
-      EpochClearingBase = clearing.1;
-      EpochBidBaseAtClearing = clearing.2;
-      EpochAskBaseAtClearing = clearing.3;
-      EpochLastCloseSlot = current_slot;
-      EpochStatus = 2;
+      close_current_epoch(clearing.0, clearing.1, clearing.2, clearing.3, current_slot);
     }
     set_trigger_enabled(name("soraswap_epoch_auction_close"), 0);
   }
 
   kotoage fn settle_order(order_id: Name) -> int permission(AssetOps) {
     assert_order_exists(order_id);
-    assert(EpochStatus == 2, "epoch not closed");
+    let order_epoch = OrderEpoch.get_or(order_id, 0);
+    assert(epoch_status_for(order_epoch) == 2, "epoch not closed");
     assert(OrderOwner[order_id] == authority(), "order owner mismatch");
     assert(OrderStatus.get_or(order_id, 0) == 1, "order settled");
     let side = OrderSide.get_or(order_id, 0);
     let amount = OrderAmount.get_or(order_id, 0);
-    let tick = EpochClearingTick;
-    let matched_base = EpochClearingBase;
+    let tick = epoch_clearing_tick_for(order_epoch);
+    let matched_base = epoch_clearing_base_for(order_epoch);
+    let bid_base_at_clearing = epoch_bid_base_at_clearing_for(order_epoch);
+    let ask_base_at_clearing = epoch_ask_base_at_clearing_for(order_epoch);
     let base_out = 0;
     let quote_out = 0;
     let base_refund = 0;
@@ -353,18 +404,18 @@ seiyaku EpochAuction {
     } else {
       if side == 1 {
         let capacity = base_capacity_for_bid(amount, tick);
-        if EpochBidBaseAtClearing <= matched_base {
+        if bid_base_at_clearing <= matched_base {
           base_out = capacity;
         } else {
-          base_out = (capacity * matched_base) / EpochBidBaseAtClearing;
+          base_out = (capacity * matched_base) / bid_base_at_clearing;
         }
         let quote_spent = quote_for_base(base_out, tick);
         quote_refund = amount - quote_spent;
       } else {
-        if EpochAskBaseAtClearing <= matched_base {
+        if ask_base_at_clearing <= matched_base {
           base_out = amount;
         } else {
-          base_out = (amount * matched_base) / EpochAskBaseAtClearing;
+          base_out = (amount * matched_base) / ask_base_at_clearing;
         }
         quote_out = quote_for_base(base_out, tick);
         base_refund = amount - base_out;

@@ -22,3 +22,4 @@ Notes:
 - Hook phases are numeric launch labels: `1=dynamic_fee`, `2=limit_order`, `3=twamm`, `4=lp_fee`.
 - The hook manager is intentionally separate from `dlmm_pool` so pool math remains stable while hook policies evolve.
 - `soraswap_twamm_tick` is a bounded pre-commit trigger. It scans at most `max_orders_per_tick` TWAMM records and routes due slices through the bound DLMM router with the hook-manager contract subject as custody/trader.
+- TWAMM v2 enforces `min_total_out` across the full order: intermediate slices use proportional floors, the final slice carries any rounded remainder, and completed-order claims reject if executed output is below the aggregate minimum. Cancelled orders may still claim already executed output.

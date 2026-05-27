@@ -21,6 +21,11 @@ Epoch auction singleton state:
 - `EpochBidBaseAtClearing`
 - `EpochAskBaseAtClearing`
 - `EpochLastCloseSlot`
+- `EpochStatusById`
+- `EpochClearingTickById`
+- `EpochClearingBaseById`
+- `EpochBidBaseAtClearingById`
+- `EpochAskBaseAtClearingById`
 - `NextOrderIndex`
 
 Order maps:
@@ -39,3 +44,5 @@ Order maps:
 Status values:
 - Epoch `0=unset`, `1=active`, `2=closed`
 - Order `1=active`, `2=cancelled`, `3=settled`
+
+Closed epoch snapshots are keyed by epoch id so user-driven settlement and cancellation decisions use the epoch recorded on each order, not only the current singleton epoch.
