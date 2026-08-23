@@ -2,6 +2,8 @@
 
 Pool-wide scalar state:
 - `PoolInitialized`
+- `PoolOwner`
+- `AdminRenounced`
 - `BaseAsset`
 - `QuoteAsset`
 - `VaultAccount`
@@ -125,11 +127,13 @@ View tuple fields returned by `quote_position_fees(position_id)`:
 - `soraswap_dlmm_position_pending_fee_quote`
 
 Notes:
-- The pool layout models a single deployed DLMM instance with fixed-price bin traversal and guard rails stored directly on the contract.
+- The pool layout models one deployed DLMM instance per contract address with fixed-price bin traversal and guard rails stored directly on the contract.
+- `hajimari(...)` is asset-agnostic for generic pool instantiation, but the SoraSwap production deployment anchors its deployable AMM instance on `xor#universal` as the canonical DEX base asset.
 - The active `VaultAccount` can now be rotated only by the current vault authority through `bind_custody_account(...)`; bootstrap uses that once to migrate legacy treasury-backed pools onto pool-subject custody.
 - The signed testnet bootstrap now materializes the pool contract subject as the custody account so router c2c swaps settle under the pool runtime subject instead of an external treasury signer.
 - The router layout now stores both its own contract subject account and the bound pool contract address because production execution uses same-transaction router-to-pool `call_contract(...)` dispatch, not quote-only inspection.
-- The router now also stores a monotonic swap-history journal keyed by `record_id`. Each successful `route_swap(...)` appends the effective trader, trade direction, exact `amount_in`, exact executed `amount_out`, and the submitted `min_out`.
-- `make smoke-local` and the signed `make smoke-testnet` lane both record the router contract binding, router execution binding, and the post-swap decoded state snapshots.
+- The generic, asset-agnostic router now also stores a monotonic swap-history journal keyed by `record_id`. Each successful self-custodial `route_swap(...)` appends the effective trader, trade direction, exact `amount_in`, exact executed `amount_out`, and the submitted `min_out`.
+- `make smoke-local` and the signed `SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make smoke-testnet` lane both record the router contract binding, router execution binding, and the post-swap decoded state snapshots.
 - `quote_position_fees(...)` reports pending claimable fees after applying the current bin fee-growth deltas to the position's stored debt. `mirror_position(...)` remains a raw stored-state snapshot.
 - Range governor state is stored in `RangeGovernorEnabled`, `RangeGovernorCadenceSlots`, `RangeGovernorNextSlot`, `RangeGovernorMaxFeePips`, `RangeGovernorTargetActiveBin`, `RangeGovernorMaxActiveBinDrift`, `RangeGovernorLastSlot`, and `RangeGovernorLastAction`. `PoolOwner` is captured at pool init for governor administration and does not replace `VaultAccount` custody semantics.
+- `AdminRenounced` changes once from `0` to `1`. Renunciation permanently gates the range-governor callback to an inert return and makes custody binding and governor configuration permanently reject.

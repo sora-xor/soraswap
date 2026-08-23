@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://soraswap.invalid/schema/production-cutover-trust-policy-v1.json",
+  "title": "SoraSwap production cutover trust policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "environment",
+    "policy_id",
+    "signature_namespace",
+    "required_signature_count",
+    "required_roles",
+    "trusted_approvers",
+    "allowed_monitoring_origins",
+    "approval_max_age_seconds",
+    "observation"
+  ],
+  "properties": {
+    "schema": {"const": "soraswap-production-cutover-trust-policy/v1"},
+    "environment": {"const": "production"},
+    "policy_id": {"type": "string", "minLength": 12},
+    "signature_namespace": {"const": "soraswap-production-cutover-v1"},
+    "required_signature_count": {"type": "integer", "minimum": 2},
+    "required_roles": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {"enum": ["security", "operations", "risk", "compliance"]},
+      "allOf": [
+        {"contains": {"const": "security"}},
+        {"contains": {"const": "operations"}}
+      ]
+    },
+    "trusted_approvers": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "role", "public_key", "independent"],
+        "properties": {
+          "id": {"type": "string", "minLength": 6},
+          "role": {"enum": ["security", "operations", "risk", "compliance"]},
+          "public_key": {"type": "string", "pattern": "^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$"},
+          "independent": {"const": true}
+        }
+      }
+    },
+    "allowed_monitoring_origins": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^https://"}
+    },
+    "approval_max_age_seconds": {"type": "integer", "minimum": 300, "maximum": 86400},
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "duration_seconds",
+        "interval_seconds",
+        "minimum_samples",
+        "maximum_monitoring_sample_age_seconds",
+        "minimum_validator_count",
+        "maximum_canonical_lead",
+        "maximum_finality_age_ms",
+        "derivatives_pause_mode"
+      ],
+      "properties": {
+        "duration_seconds": {"const": 1800},
+        "interval_seconds": {"const": 30},
+        "minimum_samples": {"const": 61},
+        "maximum_monitoring_sample_age_seconds": {"const": 30},
+        "minimum_validator_count": {"const": 4},
+        "maximum_canonical_lead": {"const": 1},
+        "maximum_finality_age_ms": {"const": 30000},
+        "derivatives_pause_mode": {"const": "external_fail_closed"}
+      }
+    }
+  }
+}

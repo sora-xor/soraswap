@@ -9,6 +9,7 @@ Manager singleton state:
 - `OptMgrWithdrawalOnly`
 - `OptMgrOraclePublicKey`
 - `OptMgrOracleScheme`
+- `OptMgrOracleStaleSlots`
 - `OptMgrAutomationExecutor`
 - `OptMgrExpiryJobId`
 - `OptMgrSettlementJobId`
@@ -68,6 +69,7 @@ Factory singleton state:
 - `OptFactoryWithdrawalOnly`
 - `OptFactoryOraclePublicKey`
 - `OptFactoryOracleScheme`
+- `OptFactoryOracleStaleSlots`
 - `OptFactoryAutomationExecutor`
 - `OptFactoryAutomationJobId`
 - `OptFactoryAutomationCadence`
@@ -145,6 +147,7 @@ Shout product singleton state:
 - `ShoutWithdrawalOnly`
 - `ShoutOraclePublicKey`
 - `ShoutOracleScheme`
+- `ShoutOracleStaleSlots`
 
 Shout product maps:
 - `ShoutSeriesExpirySlot`
@@ -183,10 +186,10 @@ The factory is the only user-facing write surface. `risk_vault` bucket `2` track
 Oracle keys and schemes are stored on the public verifier surfaces: manager/factory for series settlement and factory/shout product for shout marks. Payload domains are `2` for series settlement and `3` for shout marks. Last oracle slot and attestation hash maps enforce monotonic updates and audit-trail state.
 
 Typed view snapshots are exposed separately by contract:
-- manager: `manager_config()`, `template_state()`, `series_state()`, `automation_state()`
-- factory: `factory_config()`, `series_state()`, `position_state()`, `automation_state()`
+- manager: `manager_config()`, `oracle_stale_slots()`, `template_state()`, `series_state()`, `automation_state()`
+- factory: `factory_config()`, `oracle_stale_slots()`, `series_state()`, `position_state()`, `automation_state()`
 - vault: `vault_state()`, `position_accounting()`
-- shout product: `series_state()`, `position_state()`
+- shout product: `series_state()`, `position_state()`, `oracle_stale_slots()`
 - outperformance product: `series_state()`, `position_state()`
 
 Factory automation state is split intentionally: `sync_automation(...)` binds executor/job cadence and cap settings, while `heartbeat(...)` updates the live backlog/safe-mode fields and reports bucket `2` telemetry into `risk_vault`.

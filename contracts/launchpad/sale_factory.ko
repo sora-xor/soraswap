@@ -1,12 +1,51 @@
+// Custodial launchpad sale factory with bounded lifecycle processing.
+
 seiyaku SaleFactory {
-  state int FactoryOwnerSet;
+  error enum SaleFactoryError {
+    OwnerMismatch = 1,
+    GuardianMismatch = 2,
+    WithdrawalOnly = 3,
+    SaleExists = 4,
+    SaleMissing = 5,
+    SaleOwnerMismatch = 6,
+    SaleClosed = 7,
+    SaleOpen = 8,
+    SaleFailed = 9,
+    SaleSuccessful = 10,
+    SaleSeeded = 11,
+    SaleNotSeeded = 12,
+    InvalidPrice = 13,
+    InvalidCap = 14,
+    InvalidClaimWindow = 15,
+    InvalidAmount = 16,
+    HardCapExceeded = 17,
+    ZeroSaleOutput = 18,
+    AllocationExists = 19,
+    AllocationMissing = 20,
+    BuyerMismatch = 21,
+    AllocationRefunded = 22,
+    NothingClaimable = 23,
+    NothingRefundable = 24,
+    InsufficientClaimInventory = 25,
+    InsufficientSeedInventory = 26,
+    InsufficientPaymentProceeds = 27,
+    SeedPlanMissing = 28,
+    SeedActivationFailed = 29,
+    InvalidCadence = 30,
+    InvalidMaxItems = 31,
+    InvalidEnabled = 32,
+    SaleLimit = 33,
+    IndexCorrupt = 34,
+    InvalidAuthoritySeparation = 35,
+  }
+
+  state int FactoryInitialized;
   state AccountId FactoryOwner;
-  state int FactoryContractBound;
-  state AccountId FactoryContractId;
-  state int SeedExecutorBound;
+  state AccountId FactoryGuardian;
+  state AccountId FactoryAccount;
   state bytes SeedExecutorContract;
-  state int NextSaleIndex;
-  state SaleByIndex: Map<int, Name>;
+  state int FactoryWithdrawalOnly;
+
   state int LaunchLifecycleCadenceSlots;
   state int LaunchLifecycleMaxItems;
   state int LaunchLifecycleEnabled;
@@ -14,308 +53,280 @@ seiyaku SaleFactory {
   state int LaunchLifecycleCursor;
   state int LaunchLifecycleLastSlot;
   state int LaunchLifecycleLastProcessed;
-  state SaleOwner: Map<Name, AccountId>;
-  state SaleAsset: Map<Name, AssetDefinitionId>;
-  state PaymentAsset: Map<Name, AssetDefinitionId>;
-  state Treasury: Map<Name, AccountId>;
-  state UnitPrice: Map<Name, int>;
-  state SoftCap: Map<Name, int>;
-  state HardCap: Map<Name, int>;
-  state Raised: Map<Name, int>;
-  state Sold: Map<Name, int>;
-  state Closed: Map<Name, int>;
-  state Successful: Map<Name, int>;
-  state Seeded: Map<Name, int>;
-  state SeedInventory: Map<Name, int>;
-  state SeedVault: Map<Name, AccountId>;
-  state SeedPositionId: Map<Name, Name>;
-  state SeedBinId: Map<Name, int>;
-  state SeedPaymentAmount: Map<Name, int>;
-  state SeedSaleAmount: Map<Name, int>;
-  state SeedPaymentUsed: Map<Name, int>;
-  state SeedSaleUsed: Map<Name, int>;
-  state SeedActivationValue: Map<Name, int>;
-  state ClaimInventory: Map<Name, int>;
-  state ClaimedSupply: Map<Name, int>;
-  state RefundedPayment: Map<Name, int>;
-  state ClaimStartSlot: Map<Name, int>;
-  state ClaimEndSlot: Map<Name, int>;
-  state AllocationSale: Map<Name, Name>;
-  state AllocationBuyer: Map<Name, AccountId>;
-  state AllocationPaymentAmount: Map<Name, int>;
-  state AllocationSaleAmount: Map<Name, int>;
-  state AllocationClaimed: Map<Name, int>;
-  state AllocationRefunded: Map<Name, int>;
+  state int NextSaleIndex;
+  state StateMap<int, Name> SaleByIndex;
 
-  register_trigger soraswap_launchpad_lifecycle_tick {
-    call native_lifecycle_tick;
-    on time pre_commit;
+  state StateMap<Name, AccountId> SaleOwner;
+  state StateMap<Name, AssetDefinitionId> SaleAsset;
+  state StateMap<Name, AssetDefinitionId> PaymentAsset;
+  state StateMap<Name, AccountId> Treasury;
+  state StateMap<Name, decimal> UnitPrice;
+  state StateMap<Name, quantity> SoftCap;
+  state StateMap<Name, quantity> HardCap;
+  state StateMap<Name, int> ClaimStartSlot;
+  state StateMap<Name, int> ClaimEndSlot;
+  state StateMap<Name, quantity> Raised;
+  state StateMap<Name, quantity> Sold;
+  state StateMap<Name, int> Closed;
+  state StateMap<Name, int> Successful;
+  state StateMap<Name, int> Seeded;
+  state StateMap<Name, quantity> SeedInventory;
+  state StateMap<Name, quantity> ClaimInventory;
+  state StateMap<Name, quantity> ClaimedSupply;
+  state StateMap<Name, quantity> RefundedPayment;
+  state StateMap<Name, quantity> TreasuryPaymentReleased;
+
+  state StateMap<Name, Name> SeedPositionId;
+  state StateMap<Name, int> SeedBinId;
+  state StateMap<Name, quantity> SeedPaymentAmount;
+  state StateMap<Name, quantity> SeedSaleAmount;
+  state StateMap<Name, quantity> SeedPaymentUsed;
+  state StateMap<Name, quantity> SeedSaleUsed;
+  state StateMap<Name, quantity> SeedActivationShares;
+
+  state StateMap<Name, Name> AllocationSale;
+  state StateMap<Name, AccountId> AllocationBuyer;
+  state StateMap<Name, quantity> AllocationPaymentAmount;
+  state StateMap<Name, quantity> AllocationSaleAmount;
+  state StateMap<Name, quantity> AllocationClaimed;
+  state StateMap<Name, int> AllocationRefunded;
+
+  trigger soraswap_launchpad_lifecycle_tick -> native_lifecycle_tick {
+    on time schedule(20000, 120000);
     repeats indefinitely;
-    metadata { tag: "soraswap"; module: "launchpad.sale_factory"; __enabled: false; }
+    metadata { "tag": "soraswap"; "module": "launchpad.sale_factory"; "__enabled": false; }
   }
 
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
-      }
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
+  }
+
+  fn zero_decimal() -> decimal {
+    let decimal zero = 0;
+    return zero;
+  }
+
+  fn universal_dataspace() -> DataSpaceId {
+    let dataspace = DataSpaceId::parse("0");
+    return dataspace;
+  }
+
+  fn missing_name() -> Name {
+    let missing = Name::parse("missing");
+    return missing;
+  }
+
+  fn fallback_asset() -> AssetDefinitionId {
+    let asset = AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+    return asset;
+  }
+
+  fn assert_owner() {
+    require(FactoryOwner == context::authority(), SaleFactoryError::OwnerMismatch);
+  }
+
+  fn assert_owner_or_guardian() {
+    if FactoryOwner == context::authority() {
+      return;
     }
+    require(FactoryGuardian == context::authority(), SaleFactoryError::GuardianMismatch);
   }
 
-  fn ensure_factory_admin() {
-    assert(FactoryOwnerSet == 1, "factory not initialized");
-    assert(FactoryOwner == authority(), "factory owner mismatch");
+  fn assert_sale_exists(Name sale) {
+    require(SaleAsset.contains(sale), SaleFactoryError::SaleMissing);
   }
 
-  fn assert_factory_contract_bound() {
-    assert(FactoryContractBound == 1, "factory contract unbound");
-  }
-
-  fn assert_executor_bound() {
-    assert(SeedExecutorBound == 1, "seed executor unbound");
-  }
-
-  fn assert_sale_exists(sale: Name) {
-    assert(SaleAsset.contains(sale), "sale missing");
-  }
-
-  fn assert_sale_owner(sale: Name) {
-    assert_sale_exists(sale);
-    assert(SaleOwner[sale] == authority(), "sale owner mismatch");
-  }
-
-  fn assert_allocation_exists(allocation: Name) {
-    assert(AllocationSale.contains(allocation), "allocation missing");
-  }
-
-  fn validate_sale_config(unit_price: int, soft_cap: int, hard_cap: int) {
-    assert(unit_price > 0, "invalid unit price");
-    assert(soft_cap > 0, "invalid soft cap");
-    assert(hard_cap >= soft_cap, "invalid hard cap");
-  }
-
-  fn validate_vesting_config(claim_start_slot: int, claim_end_slot: int) {
-    assert(claim_start_slot >= 0, "invalid claim start");
-    assert(claim_end_slot >= claim_start_slot, "invalid claim end");
-  }
-
-  fn available_payment_for_seed(sale: Name) -> int {
-    let raised = Raised.get_or(sale, 0);
-    let used = SeedPaymentUsed.get_or(sale, 0);
-    let refunded = RefundedPayment.get_or(sale, 0);
-    return raised - used - refunded;
-  }
-
-  fn vested_claimable(total_amount: int,
-                      claim_start_slot: int,
-                      claim_end_slot: int,
-                      current_slot: int) -> int {
-    if current_slot < claim_start_slot {
-      return 0;
-    }
-    if claim_end_slot <= claim_start_slot {
-      return total_amount;
-    }
-    if current_slot >= claim_end_slot {
-      return total_amount;
-    }
-    let vested_slots = current_slot - claim_start_slot;
-    let total_slots = claim_end_slot - claim_start_slot;
-    return (total_amount * vested_slots) / total_slots;
-  }
-
-  fn claim_amount_for(allocation: Name, sale: Name) -> int {
-    assert(Closed.get_or(sale, 0) == 1, "sale open");
-    assert(Successful.get_or(sale, 0) == 1, "sale failed");
-    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
-    let current_slot = block_height();
-    let total_sale = AllocationSaleAmount[allocation];
-    let claimable = vested_claimable(
-      total_sale,
-      ClaimStartSlot.get_or(sale, 0),
-      ClaimEndSlot.get_or(sale, 0),
-      current_slot
+  fn assert_sale_owner(Name sale) {
+    assert_sale_exists(sale: sale);
+    require(
+      SaleOwner.get(sale).unwrap_or(FactoryOwner) == context::authority(),
+      SaleFactoryError::SaleOwnerMismatch
     );
-    let claimed = AllocationClaimed[allocation];
-    assert(claimable > claimed, "nothing claimable");
-    return claimable - claimed;
   }
 
-  fn close_sale_impl(sale: Name) {
-    assert(Closed.get_or(sale, 0) == 0, "sale closed");
-    Closed[sale] = 1;
-    if Raised.get_or(sale, 0) >= SoftCap.get_or(sale, 0) {
-      Successful[sale] = 1;
-    } else {
-      Successful[sale] = 0;
+  fn assert_allocation_exists(Name allocation) {
+    require(AllocationSale.contains(allocation), SaleFactoryError::AllocationMissing);
+  }
+
+  fn move_asset_if_needed(
+    AccountId source,
+    AccountId destination,
+    AssetDefinitionId asset,
+    quantity amount
+  ) {
+    if amount > zero_quantity() && source != destination {
+      ledger::asset::transfer(
+        source: source,
+        destination: destination,
+        asset_definition: asset,
+        amount: amount,
+        dataspace: universal_dataspace()
+      );
     }
   }
 
-  kotoage fn main() -> int {
-    return FactoryOwnerSet;
+  fn close_sale_impl(Name sale) {
+    assert_sale_exists(sale: sale);
+    require(Closed.get(sale).unwrap_or(0) == 0, SaleFactoryError::SaleClosed);
+    Closed[sale] = 1;
+    Successful[sale] = (
+      Raised.get(sale).unwrap_or(zero_quantity()) >=
+        SoftCap.get(sale).unwrap_or(zero_quantity())
+    ) ? 1 : 0;
   }
 
-  kotoage fn init_factory() {
-    assert(FactoryOwnerSet == 0, "factory initialized");
-    FactoryOwner = authority();
-    FactoryOwnerSet = 1;
-    NextSaleIndex = 1;
-    LaunchLifecycleCadenceSlots = 0;
+  fn vested_amount(Name allocation, int current_slot) -> quantity {
+    let sale = AllocationSale.get(allocation).unwrap_or(missing_name());
+    let total = AllocationSaleAmount.get(allocation).unwrap_or(zero_quantity());
+    let start = ClaimStartSlot.get(sale).unwrap_or(0);
+    let end = ClaimEndSlot.get(sale).unwrap_or(0);
+    if current_slot < start {
+      return zero_quantity();
+    }
+    if current_slot >= end {
+      return total;
+    }
+    let elapsed = current_slot - start;
+    let duration = end - start;
+    let fraction = decimal::from_int(value: elapsed).div_round(
+      divisor: decimal::from_int(value: duration),
+      scale: 28,
+      mode: Rounding::floor
+    );
+    return total * fraction;
+  }
+
+  fn activate_seed(Name sale) -> quantity {
+    assert_sale_owner(sale: sale);
+    require(Closed.get(sale).unwrap_or(0) == 1, SaleFactoryError::SaleOpen);
+    require(Successful.get(sale).unwrap_or(0) == 1, SaleFactoryError::SaleFailed);
+    require(Seeded.get(sale).unwrap_or(0) == 0, SaleFactoryError::SaleSeeded);
+    require(SeedPositionId.contains(sale), SaleFactoryError::SeedPlanMissing);
+    let base_amount = SeedPaymentAmount.get(sale).unwrap_or(zero_quantity());
+    let quote_amount = SeedSaleAmount.get(sale).unwrap_or(zero_quantity());
+    require(base_amount > zero_quantity() && quote_amount > zero_quantity(), SaleFactoryError::InvalidAmount);
+    require(
+      Raised.get(sale).unwrap_or(zero_quantity()) >= base_amount,
+      SaleFactoryError::InsufficientPaymentProceeds
+    );
+    require(
+      SeedInventory.get(sale).unwrap_or(zero_quantity()) >= quote_amount,
+      SaleFactoryError::InsufficientSeedInventory
+    );
+    require(
+      ClaimInventory.get(sale).unwrap_or(zero_quantity()) >=
+        Sold.get(sale).unwrap_or(zero_quantity()),
+      SaleFactoryError::InsufficientClaimInventory
+    );
+    let shares = contract::invoke(
+      contract: SeedExecutorContract,
+      entrypoint: "seed_liquidity",
+      returns: "quantity",
+      position_id: SeedPositionId.get(sale).unwrap_or(missing_name()),
+      funding_account: FactoryAccount,
+      bin_id: SeedBinId.get(sale).unwrap_or(0),
+      base_amount: base_amount,
+      quote_amount: quote_amount
+    );
+    require(shares > zero_quantity(), SaleFactoryError::SeedActivationFailed);
+    SeedInventory[sale] = SeedInventory.get(sale).unwrap_or(zero_quantity()) - quote_amount;
+    SeedPaymentUsed[sale] = base_amount;
+    SeedSaleUsed[sale] = quote_amount;
+    SeedActivationShares[sale] = shares;
+    Seeded[sale] = 1;
+    let proceeds = Raised.get(sale).unwrap_or(zero_quantity()) - base_amount;
+    move_asset_if_needed(
+      source: FactoryAccount,
+      destination: Treasury.get(sale).unwrap_or(FactoryOwner),
+      asset: PaymentAsset.get(sale).unwrap_or(SaleAsset.get(sale).unwrap_or(
+        fallback_asset()
+      )),
+      amount: proceeds
+    );
+    TreasuryPaymentReleased[sale] = proceeds;
+    return shares;
+  }
+
+  hajimari(
+    AccountId factory_account,
+    bytes executor_contract,
+    AccountId guardian
+  ) {
+    require(factory_account != context::authority(), SaleFactoryError::InvalidAuthoritySeparation);
+    require(guardian != context::authority() && guardian != factory_account, SaleFactoryError::InvalidAuthoritySeparation);
+    FactoryInitialized = 1;
+    FactoryOwner = context::authority();
+    FactoryGuardian = guardian;
+    FactoryAccount = factory_account;
+    SeedExecutorContract = executor_contract;
+    FactoryWithdrawalOnly = 1;
+    LaunchLifecycleCadenceSlots = 1;
     LaunchLifecycleMaxItems = 1;
     LaunchLifecycleEnabled = 0;
     LaunchLifecycleNextSlot = 0;
     LaunchLifecycleCursor = 1;
     LaunchLifecycleLastSlot = 0;
     LaunchLifecycleLastProcessed = 0;
+    NextSaleIndex = 1;
   }
 
-  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
-                                         max_items_per_tick: int,
-                                         enabled: int) permission(Admin) {
-    ensure_factory_admin();
-    assert(cadence_slots >= 0, "invalid cadence");
-    assert(max_items_per_tick > 0, "invalid max items");
-    assert(max_items_per_tick <= 16, "max items too high");
-    assert(enabled == 0 || enabled == 1, "invalid enabled");
+  view fn main() -> int {
+    return FactoryInitialized;
+  }
+
+  kotoage fn enter_withdrawal_only() authorize("Admin") {
+    assert_owner_or_guardian();
+    FactoryWithdrawalOnly = 1;
+  }
+
+  kotoage fn exit_withdrawal_only() authorize("Admin") {
+    assert_owner();
+    FactoryWithdrawalOnly = 0;
+  }
+
+  kotoage fn configure_trigger_lifecycle(
+    int cadence_slots,
+    int max_items_per_tick,
+    int enabled
+  ) authorize("AssetOps") {
+    assert_owner();
+    require(cadence_slots > 0, SaleFactoryError::InvalidCadence);
+    require(max_items_per_tick > 0 && max_items_per_tick <= 64, SaleFactoryError::InvalidMaxItems);
+    require(enabled == 0 || enabled == 1, SaleFactoryError::InvalidEnabled);
     LaunchLifecycleCadenceSlots = cadence_slots;
     LaunchLifecycleMaxItems = max_items_per_tick;
     LaunchLifecycleEnabled = enabled;
-    LaunchLifecycleNextSlot = block_height() + cadence_slots;
-    if LaunchLifecycleCursor <= 0 {
-      LaunchLifecycleCursor = 1;
-    }
-    if NextSaleIndex <= 0 {
-      NextSaleIndex = 1;
-    }
-    set_trigger_enabled(name("soraswap_launchpad_lifecycle_tick"), enabled);
+    LaunchLifecycleNextSlot = context::block_height() + cadence_slots;
+    ledger::trigger::set_enabled(Name::parse("soraswap_launchpad_lifecycle_tick"), enabled);
   }
 
-  view fn mirror_sale(sale: Name) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
-    assert_sale_exists(sale);
-    let raised = Raised.get_or(sale, 0);
-    let sold = Sold.get_or(sale, 0);
-    let closed = Closed.get_or(sale, 0);
-    let successful = Successful.get_or(sale, 0);
-    let seeded = Seeded.get_or(sale, 0);
-    let seed_inventory = SeedInventory.get_or(sale, 0);
-    let seed_bin_id = SeedBinId.get_or(sale, 0);
-    let seed_payment_amount = SeedPaymentAmount.get_or(sale, 0);
-    let seed_sale_amount = SeedSaleAmount.get_or(sale, 0);
-    let claim_inventory = ClaimInventory.get_or(sale, 0);
-    let claim_start_slot = ClaimStartSlot.get_or(sale, 0);
-    let claim_end_slot = ClaimEndSlot.get_or(sale, 0);
-    let seed_registered = 0;
-    if seed_payment_amount > 0 || seed_sale_amount > 0 {
-      seed_registered = 1;
-    }
-    return (
-      seed_registered,
-      raised,
-      sold,
-      closed,
-      successful,
-      seeded,
-      seed_inventory,
-      seed_bin_id,
-      seed_payment_amount,
-      seed_sale_amount,
-      claim_inventory,
-      claim_start_slot,
-      claim_end_slot
+  kotoage fn init_sale(
+    Name sale,
+    AssetDefinitionId sale_asset,
+    AssetDefinitionId payment_asset,
+    AccountId treasury,
+    decimal unit_price,
+    quantity soft_cap,
+    quantity hard_cap,
+    int claim_start_slot,
+    int claim_end_slot
+  ) authorize("Entry") {
+    require(FactoryWithdrawalOnly == 0, SaleFactoryError::WithdrawalOnly);
+    require(!SaleAsset.contains(sale), SaleFactoryError::SaleExists);
+    require(unit_price > zero_decimal(), SaleFactoryError::InvalidPrice);
+    require(
+      soft_cap > zero_quantity() && hard_cap >= soft_cap,
+      SaleFactoryError::InvalidCap
     );
-  }
-
-  view fn sale_config(sale: Name) -> (AssetDefinitionId, AssetDefinitionId, AccountId, int, int, int, int, int) {
-    assert_sale_exists(sale);
-    return (
-      SaleAsset[sale],
-      PaymentAsset[sale],
-      Treasury[sale],
-      UnitPrice[sale],
-      SoftCap.get_or(sale, 0),
-      HardCap.get_or(sale, 0),
-      ClaimStartSlot.get_or(sale, 0),
-      ClaimEndSlot.get_or(sale, 0)
+    require(
+      claim_start_slot > context::block_height() && claim_end_slot > claim_start_slot,
+      SaleFactoryError::InvalidClaimWindow
     );
-  }
-
-  view fn mirror_sale_accounting(sale: Name) -> (int, int, int, int) {
-    assert_sale_exists(sale);
-    return (
-      SeedPaymentUsed.get_or(sale, 0),
-      SeedSaleUsed.get_or(sale, 0),
-      ClaimedSupply.get_or(sale, 0),
-      RefundedPayment.get_or(sale, 0)
-    );
-  }
-
-  view fn factory_binding_state() -> (int, int) {
-    return (
-      FactoryContractBound,
-      SeedExecutorBound
-    );
-  }
-
-  view fn factory_owner_state() -> (int, AccountId) {
-    return (
-      FactoryOwnerSet,
-      FactoryOwner
-    );
-  }
-
-  view fn factory_binding_details() -> (AccountId, bytes, int, int) {
-    return (
-      FactoryContractId,
-      SeedExecutorContract,
-      FactoryContractBound,
-      SeedExecutorBound
-    );
-  }
-
-  view fn activation_state(sale: Name) -> (int, int) {
-    assert_sale_exists(sale);
-    return (
-      SeedExecutorBound,
-      SeedActivationValue.get_or(sale, 0)
-    );
-  }
-
-  view fn mirror_allocation(allocation: Name) -> (int, int, int, int, int) {
-    if AllocationSale.contains(allocation) {
-      return (
-        1,
-        AllocationPaymentAmount[allocation],
-        AllocationSaleAmount[allocation],
-        AllocationClaimed[allocation],
-        AllocationRefunded[allocation]
-      );
-    }
-    return (0, 0, 0, 0, 0);
-  }
-
-  kotoage fn init_sale(sale: Name,
-                       sale_asset: AssetDefinitionId,
-                       payment_asset: AssetDefinitionId,
-                       treasury: AccountId,
-                       unit_price: int,
-                       soft_cap: int,
-                       hard_cap: int,
-                       claim_start_slot: int,
-                       claim_end_slot: int) {
-    ensure_factory_admin();
-    assert(!SaleAsset.contains(sale), "sale exists");
-    validate_sale_config(unit_price, soft_cap, hard_cap);
-    validate_vesting_config(claim_start_slot, claim_end_slot);
-    SaleOwner[sale] = authority();
-    if NextSaleIndex <= 0 {
-      NextSaleIndex = 1;
-    }
-    let sale_index = NextSaleIndex;
-    NextSaleIndex = sale_index + 1;
-    SaleByIndex[sale_index] = sale;
+    require(NextSaleIndex >= 1 && NextSaleIndex <= 64, SaleFactoryError::SaleLimit);
+    SaleByIndex[NextSaleIndex] = sale;
+    NextSaleIndex = NextSaleIndex + 1;
+    SaleOwner[sale] = context::authority();
     SaleAsset[sale] = sale_asset;
     PaymentAsset[sale] = payment_asset;
     Treasury[sale] = treasury;
@@ -324,264 +335,316 @@ seiyaku SaleFactory {
     HardCap[sale] = hard_cap;
     ClaimStartSlot[sale] = claim_start_slot;
     ClaimEndSlot[sale] = claim_end_slot;
-    Raised[sale] = 0;
-    Sold[sale] = 0;
+    Raised[sale] = zero_quantity();
+    Sold[sale] = zero_quantity();
     Closed[sale] = 0;
     Successful[sale] = 0;
     Seeded[sale] = 0;
-    SeedInventory[sale] = 0;
-    ClaimInventory[sale] = 0;
-    ClaimedSupply[sale] = 0;
-    RefundedPayment[sale] = 0;
-    SeedPaymentUsed[sale] = 0;
-    SeedSaleUsed[sale] = 0;
-    SeedActivationValue[sale] = 0;
+    SeedInventory[sale] = zero_quantity();
+    ClaimInventory[sale] = zero_quantity();
+    ClaimedSupply[sale] = zero_quantity();
+    RefundedPayment[sale] = zero_quantity();
+    TreasuryPaymentReleased[sale] = zero_quantity();
+    SeedPaymentUsed[sale] = zero_quantity();
+    SeedSaleUsed[sale] = zero_quantity();
+    SeedActivationShares[sale] = zero_quantity();
   }
 
-  kotoage fn bind_contract(contract_id: AccountId) {
-    ensure_factory_admin();
-    FactoryContractId = contract_id;
-    FactoryContractBound = 1;
-  }
-
-  kotoage fn bind_executor(executor_contract: bytes) {
-    ensure_factory_admin();
-    SeedExecutorContract = executor_contract;
-    SeedExecutorBound = 1;
-  }
-
-  kotoage fn contribute(sale: Name, payment_amount: int) -> int permission(AssetOps) {
-    assert_sale_exists(sale);
-    assert(payment_amount > 0, "invalid payment");
-    assert(false, "use contribute_recorded");
-    return 0;
-  }
-
-  kotoage fn contribute_recorded(sale: Name,
-                                 allocation: Name,
-                                 payment_amount: int) -> int permission(AssetOps) {
-    let buyer = authority();
-    assert_sale_exists(sale);
-    assert(!AllocationSale.contains(allocation), "allocation exists");
-    assert(payment_amount > 0, "invalid payment");
-    assert(Closed.get_or(sale, 0) == 0, "sale closed");
-    let raised = Raised.get_or(sale, 0);
-    let next = raised + payment_amount;
-    assert(next <= HardCap.get_or(sale, 0), "hard cap");
-    let sale_amount = payment_amount / UnitPrice.get_or(sale, 1);
-    assert(sale_amount > 0, "zero sale output");
-
-    move_asset_if_needed(buyer, Treasury[sale], PaymentAsset[sale], payment_amount);
+  kotoage fn contribute_recorded(
+    Name sale,
+    Name allocation,
+    quantity payment_amount
+  ) -> quantity authorize("AssetOps") {
+    require(FactoryWithdrawalOnly == 0, SaleFactoryError::WithdrawalOnly);
+    assert_sale_exists(sale: sale);
+    require(!AllocationSale.contains(allocation), SaleFactoryError::AllocationExists);
+    require(Closed.get(sale).unwrap_or(0) == 0, SaleFactoryError::SaleClosed);
+    require(context::block_height() < ClaimStartSlot.get(sale).unwrap_or(0), SaleFactoryError::SaleClosed);
+    require(payment_amount > zero_quantity(), SaleFactoryError::InvalidAmount);
+    let next_raised = Raised.get(sale).unwrap_or(zero_quantity()) + payment_amount;
+    require(next_raised <= HardCap.get(sale).unwrap_or(zero_quantity()), SaleFactoryError::HardCapExceeded);
+    let sale_amount = payment_amount / UnitPrice.get(sale).unwrap_or(zero_decimal());
+    require(sale_amount > zero_quantity(), SaleFactoryError::ZeroSaleOutput);
+    move_asset_if_needed(
+      source: context::authority(),
+      destination: FactoryAccount,
+      asset: PaymentAsset.get(sale).unwrap_or(SaleAsset.get(sale).unwrap_or(
+        fallback_asset()
+      )),
+      amount: payment_amount
+    );
     AllocationSale[allocation] = sale;
-    AllocationBuyer[allocation] = buyer;
+    AllocationBuyer[allocation] = context::authority();
     AllocationPaymentAmount[allocation] = payment_amount;
     AllocationSaleAmount[allocation] = sale_amount;
-    AllocationClaimed[allocation] = 0;
+    AllocationClaimed[allocation] = zero_quantity();
     AllocationRefunded[allocation] = 0;
-    Raised[sale] = next;
-    Sold[sale] = Sold.get_or(sale, 0) + sale_amount;
+    Raised[sale] = next_raised;
+    Sold[sale] = Sold.get(sale).unwrap_or(zero_quantity()) + sale_amount;
     return sale_amount;
   }
 
-  kotoage fn close_sale(sale: Name) {
-    assert_sale_owner(sale);
-    close_sale_impl(sale);
+  kotoage fn close_sale(Name sale) authorize("Entry") {
+    assert_sale_owner(sale: sale);
+    close_sale_impl(sale: sale);
   }
 
-  kotoage fn deposit_seed_inventory(sale: Name, amount: int) -> int permission(AssetOps) {
-    assert_sale_exists(sale);
-    assert(amount > 0, "invalid amount");
-    assert(Seeded.get_or(sale, 0) == 0, "sale seeded");
-    move_asset_if_needed(authority(), Treasury[sale], SaleAsset[sale], amount);
-    SeedInventory[sale] = SeedInventory.get_or(sale, 0) + amount;
+  kotoage fn deposit_seed_inventory(Name sale, quantity amount) -> quantity authorize("AssetOps") {
+    assert_sale_owner(sale: sale);
+    require(Seeded.get(sale).unwrap_or(0) == 0, SaleFactoryError::SaleSeeded);
+    require(amount > zero_quantity(), SaleFactoryError::InvalidAmount);
+    move_asset_if_needed(
+      source: context::authority(),
+      destination: FactoryAccount,
+      asset: SaleAsset.get(sale).unwrap_or(PaymentAsset.get(sale).unwrap_or(
+        fallback_asset()
+      )),
+      amount: amount
+    );
+    SeedInventory[sale] = SeedInventory.get(sale).unwrap_or(zero_quantity()) + amount;
     return amount;
   }
 
-  kotoage fn deposit_claim_inventory(sale: Name, amount: int) -> int permission(AssetOps) {
-    assert_sale_exists(sale);
-    assert(amount > 0, "invalid amount");
-    move_asset_if_needed(authority(), Treasury[sale], SaleAsset[sale], amount);
-    ClaimInventory[sale] = ClaimInventory.get_or(sale, 0) + amount;
+  kotoage fn deposit_claim_inventory(Name sale, quantity amount) -> quantity authorize("AssetOps") {
+    assert_sale_owner(sale: sale);
+    require(amount > zero_quantity(), SaleFactoryError::InvalidAmount);
+    move_asset_if_needed(
+      source: context::authority(),
+      destination: FactoryAccount,
+      asset: SaleAsset.get(sale).unwrap_or(PaymentAsset.get(sale).unwrap_or(
+        fallback_asset()
+      )),
+      amount: amount
+    );
+    ClaimInventory[sale] = ClaimInventory.get(sale).unwrap_or(zero_quantity()) + amount;
     return amount;
   }
 
-  kotoage fn register_seed_liquidity(sale: Name,
-                                     position_id: Name,
-                                     vault_account: AccountId,
-                                     bin_id: int,
-                                     payment_amount: int,
-                                     sale_amount: int) {
-    assert_sale_owner(sale);
-    assert_sale_exists(sale);
-    assert(Seeded.get_or(sale, 0) == 0, "sale seeded");
-    assert(payment_amount > 0, "invalid payment amount");
-    assert(sale_amount > 0, "invalid sale amount");
+  kotoage fn register_seed_liquidity(
+    Name sale,
+    Name position_id,
+    int bin_id,
+    quantity payment_amount,
+    quantity sale_amount
+  ) authorize("Entry") {
+    assert_sale_owner(sale: sale);
+    require(Seeded.get(sale).unwrap_or(0) == 0, SaleFactoryError::SaleSeeded);
+    require(payment_amount > zero_quantity() && sale_amount > zero_quantity(), SaleFactoryError::InvalidAmount);
     SeedPositionId[sale] = position_id;
-    SeedVault[sale] = vault_account;
     SeedBinId[sale] = bin_id;
     SeedPaymentAmount[sale] = payment_amount;
     SeedSaleAmount[sale] = sale_amount;
   }
 
-  fn activate_seed_with_executor(sale: Name) -> int {
-    assert_sale_exists(sale);
-    assert_sale_owner(sale);
-    assert_factory_contract_bound();
-    assert_executor_bound();
-    assert(Closed.get_or(sale, 0) == 1, "sale open");
-    assert(Successful.get_or(sale, 0) == 1, "sale failed");
-    assert(Seeded.get_or(sale, 0) == 0, "sale seeded");
-    assert(SeedPositionId.contains(sale), "seed plan missing");
-    let payment_amount = SeedPaymentAmount.get_or(sale, 0);
-    let sale_amount = SeedSaleAmount.get_or(sale, 0);
-    assert(payment_amount > 0, "seed payment missing");
-    assert(sale_amount > 0, "seed sale missing");
-    assert(available_payment_for_seed(sale) >= payment_amount, "insufficient payment proceeds");
-    assert(SeedInventory.get_or(sale, 0) >= sale_amount, "insufficient seed inventory");
-    move_asset_if_needed(Treasury[sale], FactoryContractId, PaymentAsset[sale], payment_amount);
-    move_asset_if_needed(Treasury[sale], FactoryContractId, SaleAsset[sale], sale_amount);
-    let payload = json_object();
-    let payload = json_set_account_id(payload, name("funding_account"), FactoryContractId);
-    let payload = json_set_int(payload, name("bin_id"), SeedBinId.get_or(sale, 0));
-    let payload = json_set_int(payload, name("base_amount"), payment_amount);
-    let payload = json_set_int(payload, name("quote_amount"), sale_amount);
-    let seeded_value = decode_int(call_contract(SeedExecutorContract, "seed_liquidity", payload));
-    SeedInventory[sale] = SeedInventory.get_or(sale, 0) - sale_amount;
-    SeedPaymentUsed[sale] = SeedPaymentUsed.get_or(sale, 0) + payment_amount;
-    SeedSaleUsed[sale] = SeedSaleUsed.get_or(sale, 0) + sale_amount;
-    Seeded[sale] = 1;
-    SeedActivationValue[sale] = seeded_value;
-    return seeded_value;
+  kotoage fn seed_liquidity(Name sale) -> quantity authorize("AssetOps") {
+    return activate_seed(sale: sale);
   }
 
-  fn activate_seed_if_contract_custodied(sale: Name) -> int {
-    assert_sale_exists(sale);
-    assert_factory_contract_bound();
-    assert_executor_bound();
-    assert(Closed.get_or(sale, 0) == 1, "sale open");
-    assert(Successful.get_or(sale, 0) == 1, "sale failed");
-    assert(Seeded.get_or(sale, 0) == 0, "sale seeded");
-    assert(SeedPositionId.contains(sale), "seed plan missing");
-    assert(Treasury[sale] == FactoryContractId, "seed activation pending");
-    let payment_amount = SeedPaymentAmount.get_or(sale, 0);
-    let sale_amount = SeedSaleAmount.get_or(sale, 0);
-    assert(payment_amount > 0, "seed payment missing");
-    assert(sale_amount > 0, "seed sale missing");
-    assert(available_payment_for_seed(sale) >= payment_amount, "insufficient payment proceeds");
-    assert(SeedInventory.get_or(sale, 0) >= sale_amount, "insufficient seed inventory");
-    let payload = json_object();
-    let payload = json_set_account_id(payload, name("funding_account"), FactoryContractId);
-    let payload = json_set_int(payload, name("bin_id"), SeedBinId.get_or(sale, 0));
-    let payload = json_set_int(payload, name("base_amount"), payment_amount);
-    let payload = json_set_int(payload, name("quote_amount"), sale_amount);
-    let seeded_value = decode_int(call_contract(SeedExecutorContract, "seed_liquidity", payload));
-    SeedInventory[sale] = SeedInventory.get_or(sale, 0) - sale_amount;
-    SeedPaymentUsed[sale] = SeedPaymentUsed.get_or(sale, 0) + payment_amount;
-    SeedSaleUsed[sale] = SeedSaleUsed.get_or(sale, 0) + sale_amount;
-    Seeded[sale] = 1;
-    SeedActivationValue[sale] = seeded_value;
-    return seeded_value;
+  kotoage fn finalize_sale_activation(
+    Name sale,
+    quantity claim_inventory_amount
+  ) -> quantity authorize("AssetOps") {
+    assert_sale_owner(sale: sale);
+    if Closed.get(sale).unwrap_or(0) == 0 {
+      close_sale_impl(sale: sale);
+    }
+    if claim_inventory_amount > zero_quantity() {
+      move_asset_if_needed(
+        source: context::authority(),
+        destination: FactoryAccount,
+        asset: SaleAsset.get(sale).unwrap_or(PaymentAsset.get(sale).unwrap_or(
+          fallback_asset()
+        )),
+        amount: claim_inventory_amount
+      );
+      ClaimInventory[sale] =
+        ClaimInventory.get(sale).unwrap_or(zero_quantity()) + claim_inventory_amount;
+    }
+    return activate_seed(sale: sale);
   }
 
-  kotoage fn native_lifecycle_tick() permission(AssetOps) {
-    if LaunchLifecycleEnabled == 0 {
+  kotoage fn claim_allocation(Name allocation) -> quantity authorize("AssetOps") {
+    assert_allocation_exists(allocation: allocation);
+    require(
+      AllocationBuyer.get(allocation).unwrap_or(FactoryOwner) == context::authority(),
+      SaleFactoryError::BuyerMismatch
+    );
+    require(AllocationRefunded.get(allocation).unwrap_or(0) == 0, SaleFactoryError::AllocationRefunded);
+    let sale = AllocationSale.get(allocation).unwrap_or(missing_name());
+    require(Seeded.get(sale).unwrap_or(0) == 1, SaleFactoryError::SaleNotSeeded);
+    let vested = vested_amount(allocation: allocation, current_slot: context::block_height());
+    let claimed = AllocationClaimed.get(allocation).unwrap_or(zero_quantity());
+    require(vested > claimed, SaleFactoryError::NothingClaimable);
+    let amount = vested - claimed;
+    require(
+      ClaimInventory.get(sale).unwrap_or(zero_quantity()) >= amount,
+      SaleFactoryError::InsufficientClaimInventory
+    );
+    AllocationClaimed[allocation] = vested;
+    ClaimInventory[sale] = ClaimInventory.get(sale).unwrap_or(zero_quantity()) - amount;
+    ClaimedSupply[sale] = ClaimedSupply.get(sale).unwrap_or(zero_quantity()) + amount;
+    move_asset_if_needed(
+      source: FactoryAccount,
+      destination: context::authority(),
+      asset: SaleAsset.get(sale).unwrap_or(PaymentAsset.get(sale).unwrap_or(
+        fallback_asset()
+      )),
+      amount: amount
+    );
+    return amount;
+  }
+
+  kotoage fn refund_allocation(Name allocation) -> quantity authorize("AssetOps") {
+    assert_allocation_exists(allocation: allocation);
+    require(
+      AllocationBuyer.get(allocation).unwrap_or(FactoryOwner) == context::authority(),
+      SaleFactoryError::BuyerMismatch
+    );
+    let sale = AllocationSale.get(allocation).unwrap_or(missing_name());
+    require(Closed.get(sale).unwrap_or(0) == 1, SaleFactoryError::SaleOpen);
+    require(Successful.get(sale).unwrap_or(0) == 0, SaleFactoryError::SaleSuccessful);
+    require(AllocationRefunded.get(allocation).unwrap_or(0) == 0, SaleFactoryError::AllocationRefunded);
+    require(AllocationClaimed.get(allocation).unwrap_or(zero_quantity()) == zero_quantity(), SaleFactoryError::NothingRefundable);
+    let amount = AllocationPaymentAmount.get(allocation).unwrap_or(zero_quantity());
+    require(amount > zero_quantity(), SaleFactoryError::NothingRefundable);
+    AllocationRefunded[allocation] = 1;
+    RefundedPayment[sale] = RefundedPayment.get(sale).unwrap_or(zero_quantity()) + amount;
+    move_asset_if_needed(
+      source: FactoryAccount,
+      destination: context::authority(),
+      asset: PaymentAsset.get(sale).unwrap_or(SaleAsset.get(sale).unwrap_or(
+        fallback_asset()
+      )),
+      amount: amount
+    );
+    return amount;
+  }
+
+  kotoage fn native_lifecycle_tick() authorize("AssetOps") {
+    if FactoryInitialized == 0 || LaunchLifecycleEnabled == 0 {
       return;
     }
-    let current_slot = block_height();
+    let current_slot = context::block_height();
     if LaunchLifecycleNextSlot > 0 && current_slot < LaunchLifecycleNextSlot {
       return;
     }
-    if NextSaleIndex <= 0 {
-      NextSaleIndex = 1;
-    }
-    let processed = 0;
-    let index = LaunchLifecycleCursor;
-    if index <= 0 || index >= NextSaleIndex {
-      index = 1;
-    }
-    while processed < LaunchLifecycleMaxItems && index < NextSaleIndex {
-      let sale = SaleByIndex.get_or(index, name!("missing"));
-      if SaleAsset.contains(sale) && Closed.get_or(sale, 0) == 0 &&
-        current_slot >= ClaimStartSlot.get_or(sale, 0) {
-        close_sale_impl(sale);
-      }
-      if SaleAsset.contains(sale) && Closed.get_or(sale, 0) == 1 &&
-        Successful.get_or(sale, 0) == 1 &&
-        SeedPositionId.contains(sale) &&
-        Seeded.get_or(sale, 0) == 0 {
-        if Treasury[sale] == FactoryContractId {
-          activate_seed_if_contract_custodied(sale);
-        } else {
-          SeedActivationValue[sale] = -1;
+    var processed = 0;
+    var cursor = LaunchLifecycleCursor;
+    for _step in range(64) {
+      if processed < LaunchLifecycleMaxItems && NextSaleIndex > 1 {
+        if cursor < 1 || cursor >= NextSaleIndex {
+          cursor = 1;
         }
+        require(SaleByIndex.contains(cursor), SaleFactoryError::IndexCorrupt);
+        let sale = SaleByIndex.get(cursor).unwrap_or(missing_name());
+        if Closed.get(sale).unwrap_or(0) == 0 &&
+          current_slot >= ClaimStartSlot.get(sale).unwrap_or(0) {
+          close_sale_impl(sale: sale);
+        }
+        cursor = cursor + 1;
+        processed = processed + 1;
       }
-      processed = processed + 1;
-      index = index + 1;
     }
-    if index >= NextSaleIndex {
-      index = 1;
+    if cursor >= NextSaleIndex {
+      cursor = 1;
     }
-    LaunchLifecycleCursor = index;
+    LaunchLifecycleCursor = cursor;
     LaunchLifecycleLastSlot = current_slot;
     LaunchLifecycleLastProcessed = processed;
     LaunchLifecycleNextSlot = current_slot + LaunchLifecycleCadenceSlots;
   }
 
-  kotoage fn seed_liquidity(sale: Name) -> int permission(AssetOps) {
-    return activate_seed_with_executor(sale);
+  view fn sale_config(Name sale) -> (
+    AssetDefinitionId,
+    AssetDefinitionId,
+    AccountId,
+    decimal,
+    quantity,
+    quantity,
+    int,
+    int
+  ) {
+    assert_sale_exists(sale: sale);
+    return (
+      SaleAsset.get(sale).unwrap_or(PaymentAsset.get(sale).unwrap_or(
+        fallback_asset()
+      )),
+      PaymentAsset.get(sale).unwrap_or(SaleAsset.get(sale).unwrap_or(
+        fallback_asset()
+      )),
+      Treasury.get(sale).unwrap_or(FactoryOwner),
+      UnitPrice.get(sale).unwrap_or(zero_decimal()),
+      SoftCap.get(sale).unwrap_or(zero_quantity()),
+      HardCap.get(sale).unwrap_or(zero_quantity()),
+      ClaimStartSlot.get(sale).unwrap_or(0),
+      ClaimEndSlot.get(sale).unwrap_or(0)
+    );
   }
 
-  kotoage fn finalize_sale_activation(sale: Name,
-                                      claim_inventory_amount: int) -> int permission(AssetOps) {
-    assert_sale_owner(sale);
-    assert(claim_inventory_amount >= 0, "invalid claim inventory amount");
-    if Closed.get_or(sale, 0) == 0 {
-      close_sale_impl(sale);
-    }
-    if claim_inventory_amount > 0 {
-      move_asset_if_needed(authority(), Treasury[sale], SaleAsset[sale], claim_inventory_amount);
-      ClaimInventory[sale] = ClaimInventory.get_or(sale, 0) + claim_inventory_amount;
-    }
-    if SeedPositionId.contains(sale) && Seeded.get_or(sale, 0) == 0 {
-      return activate_seed_with_executor(sale);
-    }
-    return SeedActivationValue.get_or(sale, 0);
+  view fn mirror_sale(Name sale) -> (
+    int,
+    quantity,
+    quantity,
+    int,
+    int,
+    int,
+    quantity,
+    quantity,
+    quantity,
+    quantity,
+    quantity,
+    quantity,
+    quantity
+  ) {
+    let exists = SaleAsset.contains(sale) ? 1 : 0;
+    return (
+      exists,
+      Raised.get(sale).unwrap_or(zero_quantity()),
+      Sold.get(sale).unwrap_or(zero_quantity()),
+      Closed.get(sale).unwrap_or(0),
+      Successful.get(sale).unwrap_or(0),
+      Seeded.get(sale).unwrap_or(0),
+      SeedInventory.get(sale).unwrap_or(zero_quantity()),
+      ClaimInventory.get(sale).unwrap_or(zero_quantity()),
+      ClaimedSupply.get(sale).unwrap_or(zero_quantity()),
+      RefundedPayment.get(sale).unwrap_or(zero_quantity()),
+      SeedPaymentUsed.get(sale).unwrap_or(zero_quantity()),
+      SeedSaleUsed.get(sale).unwrap_or(zero_quantity()),
+      SeedActivationShares.get(sale).unwrap_or(zero_quantity())
+    );
   }
 
-  kotoage fn claim_allocation(allocation: Name) -> int permission(AssetOps) {
-    let buyer = authority();
-    assert_allocation_exists(allocation);
-    let sale = AllocationSale[allocation];
-    assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
-    let amount = claim_amount_for(allocation, sale);
-    let claim_inventory = ClaimInventory.get_or(sale, 0);
-    assert(claim_inventory >= amount, "insufficient claim inventory");
-    move_asset_if_needed(Treasury[sale], buyer, SaleAsset[sale], amount);
-    AllocationClaimed[allocation] = AllocationClaimed[allocation] + amount;
-    ClaimInventory[sale] = claim_inventory - amount;
-    ClaimedSupply[sale] = ClaimedSupply.get_or(sale, 0) + amount;
-    return amount;
+  view fn mirror_sale_accounting(Name sale) -> (quantity, quantity, quantity, quantity) {
+    assert_sale_exists(sale: sale);
+    return (
+      Raised.get(sale).unwrap_or(zero_quantity()),
+      TreasuryPaymentReleased.get(sale).unwrap_or(zero_quantity()),
+      RefundedPayment.get(sale).unwrap_or(zero_quantity()),
+      SeedPaymentUsed.get(sale).unwrap_or(zero_quantity())
+    );
   }
 
-  kotoage fn refund_allocation(allocation: Name) -> int permission(AssetOps) {
-    let buyer = authority();
-    assert_allocation_exists(allocation);
-    let sale = AllocationSale[allocation];
-    assert(AllocationBuyer[allocation] == buyer, "buyer mismatch");
-    assert(Closed.get_or(sale, 0) == 1, "sale open");
-    assert(Successful.get_or(sale, 0) == 0, "sale successful");
-    assert(AllocationClaimed[allocation] == 0, "allocation claimed");
-    assert(AllocationRefunded[allocation] == 0, "allocation refunded");
-    let amount = AllocationPaymentAmount[allocation];
-    assert(amount > 0, "nothing refundable");
-    move_asset_if_needed(Treasury[sale], buyer, PaymentAsset[sale], amount);
-    AllocationRefunded[allocation] = 1;
-    RefundedPayment[sale] = RefundedPayment.get_or(sale, 0) + amount;
-    return amount;
+  view fn mirror_allocation(Name allocation) -> (int, quantity, quantity, quantity, int) {
+    let exists = AllocationSale.contains(allocation) ? 1 : 0;
+    return (
+      exists,
+      AllocationPaymentAmount.get(allocation).unwrap_or(zero_quantity()),
+      AllocationSaleAmount.get(allocation).unwrap_or(zero_quantity()),
+      AllocationClaimed.get(allocation).unwrap_or(zero_quantity()),
+      AllocationRefunded.get(allocation).unwrap_or(0)
+    );
   }
 
-  kotoage fn mark_seeded(sale: Name) permission(AssetOps) {
-    activate_seed_with_executor(sale);
+  view fn factory_binding_details() -> (AccountId, bytes, int, int) {
+    return (FactoryAccount, SeedExecutorContract, 1, 1);
+  }
+
+  view fn activation_state(Name sale) -> (int, quantity) {
+    assert_sale_exists(sale: sale);
+    return (
+      Seeded.get(sale).unwrap_or(0),
+      SeedActivationShares.get(sale).unwrap_or(zero_quantity())
+    );
   }
 
   view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {

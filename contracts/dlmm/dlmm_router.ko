@@ -1,60 +1,121 @@
-// Router quote helpers for xor#universal anchored paths.
+// Production router for one xor#universal-anchored DLMM pool.
+//
+// The router is initialized once with its immutable pool address and contract
+// subject account. It stages user input in that subject account and performs a
+// schema-bound nested call; a rejected pool call rolls the entire transaction
+// back, including the staging transfer and history write.
 
 seiyaku DlmmRouter {
+  error enum DlmmRouterError {
+    IdenticalAssets = 1,
+    InvalidFeePips = 2,
+    InvalidAmount = 3,
+    InvalidMinOut = 4,
+    InvalidDirection = 5,
+    InvalidBinStep = 6,
+    InvalidBinId = 7,
+    InvalidReserve = 8,
+    RouterAccountIsOwner = 9,
+    RouterOwnerMismatch = 10,
+    RouterGuardianMismatch = 11,
+    RouterPaused = 12,
+    InvalidPaused = 13,
+    SwapHistoryMissing = 14,
+    UnexpectedDefaultFee = 15,
+  }
+
   state int RouterInitialized;
   state AccountId RouterOwner;
+  state AccountId RouterGuardian;
+  state int RouterPaused;
   state AssetDefinitionId BaseAsset;
   state AssetDefinitionId QuoteAsset;
   state int DefaultFeePips;
-  state AccountId RouterContractId;
-  state int RouterContractBound;
-  state bytes BoundPoolContract;
-  state int PoolBound;
+  state AccountId RouterContractAccount;
+  state bytes PoolContract;
+
   state int SwapHistoryHead;
-  state SwapHistoryTrader: Map<int, AccountId>;
-  state SwapHistoryInputIsBase: Map<int, int>;
-  state SwapHistoryAmountIn: Map<int, int>;
-  state SwapHistoryAmountOut: Map<int, int>;
-  state SwapHistoryMinOut: Map<int, int>;
+  state StateMap<int, AccountId> SwapHistoryTrader;
+  state StateMap<int, int> SwapHistoryInputIsBase;
+  state StateMap<int, quantity> SwapHistoryAmountIn;
+  state StateMap<int, quantity> SwapHistoryAmountOut;
+  state StateMap<int, quantity> SwapHistoryMinOut;
+  state StateMap<int, int> SwapHistorySlot;
 
-  fn ppm_scale() -> int {
-    return 1_000_000;
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
   }
 
-  fn assert_valid_fee(fee_pips: int) {
-    assert(fee_pips >= 0, "negative fee_pips");
-    assert(fee_pips < ppm_scale(), "fee_pips too large");
+  fn universal_dataspace() -> DataSpaceId {
+    let dataspace = DataSpaceId::parse("0");
+    return dataspace;
   }
 
-  fn assert_valid_bin_step(bin_step: int) {
-    assert(bin_step > 0, "invalid bin_step");
-    assert(bin_step <= 100_000, "bin_step too large");
+  fn assert_owner() {
+    require(RouterOwner == context::authority(), DlmmRouterError::RouterOwnerMismatch);
   }
 
-  fn abs_int(value: int) -> int {
+  fn assert_owner_or_guardian() {
+    if RouterOwner == context::authority() {
+      return;
+    }
+    require(
+      RouterGuardian == context::authority(),
+      DlmmRouterError::RouterGuardianMismatch
+    );
+  }
+
+  fn assert_not_paused() {
+    require(RouterPaused == 0, DlmmRouterError::RouterPaused);
+  }
+
+  fn assert_valid_fee(int fee_pips) {
+    require(fee_pips >= 0, DlmmRouterError::InvalidFeePips);
+    require(fee_pips < 1_000_000, DlmmRouterError::InvalidFeePips);
+  }
+
+  fn assert_valid_bin(int bin_id, int bin_step) {
+    require(bin_step > 0, DlmmRouterError::InvalidBinStep);
+    require(bin_step <= 100_000, DlmmRouterError::InvalidBinStep);
+    require(bin_id >= -200_000, DlmmRouterError::InvalidBinId);
+    require(bin_id <= 200_000, DlmmRouterError::InvalidBinId);
+  }
+
+  fn abs_int(int value) -> int {
     if value < 0 {
       return 0 - value;
     }
     return value;
   }
 
-  fn assert_owner() {
-    assert(RouterOwner == authority(), "router owner mismatch");
+  fn fee_multiplier(int fee_pips) -> decimal {
+    assert_valid_fee(fee_pips);
+    let decimal scale = 1_000_000;
+    return (scale - decimal::from_int(value: fee_pips)) / scale;
   }
 
-  fn assert_pool_bound() {
-    assert(PoolBound == 1, "pool not bound");
+  fn bin_price(int bin_id, int bin_step) -> decimal {
+    assert_valid_bin(bin_id: bin_id, bin_step: bin_step);
+    let decimal scale = 1_000_000;
+    let offset = decimal::from_int(value: abs_int(bin_id) * bin_step);
+    if bin_id >= 0 {
+      return (scale + offset) / scale;
+    }
+    return scale.div_round(
+      divisor: scale + offset,
+      scale: 28,
+      mode: Rounding::floor
+    );
   }
 
-  fn assert_contract_bound() {
-    assert(RouterContractBound == 1, "router contract unbound");
-  }
-
-  fn record_swap_history(trader: AccountId,
-                         input_is_base: int,
-                         amount_in: int,
-                         amount_out: int,
-                         min_out: int) {
+  fn record_swap_history(
+    AccountId trader,
+    int input_is_base,
+    quantity amount_in,
+    quantity amount_out,
+    quantity min_out
+  ) {
     let record_id = SwapHistoryHead + 1;
     SwapHistoryHead = record_id;
     SwapHistoryTrader[record_id] = trader;
@@ -62,224 +123,223 @@ seiyaku DlmmRouter {
     SwapHistoryAmountIn[record_id] = amount_in;
     SwapHistoryAmountOut[record_id] = amount_out;
     SwapHistoryMinOut[record_id] = min_out;
+    SwapHistorySlot[record_id] = context::block_height();
   }
 
-  kotoage fn main() -> int {
-    if RouterInitialized == 1 {
-      return DefaultFeePips;
-    }
-    return 0;
-  }
-
-  kotoage fn init_router(base_asset: AssetDefinitionId, default_fee_pips: int) {
-    assert(RouterInitialized == 0, "router initialized");
+  hajimari(
+    AssetDefinitionId base_asset,
+    AssetDefinitionId quote_asset,
+    int default_fee_pips,
+    AccountId router_contract_account,
+    bytes pool_contract,
+    AccountId guardian
+  ) {
+    require(base_asset != quote_asset, DlmmRouterError::IdenticalAssets);
     assert_valid_fee(default_fee_pips);
+    require(
+      router_contract_account != context::authority(),
+      DlmmRouterError::RouterAccountIsOwner
+    );
+
     RouterInitialized = 1;
-    RouterOwner = authority();
+    RouterOwner = context::authority();
+    RouterGuardian = guardian;
+    RouterPaused = 1;
     BaseAsset = base_asset;
-    QuoteAsset = base_asset;
-    DefaultFeePips = default_fee_pips;
-    RouterContractId = authority();
-    RouterContractBound = 0;
-    BoundPoolContract = blob("");
-    PoolBound = 0;
-    SwapHistoryHead = 0;
-    info("dlmm_router_initialized");
-  }
-
-  kotoage fn bind_contract(contract_id: AccountId) {
-    assert(RouterInitialized == 1, "router not initialized");
-    assert_owner();
-    RouterContractId = contract_id;
-    RouterContractBound = 1;
-  }
-
-  kotoage fn bind_pool(pool_contract: bytes, quote_asset: AssetDefinitionId) {
-    assert(RouterInitialized == 1, "router not initialized");
-    assert_owner();
-    BoundPoolContract = pool_contract;
     QuoteAsset = quote_asset;
-    PoolBound = 1;
+    DefaultFeePips = default_fee_pips;
+    RouterContractAccount = router_contract_account;
+    PoolContract = pool_contract;
+    SwapHistoryHead = 0;
   }
 
-  view fn assert_router_config(default_fee_pips: int) -> int {
-    assert(RouterInitialized == 1, "router not initialized");
-    assert(DefaultFeePips == default_fee_pips, "unexpected default fee");
+  view fn main() -> int {
+    return RouterInitialized;
+  }
+
+  kotoage fn set_paused(int paused) authorize("Admin") {
+    require(paused == 0 || paused == 1, DlmmRouterError::InvalidPaused);
+    if paused == 1 {
+      assert_owner_or_guardian();
+    } else {
+      assert_owner();
+    }
+    RouterPaused = paused;
+  }
+
+  view fn assert_router_config(int default_fee_pips) -> int {
+    require(DefaultFeePips == default_fee_pips, DlmmRouterError::UnexpectedDefaultFee);
     return DefaultFeePips;
   }
 
-  view fn router_config() -> (AssetDefinitionId, int) {
-    assert(RouterInitialized == 1, "router not initialized");
-    return (BaseAsset, DefaultFeePips);
+  view fn router_config() -> (AssetDefinitionId, AssetDefinitionId, int, AccountId, bytes, int) {
+    return (
+      BaseAsset,
+      QuoteAsset,
+      DefaultFeePips,
+      RouterContractAccount,
+      PoolContract,
+      RouterPaused
+    );
   }
 
   view fn router_assets() -> (AssetDefinitionId, AssetDefinitionId) {
-    assert(RouterInitialized == 1, "router not initialized");
     return (BaseAsset, QuoteAsset);
   }
 
-  view fn mirror_state() -> (int, int) {
-    assert(RouterInitialized == 1, "router not initialized");
-    return (RouterInitialized, DefaultFeePips);
-  }
-
-  view fn swap_history_head() -> int {
-    assert(RouterInitialized == 1, "router not initialized");
-    return SwapHistoryHead;
-  }
-
-  view fn mirror_swap_history(record_id: int) -> (AccountId, int, int, int, int) {
-    assert(RouterInitialized == 1, "router not initialized");
-    assert(SwapHistoryTrader.contains(record_id), "swap history missing");
-    return (
-      SwapHistoryTrader[record_id],
-      SwapHistoryInputIsBase.get_or(record_id, 0),
-      SwapHistoryAmountIn.get_or(record_id, 0),
-      SwapHistoryAmountOut.get_or(record_id, 0),
-      SwapHistoryMinOut.get_or(record_id, 0)
-    );
+  view fn mirror_state() -> (int, int, int) {
+    return (RouterInitialized, DefaultFeePips, RouterPaused);
   }
 
   view fn execution_binding() -> int {
-    assert(RouterInitialized == 1, "router not initialized");
-    return PoolBound;
+    return 1;
   }
 
   view fn contract_binding() -> int {
-    assert(RouterInitialized == 1, "router not initialized");
-    return RouterContractBound;
+    return 1;
   }
 
-  view fn quote_direct(reserve_in: int,
-                       reserve_out: int,
-                       amount_in: int,
-                       fee_pips: int) -> int {
-    return quote_direct_impl(reserve_in, reserve_out, amount_in, fee_pips);
+  view fn swap_history_head() -> int {
+    return SwapHistoryHead;
   }
 
-  fn quote_direct_impl(reserve_in: int,
-                       reserve_out: int,
-                       amount_in: int,
-                       fee_pips: int) -> int {
-    let effective = (amount_in * (ppm_scale() - fee_pips)) / ppm_scale();
-    if effective <= 0 {
-      return 0;
-    }
-    return (reserve_out * effective) / (reserve_in + effective);
-  }
-
-  fn bin_price_ppm(bin_id: int, bin_step: int) -> int {
-    let scale = ppm_scale();
-    assert_valid_bin_step(bin_step);
-
-    if bin_id >= 0 {
-      return scale + (bin_id * bin_step);
-    }
-
-    let denominator = scale + (abs_int(bin_id) * bin_step);
-    let price = (scale * scale) / denominator;
-    assert(price > 0, "bin price underflow");
-    return price;
-  }
-
-  view fn quote_bin(reserve_base: int,
-                    reserve_quote: int,
-                    amount_in: int,
-                    fee_pips: int,
-                    bin_id: int,
-                    bin_step: int,
-                    input_is_base: int,
-                    min_reserve_base: int,
-                    min_reserve_quote: int) -> int {
-    return quote_bin_impl(
-      reserve_base,
-      reserve_quote,
-      amount_in,
-      fee_pips,
-      bin_id,
-      bin_step,
-      input_is_base,
-      min_reserve_base,
-      min_reserve_quote
+  view fn mirror_swap_history(
+    int record_id
+  ) -> (AccountId, int, quantity, quantity, quantity, int) {
+    require(SwapHistoryTrader.contains(record_id), DlmmRouterError::SwapHistoryMissing);
+    return (
+      SwapHistoryTrader.get(record_id).unwrap_or(RouterOwner),
+      SwapHistoryInputIsBase.get(record_id).unwrap_or(0),
+      SwapHistoryAmountIn.get(record_id).unwrap_or(zero_quantity()),
+      SwapHistoryAmountOut.get(record_id).unwrap_or(zero_quantity()),
+      SwapHistoryMinOut.get(record_id).unwrap_or(zero_quantity()),
+      SwapHistorySlot.get(record_id).unwrap_or(0)
     );
   }
 
-  fn quote_bin_impl(reserve_base: int,
-                    reserve_quote: int,
-                    amount_in: int,
-                    fee_pips: int,
-                    bin_id: int,
-                    bin_step: int,
-                    input_is_base: int,
-                    min_reserve_base: int,
-                    min_reserve_quote: int) -> int {
-    let scale = ppm_scale();
-    let effective = (amount_in * (scale - fee_pips)) / scale;
-    let price = bin_price_ppm(bin_id, bin_step);
-    if effective <= 0 {
-      return 0;
+  view fn quote_direct(
+    quantity reserve_in,
+    quantity reserve_out,
+    quantity amount_in,
+    int fee_pips
+  ) -> quantity {
+    require(reserve_in > zero_quantity(), DlmmRouterError::InvalidReserve);
+    require(reserve_out > zero_quantity(), DlmmRouterError::InvalidReserve);
+    require(amount_in > zero_quantity(), DlmmRouterError::InvalidAmount);
+    let effective = amount_in * fee_multiplier(fee_pips);
+    if effective == zero_quantity() {
+      return zero_quantity();
     }
+    let ratio = effective.ratio_round(
+      divisor: reserve_in + effective,
+      scale: 28,
+      mode: Rounding::floor
+    );
+    return reserve_out * ratio;
+  }
 
+  view fn quote_bin(
+    quantity reserve_base,
+    quantity reserve_quote,
+    quantity amount_in,
+    int fee_pips,
+    int bin_id,
+    int bin_step,
+    int input_is_base,
+    quantity min_reserve_base,
+    quantity min_reserve_quote
+  ) -> quantity {
+    require(reserve_base >= min_reserve_base, DlmmRouterError::InvalidReserve);
+    require(reserve_quote >= min_reserve_quote, DlmmRouterError::InvalidReserve);
+    require(amount_in > zero_quantity(), DlmmRouterError::InvalidAmount);
+    let effective = amount_in * fee_multiplier(fee_pips);
+    let price = bin_price(bin_id: bin_id, bin_step: bin_step);
     if input_is_base == 1 {
       let available_quote = reserve_quote - min_reserve_quote;
-      if available_quote <= 0 {
-        return 0;
+      let candidate = effective * price;
+      if candidate <= available_quote {
+        return candidate;
       }
-      let out = (effective * price) / scale;
-      if out > available_quote {
-        return available_quote;
-      }
-      return out;
+      return available_quote;
     }
-
-    assert(input_is_base == 0, "invalid direction");
+    require(input_is_base == 0, DlmmRouterError::InvalidDirection);
     let available_base = reserve_base - min_reserve_base;
-    if available_base <= 0 {
-      return 0;
+    let candidate = effective.div_round(
+      divisor: price,
+      scale: 28,
+      mode: Rounding::floor
+    );
+    if candidate <= available_base {
+      return candidate;
     }
-    let out = (effective * scale) / price;
-    if out > available_base {
-      return available_base;
-    }
-    return out;
+    return available_base;
   }
 
-  view fn select_best_quote(direct_out: int, via_base_out: int) -> int {
-    return select_best_quote_impl(direct_out, via_base_out);
-  }
-
-  fn select_best_quote_impl(direct_out: int, via_base_out: int) -> int {
+  view fn select_best_quote(quantity direct_out, quantity via_base_out) -> quantity {
     if direct_out >= via_base_out {
       return direct_out;
     }
     return via_base_out;
   }
 
-  kotoage fn route_swap(amount_in: int,
-                        input_is_base: int,
-                        min_out: int) -> int permission(AssetOps) {
-    let trader = authority();
-    let payload = json_object();
-    let payload = json_set_int(payload, name("amount_in"), amount_in);
-    let payload = json_set_int(payload, name("min_out"), min_out);
-    let payload = json_set_account_id(payload, name("recipient"), trader);
-    assert(RouterInitialized == 1, "router not initialized");
-    assert_contract_bound();
-    assert_pool_bound();
-    assert(amount_in > 0, "invalid amount");
-    assert(min_out >= 0, "invalid min_out");
+  kotoage fn route_swap(
+    quantity amount_in,
+    int input_is_base,
+    quantity min_out
+  ) -> quantity authorize("AssetOps") {
+    assert_not_paused();
+    require(amount_in > zero_quantity(), DlmmRouterError::InvalidAmount);
+    let trader = context::authority();
 
     if input_is_base == 1 {
-      transfer_asset(trader, RouterContractId, BaseAsset, amount_in);
-      let amount_out = decode_int(call_contract(BoundPoolContract, "swap_exact_in_base_for", payload));
-      record_swap_history(trader, input_is_base, amount_in, amount_out, min_out);
+      ledger::asset::transfer(
+        source: trader,
+        destination: RouterContractAccount,
+        asset_definition: BaseAsset,
+        amount: amount_in,
+        dataspace: universal_dataspace()
+      );
+      let amount_out = contract::invoke(
+        contract: PoolContract,
+        entrypoint: "swap_exact_in_base_for",
+        returns: "quantity",
+        recipient: trader,
+        amount_in: amount_in,
+        min_out: min_out
+      );
+      record_swap_history(
+        trader: trader,
+        input_is_base: input_is_base,
+        amount_in: amount_in,
+        amount_out: amount_out,
+        min_out: min_out
+      );
       return amount_out;
     }
 
-    assert(input_is_base == 0, "invalid direction");
-    transfer_asset(trader, RouterContractId, QuoteAsset, amount_in);
-    let amount_out = decode_int(call_contract(BoundPoolContract, "swap_exact_in_quote_for", payload));
-    record_swap_history(trader, input_is_base, amount_in, amount_out, min_out);
+    require(input_is_base == 0, DlmmRouterError::InvalidDirection);
+    ledger::asset::transfer(
+      source: trader,
+      destination: RouterContractAccount,
+      asset_definition: QuoteAsset,
+      amount: amount_in,
+      dataspace: universal_dataspace()
+    );
+    let amount_out = contract::invoke(
+      contract: PoolContract,
+      entrypoint: "swap_exact_in_quote_for",
+      returns: "quantity",
+      recipient: trader,
+      amount_in: amount_in,
+      min_out: min_out
+    );
+    record_swap_history(
+      trader: trader,
+      input_is_base: input_is_base,
+      amount_in: amount_in,
+      amount_out: amount_out,
+      min_out: min_out
+    );
     return amount_out;
   }
 }

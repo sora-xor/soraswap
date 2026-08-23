@@ -10,15 +10,25 @@ dist/
 tmp*
 deployments/local/**
 !deployments/local/.gitkeep
+deployments/staging/**
+!deployments/staging/.gitkeep
 deployments/testnet/**
 !deployments/testnet/.gitkeep
+deployments/production/**
+!deployments/production/.gitkeep
 
 # Local config and credentials
 .env
 .env.local
 config/testnet/*.toml
 !config/testnet/*.example
+!config/testnet/*.toml.example
+config/production/*.toml
+!config/production/*.example
+!config/production/*.toml.example
+config/production/cutover-approval.json
 config/*.local.toml
+config/validation_fee/*.local.json
 *.pid
 *.log
 

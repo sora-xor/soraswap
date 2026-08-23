@@ -1,170 +1,180 @@
 seiyaku ReferralRegistry {
-  state int RegistryInitialized;
-  state AccountId RegistryOwner;
-  state AssetDefinitionId RewardAsset;
-  state AccountId Treasury;
-  state int ClaimThreshold;
-  state int DirectShareBps;
-  state int ParentShareBps;
-  state MemberOwner: Map<Name, AccountId>;
-  state ParentMember: Map<Name, Name>;
-  state Accrued: Map<Name, int>;
-  state TotalAccrued: Map<Name, int>;
-  state TotalClaimed: Map<Name, int>;
-  state ClaimCount: Map<Name, int>;
-
-  fn assert_initialized() {
-    assert(RegistryInitialized == 1, "registry not initialized");
-  }
-
-  fn assert_member_bound(member: Name) {
-    assert(MemberOwner.contains(member), "member missing");
-  }
-
-  fn validate_share_bps(direct_share_bps: int, parent_share_bps: int) {
-    assert(direct_share_bps >= 0, "invalid direct share");
-    assert(parent_share_bps >= 0, "invalid parent share");
-    assert(direct_share_bps <= 10_000, "invalid direct share");
-    assert(parent_share_bps <= 10_000, "invalid parent share");
-    assert(direct_share_bps + parent_share_bps == 10_000, "invalid share sum");
-  }
-
-  fn init_member_accounting(member: Name) {
-    Accrued[member] = 0;
-    TotalAccrued[member] = 0;
-    TotalClaimed[member] = 0;
-    ClaimCount[member] = 0;
-  }
-
-  fn accrue_member(member: Name, amount: int) {
-    if amount > 0 {
-      Accrued[member] = Accrued.ensure(member, 0) + amount;
-      TotalAccrued[member] = TotalAccrued.ensure(member, 0) + amount;
+    error enum ReferralError {
+        InvalidClaimThreshold = 1, InvalidDirectShare = 2, InvalidParentShare = 3, InvalidShareSum = 4, MemberMissing = 5, MemberAlreadyExists = 6, InvalidParentMember = 7, InvalidAccrualAmount = 8, ClaimantMismatch = 9, NothingAccrued = 10, BelowClaimThreshold = 11, InvalidQuantityConversion = 12,
     }
-  }
 
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
-      }
+    state AssetDefinitionId RewardAsset;
+    state AccountId Treasury;
+    state quantity ClaimThreshold;
+    state int DirectShareBps;
+    state int ParentShareBps;
+    state StateMap<Name, AccountId> MemberOwner;
+    state StateMap<Name, Name> ParentMember;
+    state StateMap<Name, quantity> Accrued;
+    state StateMap<Name, quantity> TotalAccrued;
+    state StateMap<Name, quantity> TotalClaimed;
+    state StateMap<Name, int> ClaimCount;
+    fn validate_share_bps(int direct_share_bps, int parent_share_bps) {
+        require(
+            direct_share_bps >= 0 && direct_share_bps <= 10_000,
+            ReferralError::InvalidDirectShare,
+        );
+        require(
+            parent_share_bps >= 0 && parent_share_bps <= 10_000,
+            ReferralError::InvalidParentShare,
+        );
+        require(direct_share_bps + parent_share_bps == 10_000, ReferralError::InvalidShareSum, );
     }
-  }
 
-  kotoage fn main() -> int {
-    return RegistryInitialized;
-  }
-
-  kotoage fn init_registry(reward_asset: AssetDefinitionId,
-                           treasury: AccountId,
-                           claim_threshold: int,
-                           direct_share_bps: int,
-                           parent_share_bps: int) {
-    assert(RegistryInitialized == 0, "registry initialized");
-    assert(claim_threshold > 0, "invalid claim threshold");
-    validate_share_bps(direct_share_bps, parent_share_bps);
-    RegistryInitialized = 1;
-    RegistryOwner = authority();
-    RewardAsset = reward_asset;
-    Treasury = treasury;
-    ClaimThreshold = claim_threshold;
-    DirectShareBps = direct_share_bps;
-    ParentShareBps = parent_share_bps;
-  }
-
-  kotoage fn bind_member(member: Name) {
-    assert_initialized();
-    assert(!MemberOwner.contains(member), "member exists");
-    MemberOwner[member] = authority();
-    init_member_accounting(member);
-  }
-
-  kotoage fn bind_member_with_parent(member: Name, parent_member: Name) {
-    assert_initialized();
-    assert(member != parent_member, "invalid parent member");
-    assert_member_bound(parent_member);
-    assert(!MemberOwner.contains(member), "member exists");
-    MemberOwner[member] = authority();
-    ParentMember[member] = parent_member;
-    init_member_accounting(member);
-  }
-
-  kotoage fn accrue(member: Name, amount: int) permission(AssetOps) {
-    assert_initialized();
-    assert_member_bound(member);
-    assert(amount > 0, "invalid amount");
-    let funder = authority();
-    move_asset_if_needed(funder, Treasury, RewardAsset, amount);
-    if ParentMember.contains(member) {
-      let direct_share = (amount * DirectShareBps) / 10_000;
-      let parent_share = amount - direct_share;
-      accrue_member(member, direct_share);
-      accrue_member(ParentMember[member], parent_share);
-      return;
+    fn assert_member_bound(Name member) {
+        require(MemberOwner.contains(key: member), ReferralError::MemberMissing);
     }
-    accrue_member(member, amount);
-  }
 
-  kotoage fn claim(member: Name) permission(AssetOps) {
-    assert_initialized();
-    assert_member_bound(member);
-    let claimant = authority();
-    assert(claimant == MemberOwner[member], "claimant mismatch");
-    let amount = Accrued.ensure(member, 0);
-    assert(amount > 0, "nothing accrued");
-    assert(amount >= ClaimThreshold, "below claim threshold");
-    move_asset_if_needed(Treasury, claimant, RewardAsset, amount);
-    Accrued[member] = 0;
-    TotalClaimed[member] = TotalClaimed.ensure(member, 0) + amount;
-    ClaimCount[member] = ClaimCount.ensure(member, 0) + 1;
-  }
-
-  view fn registry_config() -> (AssetDefinitionId, AccountId, int, int, int) {
-    assert_initialized();
-    return (
-      RewardAsset,
-      Treasury,
-      ClaimThreshold,
-      DirectShareBps,
-      ParentShareBps
-    );
-  }
-
-  view fn mirror_member(member: Name) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
-    let bound = 0;
-    let parent_bound = 0;
-    let parent_accrued = 0;
-    let parent_total_accrued = 0;
-    let parent_total_claimed = 0;
-    let parent_claim_count = 0;
-    if MemberOwner.contains(member) {
-      bound = 1;
+    fn init_member_accounting(Name member) {
+        Accrued[member] = 0;
+        TotalAccrued[member] = 0;
+        TotalClaimed[member] = 0;
+        ClaimCount[member] = 0;
     }
-    if ParentMember.contains(member) {
-      let parent_member = ParentMember[member];
-      parent_bound = 1;
-      parent_accrued = Accrued.get_or(parent_member, 0);
-      parent_total_accrued = TotalAccrued.get_or(parent_member, 0);
-      parent_total_claimed = TotalClaimed.get_or(parent_member, 0);
-      parent_claim_count = ClaimCount.get_or(parent_member, 0);
+
+    fn accrue_member(Name member, quantity amount) {
+        if amount > 0 {
+            Accrued[member] = Accrued.get_or(key: member, default: 0) + amount;
+            TotalAccrued[member] = TotalAccrued.get_or(key: member, default: 0) + amount;
+        }
     }
-    return (
-      bound,
-      ClaimThreshold,
-      DirectShareBps,
-      ParentShareBps,
-      Accrued.get_or(member, 0),
-      TotalAccrued.get_or(member, 0),
-      TotalClaimed.get_or(member, 0),
-      ClaimCount.get_or(member, 0),
-      parent_bound,
-      parent_accrued,
-      parent_total_accrued,
-      parent_total_claimed,
-      parent_claim_count
-    );
-  }
+
+    fn checked_quantity(decimal value) -> quantity {
+        return match quantity::try_from_decimal(value: value) {
+            Result::ok(amount) => amount,
+            Result::err(_) => {
+                require(false, ReferralError::InvalidQuantityConversion);
+                0
+            },
+        };
+    }
+
+    fn move_asset_if_needed(
+        AccountId source,
+        AccountId destination,
+        AssetDefinitionId asset,
+        quantity amount,
+    ) {
+        if amount > 0 && source != destination {
+            ledger::asset::transfer(
+                source: source,
+                destination: destination,
+                asset_definition: asset,
+                amount: amount,
+                dataspace: DataSpaceId::parse("0"),
+            );
+        }
+    }
+
+    hajimari(
+        AssetDefinitionId reward_asset,
+        AccountId treasury,
+        quantity claim_threshold,
+        int direct_share_bps,
+        int parent_share_bps,
+    ) {
+        require(claim_threshold > 0, ReferralError::InvalidClaimThreshold);
+        validate_share_bps(direct_share_bps: direct_share_bps, parent_share_bps: parent_share_bps, );
+        RewardAsset = reward_asset;
+        Treasury = treasury;
+        ClaimThreshold = claim_threshold;
+        DirectShareBps = direct_share_bps;
+        ParentShareBps = parent_share_bps;
+    }
+
+    view fn main() -> int {
+        return 1;
+    }
+
+    kotoage fn bind_member(Name member) authorize("Entry") {
+        require(!MemberOwner.contains(key: member), ReferralError::MemberAlreadyExists);
+        MemberOwner[member] = context::authority();
+        init_member_accounting(member: member);
+    }
+
+    kotoage fn bind_member_with_parent(Name member, Name parent_member, ) authorize("Entry") {
+        require(member != parent_member, ReferralError::InvalidParentMember);
+        assert_member_bound(member: parent_member);
+        require(!MemberOwner.contains(key: member), ReferralError::MemberAlreadyExists);
+        MemberOwner[member] = context::authority();
+        ParentMember[member] = parent_member;
+        init_member_accounting(member: member);
+    }
+
+    kotoage fn accrue(Name member, quantity amount) authorize("AssetOps") {
+        assert_member_bound(member: member);
+        require(amount > 0, ReferralError::InvalidAccrualAmount);
+        move_asset_if_needed(
+            source: context::authority(),
+            destination: Treasury,
+            asset: RewardAsset,
+            amount: amount,
+        );
+        if let Option::some(parent_member) = ParentMember.get(key: member) {
+            let direct_share = checked_quantity(
+                value: (decimal::from_quantity(value: amount) * decimal::from_int(
+                    value: DirectShareBps,
+                )) / 10_000,
+            );
+            let parent_share = amount - direct_share;
+            accrue_member(member: member, amount: direct_share);
+            accrue_member(member: parent_member, amount: parent_share);
+        } else {
+            accrue_member(member: member, amount: amount);
+        }
+    }
+
+    kotoage fn claim(Name member) authorize("AssetOps") {
+        assert_member_bound(member: member);
+        let claimant = context::authority();
+        let owner = MemberOwner.get(key: member).unwrap_or(default: claimant);
+        require(claimant == owner, ReferralError::ClaimantMismatch);
+        let amount = Accrued.get_or(key: member, default: 0);
+        require(amount > 0, ReferralError::NothingAccrued);
+        require(amount >= ClaimThreshold, ReferralError::BelowClaimThreshold);
+        move_asset_if_needed(
+            source: Treasury,
+            destination: claimant,
+            asset: RewardAsset,
+            amount: amount,
+        );
+        Accrued[member] = 0;
+        TotalClaimed[member] = TotalClaimed.get_or(key: member, default: 0) + amount;
+        ClaimCount[member] = ClaimCount.get_or(key: member, default: 0) + 1;
+    }
+
+    view fn registry_config() -> (AssetDefinitionId, AccountId, quantity, int, int) {
+        return (RewardAsset, Treasury, ClaimThreshold, DirectShareBps, ParentShareBps);
+    }
+
+    view fn mirror_member(Name member, ) -> (int, quantity, int, int, quantity, quantity, quantity, int, int, quantity, quantity, quantity, int) {
+        var int bound = 0;
+        var int parent_bound = 0;
+        var quantity parent_accrued = 0;
+        var quantity parent_total_accrued = 0;
+        var quantity parent_total_claimed = 0;
+        var int parent_claim_count = 0;
+        if MemberOwner.contains(key: member) {
+            bound = 1;
+        }
+        if let Option::some(parent_member) = ParentMember.get(key: member) {
+            parent_bound = 1;
+            parent_accrued = Accrued.get_or(key: parent_member, default: 0);
+            parent_total_accrued = TotalAccrued.get_or(key: parent_member, default: 0);
+            parent_total_claimed = TotalClaimed.get_or(key: parent_member, default: 0);
+            parent_claim_count = ClaimCount.get_or(key: parent_member, default: 0);
+        }
+        return (bound, ClaimThreshold, DirectShareBps, ParentShareBps, Accrued.get_or(
+            key: member,
+            default: 0,
+        ), TotalAccrued.get_or(key: member, default: 0), TotalClaimed.get_or(
+            key: member,
+            default: 0,
+        ), ClaimCount.get_or(key: member, default: 0), parent_bound, parent_accrued, parent_total_accrued, parent_total_claimed, parent_claim_count);
+    }
 }

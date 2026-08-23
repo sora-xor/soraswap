@@ -4,9 +4,117 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
 mode="${1:-local}"
+if [[ "$mode" == "production" ]]; then
+  export SORASWAP_PUBLIC_ENV=production
+  readonly SORASWAP_PUBLIC_ENV
+fi
+bootstrap_secret_dir="$(soraswap_secure_temp_directory bootstrap-secrets)" || exit 1
+cleanup_bootstrap_secret_dir() {
+  if ! soraswap_secure_cleanup_owned_directory "$bootstrap_secret_dir"; then
+    echo "bootstrap secret directory identity changed or contains an unowned entry; refusing unsafe cleanup" >&2
+    return 1
+  fi
+}
+trap cleanup_bootstrap_secret_dir EXIT
+case "$mode" in
+  testnet|production)
+    require_public_mutation_consent "$mode" "$mode contract-state bootstrap"
+    ;;
+esac
+
+bootstrap_scope="${SORASWAP_BOOTSTRAP_SCOPE:-full}"
+pool_fee_pips="${SORASWAP_POOL_FEE_PIPS:-3000}"
+pool_active_bin="${SORASWAP_POOL_ACTIVE_BIN:-0}"
+trigger_lifecycle_cadence_slots="${SORASWAP_TRIGGER_LIFECYCLE_CADENCE_SLOTS:-4}"
+trigger_lifecycle_max_items="${SORASWAP_TRIGGER_LIFECYCLE_MAX_ITEMS:-4}"
+trigger_lifecycle_enabled="${SORASWAP_TRIGGER_LIFECYCLE_ENABLED:-1}"
+perps_trigger_lifecycle_max_items="${SORASWAP_PERPS_TRIGGER_LIFECYCLE_MAX_ITEMS:-4}"
+dlmm_range_governor_cadence_slots="${SORASWAP_DLMM_RANGE_GOVERNOR_CADENCE_SLOTS:-4}"
+dlmm_range_governor_max_fee_pips="${SORASWAP_DLMM_RANGE_GOVERNOR_MAX_FEE_PIPS:-$pool_fee_pips}"
+dlmm_range_governor_target_active_bin="${SORASWAP_DLMM_RANGE_GOVERNOR_TARGET_ACTIVE_BIN:-$pool_active_bin}"
+dlmm_range_governor_max_active_bin_drift="${SORASWAP_DLMM_RANGE_GOVERNOR_MAX_ACTIVE_BIN_DRIFT:-2}"
+dlmm_range_governor_enabled="${SORASWAP_DLMM_RANGE_GOVERNOR_ENABLED:-1}"
+twamm_trigger_cadence_slots="${SORASWAP_TWAMM_TRIGGER_CADENCE_SLOTS:-2}"
+twamm_trigger_max_orders_per_tick="${SORASWAP_TWAMM_TRIGGER_MAX_ORDERS_PER_TICK:-4}"
+twamm_trigger_enabled="${SORASWAP_TWAMM_TRIGGER_ENABLED:-1}"
+epoch_auction_epoch_id="${SORASWAP_EPOCH_AUCTION_EPOCH_ID:-1}"
+epoch_auction_duration_slots="${SORASWAP_EPOCH_AUCTION_DURATION_SLOTS:-12}"
+epoch_auction_lower_tick="${SORASWAP_EPOCH_AUCTION_LOWER_TICK:-900000}"
+epoch_auction_upper_tick="${SORASWAP_EPOCH_AUCTION_UPPER_TICK:-1100000}"
+epoch_auction_tick_step="${SORASWAP_EPOCH_AUCTION_TICK_STEP:-10000}"
+epoch_auction_max_orders="${SORASWAP_EPOCH_AUCTION_MAX_ORDERS:-32}"
+bootstrap_controller_sync_pipeline_wait_secs="${SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_PIPELINE_WAIT_SECS:-20}"
+bootstrap_controller_sync_committed_wait_secs="${SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_COMMITTED_WAIT_SECS:-20}"
+case "$mode" in
+  testnet|production)
+    default_bootstrap_view_retry_attempts=60
+    default_bootstrap_apply_retry_attempts=3
+    ;;
+  *)
+    default_bootstrap_view_retry_attempts=15
+    default_bootstrap_apply_retry_attempts=1
+    ;;
+esac
+bootstrap_view_retry_attempts="${SORASWAP_BOOTSTRAP_VIEW_RETRY_ATTEMPTS:-$default_bootstrap_view_retry_attempts}"
+bootstrap_view_retry_sleep_secs="${SORASWAP_BOOTSTRAP_VIEW_RETRY_SLEEP_SECS:-1}"
+bootstrap_apply_retry_attempts="${SORASWAP_BOOTSTRAP_APPLY_RETRY_ATTEMPTS:-$default_bootstrap_apply_retry_attempts}"
+bootstrap_apply_retry_sleep_secs="${SORASWAP_BOOTSTRAP_APPLY_RETRY_SLEEP_SECS:-3}"
+warm_view_timeout_secs="${SORASWAP_WARM_VIEW_TIMEOUT_SECS:-5}"
+
+case "$bootstrap_scope" in
+  foundation|full)
+    ;;
+  *)
+    echo "SORASWAP_BOOTSTRAP_SCOPE must be foundation or full; got '$bootstrap_scope'" >&2
+    exit 1
+    ;;
+esac
+rwa_release_enabled="$(soraswap_rwa_release_enabled_setting_for_env "$mode")" || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_POOL_FEE_PIPS" "$pool_fee_pips" 999999 || exit 1
+soraswap_require_integer_setting "SORASWAP_POOL_ACTIVE_BIN" "$pool_active_bin" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_TRIGGER_LIFECYCLE_CADENCE_SLOTS" "$trigger_lifecycle_cadence_slots" || exit 1
+soraswap_require_positive_integer_at_most_setting "SORASWAP_TRIGGER_LIFECYCLE_MAX_ITEMS" "$trigger_lifecycle_max_items" 16 || exit 1
+soraswap_require_binary_integer_setting "SORASWAP_TRIGGER_LIFECYCLE_ENABLED" "$trigger_lifecycle_enabled" || exit 1
+soraswap_require_positive_integer_at_most_setting "SORASWAP_PERPS_TRIGGER_LIFECYCLE_MAX_ITEMS" "$perps_trigger_lifecycle_max_items" 4 || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_DLMM_RANGE_GOVERNOR_CADENCE_SLOTS" "$dlmm_range_governor_cadence_slots" || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_DLMM_RANGE_GOVERNOR_MAX_FEE_PIPS" "$dlmm_range_governor_max_fee_pips" 999999 || exit 1
+soraswap_require_integer_setting "SORASWAP_DLMM_RANGE_GOVERNOR_TARGET_ACTIVE_BIN" "$dlmm_range_governor_target_active_bin" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_DLMM_RANGE_GOVERNOR_MAX_ACTIVE_BIN_DRIFT" "$dlmm_range_governor_max_active_bin_drift" || exit 1
+soraswap_require_binary_integer_setting "SORASWAP_DLMM_RANGE_GOVERNOR_ENABLED" "$dlmm_range_governor_enabled" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_TWAMM_TRIGGER_CADENCE_SLOTS" "$twamm_trigger_cadence_slots" || exit 1
+soraswap_require_positive_integer_at_most_setting "SORASWAP_TWAMM_TRIGGER_MAX_ORDERS_PER_TICK" "$twamm_trigger_max_orders_per_tick" 16 || exit 1
+soraswap_require_binary_integer_setting "SORASWAP_TWAMM_TRIGGER_ENABLED" "$twamm_trigger_enabled" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_EPOCH_AUCTION_EPOCH_ID" "$epoch_auction_epoch_id" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_EPOCH_AUCTION_DURATION_SLOTS" "$epoch_auction_duration_slots" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_EPOCH_AUCTION_LOWER_TICK" "$epoch_auction_lower_tick" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_EPOCH_AUCTION_UPPER_TICK" "$epoch_auction_upper_tick" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_EPOCH_AUCTION_TICK_STEP" "$epoch_auction_tick_step" || exit 1
+soraswap_require_positive_integer_at_most_setting "SORASWAP_EPOCH_AUCTION_MAX_ORDERS" "$epoch_auction_max_orders" 256 || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_PIPELINE_WAIT_SECS" "$bootstrap_controller_sync_pipeline_wait_secs" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_COMMITTED_WAIT_SECS" "$bootstrap_controller_sync_committed_wait_secs" || exit 1
+soraswap_validate_poll_window "SORASWAP_BOOTSTRAP_VIEW_RETRY" "$bootstrap_view_retry_attempts" "$bootstrap_view_retry_sleep_secs" || exit 1
+soraswap_validate_poll_window "SORASWAP_BOOTSTRAP_APPLY_RETRY" "$bootstrap_apply_retry_attempts" "$bootstrap_apply_retry_sleep_secs" || exit 1
+soraswap_require_nonnegative_number_setting "SORASWAP_WARM_VIEW_TIMEOUT_SECS" "$warm_view_timeout_secs" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_SMOKE_GAS_LIMIT" "$SORASWAP_SMOKE_GAS_LIMIT" || exit 1
+if (( epoch_auction_upper_tick < epoch_auction_lower_tick )); then
+  echo "SORASWAP_EPOCH_AUCTION_UPPER_TICK must be greater than or equal to SORASWAP_EPOCH_AUCTION_LOWER_TICK; got lower='$epoch_auction_lower_tick' upper='$epoch_auction_upper_tick'" >&2
+  exit 1
+fi
+
 config="$(client_config_or_default "$mode")"
 ensure_client "$config"
 ensure_authority "$config"
+prepare_env_chain_state "$mode" "$config"
+case "$mode" in
+  testnet|production)
+    ensure_deployment_records_current "$mode" "$config"
+    ;;
+esac
+if [[ "$mode" == "production" ]]; then
+  require_production_operator_permissions "$config" "$SORASWAP_AUTHORITY"
+fi
+ensure_unit_account_permission "$config" "$SORASWAP_AUTHORITY" Admin
+ensure_unit_account_permission "$config" "$SORASWAP_AUTHORITY" AssetOps
 
 n3x_hub_contract="$(deployed_contract_id_for_env "$mode" n3x.n3x_hub)"
 dlmm_router_contract="$(deployed_contract_id_for_env "$mode" dlmm.dlmm_router)"
@@ -116,9 +224,7 @@ dlmm_pool_vault_account="${SORASWAP_DLMM_POOL_VAULT_ACCOUNT:-$dlmm_pool_contract
 dlmm_pool_balance_source_account="${SORASWAP_AUTHORITY}"
 dlmm_pool_balance_source_signer_config="$config"
 dlmm_pool_balance_source_cleanup=0
-pool_fee_pips="${SORASWAP_POOL_FEE_PIPS:-3000}"
 pool_bin_step="${SORASWAP_POOL_BIN_STEP:-1}"
-pool_active_bin="${SORASWAP_POOL_ACTIVE_BIN:-0}"
 pool_seed_base="${SORASWAP_POOL_SEED_BASE:-1000}"
 pool_seed_quote="${SORASWAP_POOL_SEED_QUOTE:-1000}"
 pool_seed_next_base="${SORASWAP_POOL_SEED_NEXT_BASE:-1000}"
@@ -134,24 +240,6 @@ pool_min_reserve_base="${SORASWAP_POOL_MIN_RESERVE_BASE:-0}"
 pool_min_reserve_quote="${SORASWAP_POOL_MIN_RESERVE_QUOTE:-0}"
 pool_max_bins_per_swap="${SORASWAP_POOL_MAX_BINS_PER_SWAP:-8}"
 pool_bin_liquidity_cap="${SORASWAP_POOL_BIN_LIQUIDITY_CAP:-0}"
-trigger_lifecycle_cadence_slots="${SORASWAP_TRIGGER_LIFECYCLE_CADENCE_SLOTS:-4}"
-trigger_lifecycle_max_items="${SORASWAP_TRIGGER_LIFECYCLE_MAX_ITEMS:-4}"
-trigger_lifecycle_enabled="${SORASWAP_TRIGGER_LIFECYCLE_ENABLED:-0}"
-perps_trigger_lifecycle_max_items="${SORASWAP_PERPS_TRIGGER_LIFECYCLE_MAX_ITEMS:-4}"
-dlmm_range_governor_cadence_slots="${SORASWAP_DLMM_RANGE_GOVERNOR_CADENCE_SLOTS:-4}"
-dlmm_range_governor_max_fee_pips="${SORASWAP_DLMM_RANGE_GOVERNOR_MAX_FEE_PIPS:-$pool_fee_pips}"
-dlmm_range_governor_target_active_bin="${SORASWAP_DLMM_RANGE_GOVERNOR_TARGET_ACTIVE_BIN:-$pool_active_bin}"
-dlmm_range_governor_max_active_bin_drift="${SORASWAP_DLMM_RANGE_GOVERNOR_MAX_ACTIVE_BIN_DRIFT:-2}"
-dlmm_range_governor_enabled="${SORASWAP_DLMM_RANGE_GOVERNOR_ENABLED:-1}"
-twamm_trigger_cadence_slots="${SORASWAP_TWAMM_TRIGGER_CADENCE_SLOTS:-2}"
-twamm_trigger_max_orders_per_tick="${SORASWAP_TWAMM_TRIGGER_MAX_ORDERS_PER_TICK:-4}"
-twamm_trigger_enabled="${SORASWAP_TWAMM_TRIGGER_ENABLED:-1}"
-epoch_auction_epoch_id="${SORASWAP_EPOCH_AUCTION_EPOCH_ID:-1}"
-epoch_auction_duration_slots="${SORASWAP_EPOCH_AUCTION_DURATION_SLOTS:-12}"
-epoch_auction_lower_tick="${SORASWAP_EPOCH_AUCTION_LOWER_TICK:-900000}"
-epoch_auction_upper_tick="${SORASWAP_EPOCH_AUCTION_UPPER_TICK:-1100000}"
-epoch_auction_tick_step="${SORASWAP_EPOCH_AUCTION_TICK_STEP:-10000}"
-epoch_auction_max_orders="${SORASWAP_EPOCH_AUCTION_MAX_ORDERS:-32}"
 n3x_target_usdt_bps="${SORASWAP_N3X_TARGET_USDT_BPS:-3334}"
 n3x_target_usdc_bps="${SORASWAP_N3X_TARGET_USDC_BPS:-3333}"
 n3x_target_kusd_bps="${SORASWAP_N3X_TARGET_KUSD_BPS:-3333}"
@@ -162,7 +250,6 @@ if [[ "$mode" == "testnet" || "$mode" == "production" ]]; then
 else
   sale_name="${SORASWAP_SALE_NAME:-genesis_sale}"
 fi
-bootstrap_scope="${SORASWAP_BOOTSTRAP_SCOPE:-full}"
 referral_claim_threshold="${SORASWAP_REFERRAL_SMOKE_CLAIM_THRESHOLD:-3}"
 referral_direct_share_bps="${SORASWAP_REFERRAL_SMOKE_DIRECT_SHARE_BPS:-7000}"
 referral_parent_share_bps="${SORASWAP_REFERRAL_SMOKE_PARENT_SHARE_BPS:-3000}"
@@ -172,7 +259,7 @@ perps_maintenance_margin_bps="${SORASWAP_PERPS_SMOKE_MAINTENANCE_MARGIN_BPS:-500
 perps_liquidation_fee_bps="${SORASWAP_PERPS_SMOKE_LIQUIDATION_FEE_BPS:-1000}"
 perps_open_interest_cap="${SORASWAP_PERPS_MARKET_OPEN_INTEREST_CAP:-80000}"
 perps_funding_interval_slots="${SORASWAP_PERPS_MARKET_FUNDING_INTERVAL_SLOTS:-4}"
-perps_oracle_stale_slots="${SORASWAP_PERPS_MARKET_ORACLE_STALE_SLOTS:-4}"
+perps_oracle_stale_slots="${SORASWAP_PERPS_MARKET_ORACLE_STALE_SLOTS:-120}"
 perps_backlog_limit="${SORASWAP_PERPS_MARKET_BACKLOG_LIMIT:-6}"
 perps_utilisation_clamp_bps="${SORASWAP_PERPS_MARKET_UTILISATION_CLAMP_BPS:-9000}"
 perps_liquidation_stress_limit="${SORASWAP_PERPS_MARKET_LIQUIDATION_STRESS_LIMIT:-4}"
@@ -187,12 +274,22 @@ options_shout_expiry_slot="${SORASWAP_OPTIONS_SHOUT_EXPIRY_SLOT:-40}"
 options_outperformance_expiry_slot="${SORASWAP_OPTIONS_OUTPERFORMANCE_EXPIRY_SLOT:-40}"
 options_shout_max_notional="${SORASWAP_OPTIONS_SHOUT_MAX_NOTIONAL:-30000}"
 options_outperformance_max_notional="${SORASWAP_OPTIONS_OUTPERFORMANCE_MAX_NOTIONAL:-20000}"
+options_oracle_stale_slots="${SORASWAP_OPTIONS_ORACLE_STALE_SLOTS:-120}"
 options_factory_bump_activate_bps="${SORASWAP_OPTIONS_GUARD_BUMP_ACTIVATE_BPS:-8000}"
 options_factory_bump_deactivate_bps="${SORASWAP_OPTIONS_GUARD_BUMP_DEACTIVATE_BPS:-6000}"
 options_factory_pause_threshold_bps="${SORASWAP_OPTIONS_GUARD_PAUSE_THRESHOLD_BPS:-9500}"
 options_factory_bump_percent_bps="${SORASWAP_OPTIONS_GUARD_BUMP_PERCENT_BPS:-1500}"
 cover_required_observations="${SORASWAP_COVER_REQUIRED_OBSERVATIONS:-3}"
-cover_oracle_stale_slots="${SORASWAP_COVER_ORACLE_STALE_SLOTS:-4}"
+cover_oracle_stale_slots="${SORASWAP_COVER_ORACLE_STALE_SLOTS:-120}"
+case "$mode" in
+  testnet|production)
+    default_cover_policy_id_scan_limit=256
+    ;;
+  *)
+    default_cover_policy_id_scan_limit=16
+    ;;
+esac
+cover_policy_id_scan_limit="${SORASWAP_COVER_POLICY_ID_SCAN_LIMIT:-$default_cover_policy_id_scan_limit}"
 oracle_public_key_hex="$(soraswap_required_oracle_public_key_hex "$config")"
 oracle_scheme="$SORASWAP_ORACLE_SCHEME"
 if [[ "$mode" == "local" ]]; then
@@ -236,7 +333,13 @@ if [[ -z "$current_slot" || "$current_slot" == "null" || "$current_slot" != <-> 
   current_slot=0
 fi
 epoch_auction_start_slot="${SORASWAP_EPOCH_AUCTION_START_SLOT:-$current_slot}"
-epoch_auction_end_slot="${SORASWAP_EPOCH_AUCTION_END_SLOT:-$(( epoch_auction_start_slot + epoch_auction_duration_slots ))}"
+soraswap_require_nonnegative_integer_setting "SORASWAP_EPOCH_AUCTION_START_SLOT" "$epoch_auction_start_slot" || exit 1
+if [[ -n "${SORASWAP_EPOCH_AUCTION_END_SLOT:-}" ]]; then
+  epoch_auction_end_slot="$SORASWAP_EPOCH_AUCTION_END_SLOT"
+else
+  epoch_auction_end_slot=$(( epoch_auction_start_slot + epoch_auction_duration_slots ))
+fi
+soraswap_require_nonnegative_integer_setting "SORASWAP_EPOCH_AUCTION_END_SLOT" "$epoch_auction_end_slot" || exit 1
 if (( epoch_auction_end_slot <= epoch_auction_start_slot )); then
   epoch_auction_end_slot=$(( epoch_auction_start_slot + 1 ))
 fi
@@ -265,27 +368,252 @@ soraswap_launch_dlmm_hook_id="${SORASWAP_LAUNCH_DLMM_HOOK_ID:-dynamic_fee}"
 soraswap_launch_dlmm_hook_phase="${SORASWAP_LAUNCH_DLMM_HOOK_PHASE:-1}"
 soraswap_launch_dlmm_hook_max_fee_pips="${SORASWAP_LAUNCH_DLMM_HOOK_MAX_FEE_PIPS:-5000}"
 
-echo "bootstrap contract state via $config"
+soraswap_require_positive_integer_setting "SORASWAP_POOL_BIN_STEP" "$pool_bin_step" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_SEED_BASE" "$pool_seed_base" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_SEED_QUOTE" "$pool_seed_quote" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_SEED_NEXT_BASE" "$pool_seed_next_base" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_SEED_NEXT_QUOTE" "$pool_seed_next_quote" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_SEED_FAR_BASE" "$pool_seed_far_base" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_SEED_FAR_QUOTE" "$pool_seed_far_quote" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_POSITION_BASE" "$pool_position_base" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_POSITION_QUOTE" "$pool_position_quote" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_POSITION_MIN_SHARES_OUT" "$pool_position_min_shares_out" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_IMPACT_CAP_BPS" "$pool_impact_cap_bps" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_MIN_RESERVE_BASE" "$pool_min_reserve_base" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_MIN_RESERVE_QUOTE" "$pool_min_reserve_quote" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_POOL_MAX_BINS_PER_SWAP" "$pool_max_bins_per_swap" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_POOL_BIN_LIQUIDITY_CAP" "$pool_bin_liquidity_cap" || exit 1
+if (( pool_bin_liquidity_cap > 0 && pool_bin_liquidity_cap < pool_min_reserve_base )); then
+  echo "SORASWAP_POOL_BIN_LIQUIDITY_CAP must be 0 or greater than or equal to SORASWAP_POOL_MIN_RESERVE_BASE; got cap='$pool_bin_liquidity_cap' min_base='$pool_min_reserve_base'" >&2
+  exit 1
+fi
+if (( pool_bin_liquidity_cap > 0 && pool_bin_liquidity_cap < pool_min_reserve_quote )); then
+  echo "SORASWAP_POOL_BIN_LIQUIDITY_CAP must be 0 or greater than or equal to SORASWAP_POOL_MIN_RESERVE_QUOTE; got cap='$pool_bin_liquidity_cap' min_quote='$pool_min_reserve_quote'" >&2
+  exit 1
+fi
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_N3X_TARGET_USDT_BPS" "$n3x_target_usdt_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_N3X_TARGET_USDC_BPS" "$n3x_target_usdc_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_N3X_TARGET_KUSD_BPS" "$n3x_target_kusd_bps" 10000 || exit 1
+if (( n3x_target_usdt_bps + n3x_target_usdc_bps + n3x_target_kusd_bps != 10000 )); then
+  echo "SORASWAP_N3X_TARGET_*_BPS values must sum to 10000; got '$n3x_target_usdt_bps+$n3x_target_usdc_bps+$n3x_target_kusd_bps'" >&2
+  exit 1
+fi
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_N3X_MINT_FEE_BPS" "$n3x_mint_fee_bps" 9999 || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_N3X_REDEEM_FEE_BPS" "$n3x_redeem_fee_bps" 9999 || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_REFERRAL_SMOKE_CLAIM_THRESHOLD" "$referral_claim_threshold" || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_REFERRAL_SMOKE_DIRECT_SHARE_BPS" "$referral_direct_share_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_REFERRAL_SMOKE_PARENT_SHARE_BPS" "$referral_parent_share_bps" 10000 || exit 1
+if (( referral_direct_share_bps + referral_parent_share_bps != 10000 )); then
+  echo "SORASWAP_REFERRAL_SMOKE_DIRECT_SHARE_BPS and SORASWAP_REFERRAL_SMOKE_PARENT_SHARE_BPS must sum to 10000; got '$referral_direct_share_bps+$referral_parent_share_bps'" >&2
+  exit 1
+fi
+soraswap_require_integer_setting "SORASWAP_PERPS_SMOKE_FUNDING_BPS" "$perps_funding_bps" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_PERPS_SMOKE_MAX_LEVERAGE_BPS" "$perps_max_leverage_bps" || exit 1
+if (( perps_max_leverage_bps <= 10000 )); then
+  echo "SORASWAP_PERPS_SMOKE_MAX_LEVERAGE_BPS must be greater than 10000; got '$perps_max_leverage_bps'" >&2
+  exit 1
+fi
+soraswap_require_positive_integer_at_most_setting "SORASWAP_PERPS_SMOKE_MAINTENANCE_MARGIN_BPS" "$perps_maintenance_margin_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_PERPS_SMOKE_LIQUIDATION_FEE_BPS" "$perps_liquidation_fee_bps" 10000 || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_PERPS_MARKET_OPEN_INTEREST_CAP" "$perps_open_interest_cap" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_PERPS_MARKET_FUNDING_INTERVAL_SLOTS" "$perps_funding_interval_slots" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_PERPS_MARKET_ORACLE_STALE_SLOTS" "$perps_oracle_stale_slots" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_PERPS_MARKET_BACKLOG_LIMIT" "$perps_backlog_limit" || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_PERPS_MARKET_UTILISATION_CLAMP_BPS" "$perps_utilisation_clamp_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_PERPS_MARKET_LIQUIDATION_STRESS_LIMIT" "$perps_liquidation_stress_limit" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_OPTIONS_SHOUT_TENOR_SLOTS" "$options_shout_tenor_slots" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_OPTIONS_OUTPERFORMANCE_TENOR_SLOTS" "$options_outperformance_tenor_slots" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_OPTIONS_SHOUT_STRIKE_BPS" "$options_shout_strike_bps" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_OPTIONS_OUTPERFORMANCE_STRIKE_BPS" "$options_outperformance_strike_bps" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_OPTIONS_COLLATERAL_MULTIPLIER_BPS" "$options_collateral_multiplier_bps" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_OPTIONS_SHOUT_BASE_PREMIUM_BPS" "$options_shout_base_premium_bps" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_OPTIONS_OUTPERFORMANCE_BASE_PREMIUM_BPS" "$options_outperformance_base_premium_bps" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_OPTIONS_SHOUT_EXPIRY_SLOT" "$options_shout_expiry_slot" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_OPTIONS_OUTPERFORMANCE_EXPIRY_SLOT" "$options_outperformance_expiry_slot" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_OPTIONS_SHOUT_MAX_NOTIONAL" "$options_shout_max_notional" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_OPTIONS_OUTPERFORMANCE_MAX_NOTIONAL" "$options_outperformance_max_notional" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_OPTIONS_ORACLE_STALE_SLOTS" "$options_oracle_stale_slots" || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_OPTIONS_GUARD_BUMP_ACTIVATE_BPS" "$options_factory_bump_activate_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_OPTIONS_GUARD_BUMP_DEACTIVATE_BPS" "$options_factory_bump_deactivate_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_OPTIONS_GUARD_PAUSE_THRESHOLD_BPS" "$options_factory_pause_threshold_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_OPTIONS_GUARD_BUMP_PERCENT_BPS" "$options_factory_bump_percent_bps" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_COVER_REQUIRED_OBSERVATIONS" "$cover_required_observations" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_COVER_ORACLE_STALE_SLOTS" "$cover_oracle_stale_slots" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_COVER_POLICY_ID_SCAN_LIMIT" "$cover_policy_id_scan_limit" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_ORACLE_SCHEME" "$oracle_scheme" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_RISK_BUCKET_1_BOOTSTRAP_DEPOSIT" "$risk_bucket_1_bootstrap_deposit" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_RISK_BUCKET_2_BOOTSTRAP_DEPOSIT" "$risk_bucket_2_bootstrap_deposit" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_RISK_BUCKET_3_BOOTSTRAP_DEPOSIT" "$risk_bucket_3_bootstrap_deposit" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_BRIDGE_LISTING_FEE_AMOUNT" "$bridge_listing_fee_amount" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_BRIDGE_REMOTE_DOMAIN" "$bridge_remote_domain" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_BRIDGE_ASSET_HOME_DOMAIN" "$bridge_asset_home_domain" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_BRIDGE_ASSET_DECIMALS" "$bridge_asset_decimals" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_BOOTSTRAP_SIGNER_FEE_MINIMUM" "$bootstrap_signer_fee_minimum" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_BOOTSTRAP_MAINTENANCE_GAS_LIMIT" "$bootstrap_maintenance_gas_limit" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_EPOCH_AUCTION_START_SLOT" "$epoch_auction_start_slot" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_EPOCH_AUCTION_END_SLOT" "$epoch_auction_end_slot" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_LAUNCH_VAULT_STRATEGY_CODE" "$soraswap_launch_vault_strategy_code" || exit 1
+soraswap_require_binary_integer_setting "SORASWAP_LAUNCH_VAULT_ASYNC_REDEEM" "$soraswap_launch_vault_async_redeem" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_LAUNCH_OPERATOR_MIN_BOND" "$soraswap_launch_operator_min_bond" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_LAUNCH_OPERATOR_BOND" "$soraswap_launch_operator_bond" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_LAUNCH_OPERATOR_HEARTBEAT_SLOT" "$soraswap_launch_operator_heartbeat_slot" || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_LAUNCH_OPERATOR_HEALTH_BPS" "$soraswap_launch_operator_health_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_LAUNCH_MARGIN_RISK_WEIGHT_BPS" "$soraswap_launch_margin_risk_weight_bps" 10000 || exit 1
+soraswap_require_nonnegative_integer_at_most_setting "SORASWAP_LAUNCH_MARGIN_LIQUIDATION_THRESHOLD_BPS" "$soraswap_launch_margin_liquidation_threshold_bps" 10000 || exit 1
+if [[ "$rwa_release_enabled" == "1" \
+  || -n "${SORASWAP_LAUNCH_RWA_NAV+x}" \
+  || -n "${SORASWAP_LAUNCH_RWA_SHARES+x}" ]]; then
+  soraswap_require_positive_integer_setting "SORASWAP_LAUNCH_RWA_NAV" "$soraswap_launch_rwa_nav" || exit 1
+  soraswap_require_positive_integer_setting "SORASWAP_LAUNCH_RWA_SHARES" "$soraswap_launch_rwa_shares" || exit 1
+fi
+soraswap_require_integer_setting "SORASWAP_LAUNCH_DLMM_HOOK_PHASE" "$soraswap_launch_dlmm_hook_phase" || exit 1
+soraswap_require_nonnegative_integer_setting "SORASWAP_LAUNCH_DLMM_HOOK_MAX_FEE_PIPS" "$soraswap_launch_dlmm_hook_max_fee_pips" || exit 1
+
+echo "bootstrap contract state via $(soraswap_display_path "$config")"
 
 ensure_account_registered "$config" "$vault_account" soraswap
 ensure_account_registered "$config" "$n3x_hub_contract_subject" contract-subject
 ensure_account_registered "$config" "$dlmm_pool_contract_subject" contract-subject
 ensure_account_registered "$config" "$dlmm_router_contract_subject" contract-subject
 ensure_account_registered "$config" "$batch_epoch_auction_contract_subject" contract-subject
-ensure_account_registered "$config" "$intents_settlement_router_contract_subject" contract-subject
-ensure_account_registered "$config" "$vaults_manager_contract_subject" contract-subject
-ensure_account_registered "$config" "$operators_registry_contract_subject" contract-subject
-ensure_account_registered "$config" "$margin_portfolio_margin_contract_subject" contract-subject
-ensure_account_registered "$config" "$rwa_market_contract_subject" contract-subject
-ensure_account_registered "$config" "$dlmm_hooks_manager_contract_subject" contract-subject
 ensure_account_registered "$config" "$escrow_conditional_escrow_contract_subject" contract-subject
+contract_subject_accounts=(
+  "$n3x_hub_contract_subject"
+  "$dlmm_pool_contract_subject"
+  "$dlmm_router_contract_subject"
+  "$batch_epoch_auction_contract_subject"
+  "$escrow_conditional_escrow_contract_subject"
+)
+if [[ "$bootstrap_scope" != "foundation" ]]; then
+  ensure_account_registered "$config" "$launchpad_liquidity_executor_contract_subject" contract-subject
+  ensure_account_registered "$config" "$launchpad_sale_factory_contract_subject" contract-subject
+  ensure_account_registered "$config" "$risk_vault_contract_subject" contract-subject
+  ensure_account_registered "$config" "$perps_engine_contract_subject" contract-subject
+  ensure_account_registered "$config" "$options_factory_contract_subject" contract-subject
+  ensure_account_registered "$config" "$cover_policy_manager_contract_subject" contract-subject
+  ensure_account_registered "$config" "$intents_settlement_router_contract_subject" contract-subject
+  ensure_account_registered "$config" "$vaults_manager_contract_subject" contract-subject
+  ensure_account_registered "$config" "$operators_registry_contract_subject" contract-subject
+  ensure_account_registered "$config" "$margin_portfolio_margin_contract_subject" contract-subject
+  ensure_account_registered "$config" "$rwa_market_contract_subject" contract-subject
+  ensure_account_registered "$config" "$dlmm_hooks_manager_contract_subject" contract-subject
+  contract_subject_accounts+=(
+    "$intents_settlement_router_contract_subject"
+    "$vaults_manager_contract_subject"
+    "$operators_registry_contract_subject"
+    "$margin_portfolio_margin_contract_subject"
+    "$rwa_market_contract_subject"
+    "$dlmm_hooks_manager_contract_subject"
+    "$launchpad_liquidity_executor_contract_subject"
+    "$launchpad_sale_factory_contract_subject"
+    "$risk_vault_contract_subject"
+    "$perps_engine_contract_subject"
+    "$options_factory_contract_subject"
+    "$cover_policy_manager_contract_subject"
+  )
+fi
+typeset -A contract_subject_account_seen
+for contract_subject_account in "${contract_subject_accounts[@]}"; do
+  if [[ -n "${contract_subject_account_seen[$contract_subject_account]-}" ]]; then
+    echo "production bootstrap resolved duplicate contract-subject account: $contract_subject_account" >&2
+    exit 1
+  fi
+  contract_subject_account_seen[$contract_subject_account]=1
+  ensure_unit_account_permission "$config" "$contract_subject_account" AssetOps
+done
+
+if [[ "$mode" == "production" ]]; then
+  permission_receipt_timestamp="$(utc_timestamp)"
+  permission_receipt_id="${permission_receipt_timestamp}-$(od -An -tx1 -N8 /dev/urandom | tr -d ' \n')"
+  permission_receipt_dir="$(deployments_dir_for_env "$mode")"
+  permission_receipt_latest="$permission_receipt_dir/permission_provisioning.latest.json"
+  permission_receipt_timestamped="$permission_receipt_dir/permission_provisioning.${permission_receipt_id}.json"
+  [[ ! -e "$permission_receipt_timestamped" ]] || {
+    echo "refusing to overwrite an existing production permission receipt" >&2
+    exit 1
+  }
+  permission_subjects_json='[]'
+  for contract_subject_account in "${contract_subject_accounts[@]}"; do
+    contract_subject_account_readback_json="$(exact_account_readback_json "$config" "$contract_subject_account")" || exit 1
+    if ! jq -e '.query_available == true and .matched == true' \
+      >/dev/null <<<"$contract_subject_account_readback_json"; then
+      echo "production contract-subject account is not query-visible at receipt time: $contract_subject_account" >&2
+      exit 1
+    fi
+    if ! contract_subject_permissions_json="$(iroha_cli_json --config "$config" account permission list --id "$contract_subject_account")" \
+      || ! jq -e 'type == "array" and any(.[]; .name == "AssetOps" and .payload == null)' \
+        >/dev/null 2>&1 <<<"$contract_subject_permissions_json"; then
+      echo "production contract-subject AssetOps permission is not query-visible at receipt time: $contract_subject_account" >&2
+      exit 1
+    fi
+    permission_subjects_json="$(jq -cn \
+      --argjson current "$permission_subjects_json" \
+      --arg account "$contract_subject_account" \
+      --argjson account_readback "$contract_subject_account_readback_json" \
+      '$current + [{account: $account, account_present: true, account_readback: $account_readback, permission: {name: "AssetOps", payload: null}, permission_present: true}]')"
+  done
+  if ! jq -e --argjson expected "${#contract_subject_accounts[@]}" '
+      length == $expected
+      and ([.[].account] | unique | length) == $expected
+      and all(.[];
+        .account_present == true
+        and .permission_present == true
+        and .account_readback.query_available == true
+        and .account_readback.matched == true)
+    ' >/dev/null <<<"$permission_subjects_json"; then
+    echo "production contract-subject permission readback is incomplete or non-unique" >&2
+    exit 1
+  fi
+  operator_permissions_json="$(production_operator_permission_readiness_json "$config" "$SORASWAP_AUTHORITY")"
+  if ! jq -e '.query_available == true and .ready == true' >/dev/null <<<"$operator_permissions_json"; then
+    echo "production operator permissions changed during contract-subject provisioning" >&2
+    exit 1
+  fi
+  permission_chain_fingerprint_json="$(chain_fingerprint_json_or_null)"
+  require_deployment_evidence_chain_fingerprint production "$permission_chain_fingerprint_json" "production permission receipt" || exit 1
+  permission_receipt_json="$(jq -cn \
+    --arg receipt_id "$permission_receipt_id" \
+    --arg generated_at "$permission_receipt_timestamp" \
+    --arg environment "$mode" \
+    --arg bootstrap_scope "$bootstrap_scope" \
+    --arg approval_gate "SORASWAP_ALLOW_PRODUCTION_MUTATIONS" \
+    --argjson expected_count "${#contract_subject_accounts[@]}" \
+    --argjson operator_permissions "$operator_permissions_json" \
+    --argjson subjects "$permission_subjects_json" \
+    --argjson chain_fingerprint "$permission_chain_fingerprint_json" \
+    '{
+      status: "completed",
+      receipt_id: $receipt_id,
+      generated_at: $generated_at,
+      environment: $environment,
+      chain_fingerprint: $chain_fingerprint,
+      bootstrap_scope: $bootstrap_scope,
+      policy: {
+        operator_permissions: "preprovisioned_verify_only",
+        deterministic_contract_subject_grants: "mutation_gate_approved_and_read_after_write_verified",
+        approval: {gate: $approval_gate, value: 1}
+      },
+      operator_permissions: $operator_permissions,
+      contract_subject_permissions: {
+        expected_count: $expected_count,
+        verified_count: ($subjects | length),
+        subjects: $subjects
+      }
+    }')"
+  mkdir -p "$permission_receipt_dir"
+  soraswap_write_json_report_pair \
+    "$permission_receipt_json" \
+    "$permission_receipt_latest" \
+    "$permission_receipt_timestamped"
+  echo "production permission provisioning receipt: $(soraswap_display_path "$permission_receipt_timestamped")"
+fi
 
 warm_view() {
   local contract_id="$1"
   local entrypoint="$2"
   local payload_json="${3:-null}"
 
-  SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS="${SORASWAP_WARM_VIEW_TIMEOUT_SECS:-5}" \
+  SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS="$warm_view_timeout_secs" \
     submit_contract_view "$config" "$contract_id" "$entrypoint" "$SORASWAP_SMOKE_GAS_LIMIT" "$payload_json" \
     >/dev/null 2>&1 || true
 }
@@ -304,10 +632,12 @@ view_result_json_with_retry() {
   local contract_id="$1"
   local entrypoint="$2"
   local payload_json="${3:-null}"
-  local attempts="${4:-15}"
-  local sleep_seconds="${5:-1}"
+  local attempts="${4:-$bootstrap_view_retry_attempts}"
+  local sleep_seconds="${5:-$bootstrap_view_retry_sleep_secs}"
   local attempt=1
   local result_json=""
+
+  soraswap_validate_poll_window "bootstrap view retry" "$attempts" "$sleep_seconds" || return 1
 
   while (( attempt <= attempts )); do
     if result_json="$(view_result_json "$contract_id" "$entrypoint" "$payload_json" 2>/dev/null)" \
@@ -465,7 +795,9 @@ ensure_step_from_prior_or_skip_with_live_predicate() {
   local call_entrypoint="$7"
   local call_payload_json="$8"
   local live_predicate_jq="$9"
+  local retry_apply="${10:-0}"
   local actual_json
+  local attempt=1
 
   actual_json="$(view_result_json "$contract_id" "$view_entrypoint" "$view_payload_json")"
   if json_equals "$actual_json" "$expected_json"; then
@@ -485,12 +817,55 @@ ensure_step_from_prior_or_skip_with_live_predicate() {
     fail_bootstrap_diff "$label" "$expected_json" "$actual_json" "$accepted_prior_json"
   fi
 
-  echo "bootstrap apply: $label"
-  call_contract_and_wait "$config" "$contract_id" "$call_entrypoint" "$call_payload_json" >/dev/null
-  actual_json="$(view_result_json "$contract_id" "$view_entrypoint" "$view_payload_json")"
-  if ! json_equals "$actual_json" "$expected_json"; then
-    fail_bootstrap_diff "$label" "$expected_json" "$actual_json" "$accepted_prior_json"
+  if [[ "$retry_apply" != "1" ]]; then
+    echo "bootstrap apply: $label"
+    call_contract_and_wait "$config" "$contract_id" "$call_entrypoint" "$call_payload_json" >/dev/null
+    actual_json="$(view_result_json_with_retry "$contract_id" "$view_entrypoint" "$view_payload_json")"
+    if ! json_equals "$actual_json" "$expected_json"; then
+      fail_bootstrap_diff "$label" "$expected_json" "$actual_json" "$accepted_prior_json"
+    fi
+    return 0
   fi
+
+  while (( attempt <= bootstrap_apply_retry_attempts )); do
+    echo "bootstrap apply: $label"
+    if ! call_contract_and_wait "$config" "$contract_id" "$call_entrypoint" "$call_payload_json" >/dev/null; then
+      actual_json="$(view_result_json_with_retry "$contract_id" "$view_entrypoint" "$view_payload_json" 2>/dev/null || true)"
+      if json_value_present "$actual_json" && jq -en \
+        --argjson actual "$actual_json" \
+        --argjson expected "$expected_json" \
+        --argjson prior "$accepted_prior_json" \
+        "$live_predicate_jq" \
+        >/dev/null; then
+        echo "bootstrap note: $label submit failed after reaching expected live state"
+        return 0
+      fi
+      if (( attempt < bootstrap_apply_retry_attempts )); then
+        echo "bootstrap apply: $label submit failed; retrying ($attempt/$bootstrap_apply_retry_attempts)" >&2
+        sleep "$bootstrap_apply_retry_sleep_secs"
+        attempt=$(( attempt + 1 ))
+        continue
+      fi
+      return 1
+    fi
+
+    actual_json="$(view_result_json_with_retry "$contract_id" "$view_entrypoint" "$view_payload_json")"
+    if jq -en \
+      --argjson actual "$actual_json" \
+      --argjson expected "$expected_json" \
+      --argjson prior "$accepted_prior_json" \
+      "$live_predicate_jq" \
+      >/dev/null; then
+      return 0
+    fi
+    if (( attempt < bootstrap_apply_retry_attempts )); then
+      echo "bootstrap apply: $label postcondition not visible; retrying ($attempt/$bootstrap_apply_retry_attempts)" >&2
+      sleep "$bootstrap_apply_retry_sleep_secs"
+      attempt=$(( attempt + 1 ))
+      continue
+    fi
+    fail_bootstrap_diff "$label" "$expected_json" "$actual_json" "$accepted_prior_json"
+  done
 }
 
 ensure_risk_vault_init_or_skip() {
@@ -539,7 +914,7 @@ ensure_risk_vault_init_or_skip() {
     fi
     fail_bootstrap_diff "risk vault init" "$expected_json" "$actual_json" "$live_json"
   fi
-  actual_json="$(view_result_json "$contract_id" "risk_state" null)"
+  actual_json="$(view_result_json_with_retry "$contract_id" "risk_state" null)"
   if ! json_equals "$actual_json" "$expected_json" \
     && ! json_equals "$actual_json" "$live_json" \
     && ! { [[ -n "$live_predicate_jq" ]] && jq -en \
@@ -560,6 +935,7 @@ apply_step_and_expect() {
   local call_entrypoint="$6"
   local call_payload_json="$7"
   local actual_json
+  local attempt=1
 
   actual_json="$(view_result_json "$contract_id" "$view_entrypoint" "$view_payload_json" 2>/dev/null || true)"
   if json_value_present "$actual_json" && json_equals "$actual_json" "$expected_json"; then
@@ -567,12 +943,35 @@ apply_step_and_expect() {
     return 0
   fi
 
-  echo "bootstrap apply: $label"
-  call_contract_and_wait "$config" "$contract_id" "$call_entrypoint" "$call_payload_json" >/dev/null
-  actual_json="$(view_result_json "$contract_id" "$view_entrypoint" "$view_payload_json")"
-  if ! json_equals "$actual_json" "$expected_json"; then
+  while (( attempt <= bootstrap_apply_retry_attempts )); do
+    echo "bootstrap apply: $label"
+    if ! call_contract_and_wait "$config" "$contract_id" "$call_entrypoint" "$call_payload_json" >/dev/null; then
+      actual_json="$(view_result_json_with_retry "$contract_id" "$view_entrypoint" "$view_payload_json" 2>/dev/null || true)"
+      if json_value_present "$actual_json" && json_equals "$actual_json" "$expected_json"; then
+        echo "bootstrap note: $label submit failed after reaching expected state"
+        return 0
+      fi
+      if (( attempt < bootstrap_apply_retry_attempts )); then
+        echo "bootstrap apply: $label submit failed; retrying ($attempt/$bootstrap_apply_retry_attempts)" >&2
+        sleep "$bootstrap_apply_retry_sleep_secs"
+        attempt=$(( attempt + 1 ))
+        continue
+      fi
+      return 1
+    fi
+
+    actual_json="$(view_result_json_with_retry "$contract_id" "$view_entrypoint" "$view_payload_json")"
+    if json_equals "$actual_json" "$expected_json"; then
+      return 0
+    fi
+    if (( attempt < bootstrap_apply_retry_attempts )); then
+      echo "bootstrap apply: $label postcondition not visible; retrying ($attempt/$bootstrap_apply_retry_attempts)" >&2
+      sleep "$bootstrap_apply_retry_sleep_secs"
+      attempt=$(( attempt + 1 ))
+      continue
+    fi
     fail_bootstrap_diff "$label" "$expected_json" "$actual_json"
-  fi
+  done
 }
 
 ensure_view_predicate_or_apply() {
@@ -585,6 +984,7 @@ ensure_view_predicate_or_apply() {
   local call_payload_json="$7"
   local live_predicate_jq="$8"
   local actual_json
+  local attempt=1
 
   actual_json="$(view_result_json "$contract_id" "$view_entrypoint" "$view_payload_json" 2>/dev/null || true)"
   if json_value_present "$actual_json" && jq -en \
@@ -596,16 +996,43 @@ ensure_view_predicate_or_apply() {
     return 0
   fi
 
-  echo "bootstrap apply: $label"
-  call_contract_and_wait "$config" "$contract_id" "$call_entrypoint" "$call_payload_json" >/dev/null
-  actual_json="$(view_result_json_with_retry "$contract_id" "$view_entrypoint" "$view_payload_json")"
-  if ! jq -en \
-    --argjson actual "$actual_json" \
-    --argjson expected "$expected_json" \
-    "$live_predicate_jq" \
-    >/dev/null; then
+  while (( attempt <= bootstrap_apply_retry_attempts )); do
+    echo "bootstrap apply: $label"
+    if ! call_contract_and_wait "$config" "$contract_id" "$call_entrypoint" "$call_payload_json" >/dev/null; then
+      actual_json="$(view_result_json_with_retry "$contract_id" "$view_entrypoint" "$view_payload_json" 2>/dev/null || true)"
+      if json_value_present "$actual_json" && jq -en \
+        --argjson actual "$actual_json" \
+        --argjson expected "$expected_json" \
+        "$live_predicate_jq" \
+        >/dev/null; then
+        echo "bootstrap note: $label submit failed after reaching expected live state"
+        return 0
+      fi
+      if (( attempt < bootstrap_apply_retry_attempts )); then
+        echo "bootstrap apply: $label submit failed; retrying ($attempt/$bootstrap_apply_retry_attempts)" >&2
+        sleep "$bootstrap_apply_retry_sleep_secs"
+        attempt=$(( attempt + 1 ))
+        continue
+      fi
+      return 1
+    fi
+
+    actual_json="$(view_result_json_with_retry "$contract_id" "$view_entrypoint" "$view_payload_json")"
+    if jq -en \
+      --argjson actual "$actual_json" \
+      --argjson expected "$expected_json" \
+      "$live_predicate_jq" \
+      >/dev/null; then
+      return 0
+    fi
+    if (( attempt < bootstrap_apply_retry_attempts )); then
+      echo "bootstrap apply: $label postcondition not visible; retrying ($attempt/$bootstrap_apply_retry_attempts)" >&2
+      sleep "$bootstrap_apply_retry_sleep_secs"
+      attempt=$(( attempt + 1 ))
+      continue
+    fi
     fail_bootstrap_diff "$label" "$expected_json" "$actual_json"
-  fi
+  done
 }
 
 dlmm_seed_snapshot_json() {
@@ -750,60 +1177,9 @@ ensure_dlmm_pool_custody_balances() {
 temp_signer_config_for_public_private_keys() {
   local public_key="$1"
   local private_key="$2"
-  local chain torii_url account_domain ttl_ms status_timeout_ms nonce tmp_config
 
-  chain="$(config_chain_id_from_config "$config")"
-  torii_url="$(awk -F '"' '/^[[:space:]]*torii_url[[:space:]]*=/ {print $2; exit}' "$config")"
-  account_domain="$(awk '
-    /^\[account\]/ { in_account = 1; next }
-    /^\[/ { in_account = 0 }
-    in_account && /^[[:space:]]*domain[[:space:]]*=/ {
-      sub(/^[[:space:]]*domain[[:space:]]*=[[:space:]]*"/, "", $0)
-      sub(/"[[:space:]]*$/, "", $0)
-      print $0
-      exit
-    }
-  ' "$config")"
-  ttl_ms="$(awk '
-    /^\[transaction\]/ { in_tx = 1; next }
-    /^\[/ { in_tx = 0 }
-    in_tx && /^[[:space:]]*time_to_live_ms[[:space:]]*=/ { gsub(/[^0-9]/, "", $0); print $0; exit }
-  ' "$config")"
-  status_timeout_ms="$(awk '
-    /^\[transaction\]/ { in_tx = 1; next }
-    /^\[/ { in_tx = 0 }
-    in_tx && /^[[:space:]]*status_timeout_ms[[:space:]]*=/ { gsub(/[^0-9]/, "", $0); print $0; exit }
-  ' "$config")"
-  nonce="$(awk '
-    /^\[transaction\]/ { in_tx = 1; next }
-    /^\[/ { in_tx = 0 }
-    in_tx && /^[[:space:]]*nonce[[:space:]]*=/ {
-      sub(/^[[:space:]]*nonce[[:space:]]*=[[:space:]]*/, "", $0)
-      print $0
-      exit
-    }
-  ' "$config")"
-
-  ttl_ms="${ttl_ms:-120000}"
-  status_timeout_ms="${status_timeout_ms:-120000}"
-  nonce="${nonce:-false}"
-  account_domain="${account_domain:-default}"
-  tmp_config="$(mktemp -t soraswap-signer-config)"
-  printf '%s\n' \
-    "chain = \"$chain\"" \
-    "torii_url = \"$torii_url\"" \
-    "" \
-    "[account]" \
-    "domain = \"$account_domain\"" \
-    "public_key = \"$public_key\"" \
-    "private_key = \"$private_key\"" \
-    "" \
-    "[transaction]" \
-    "time_to_live_ms = $ttl_ms" \
-    "status_timeout_ms = $status_timeout_ms" \
-    "nonce = $nonce" \
-    > "$tmp_config"
-  echo "$tmp_config"
+  TMPDIR="$bootstrap_secret_dir" \
+    materialize_cli_compatible_config "$config" "$public_key" "$private_key"
 }
 
 contract_subject_signer_config() {
@@ -811,7 +1187,7 @@ contract_subject_signer_config() {
   local kagami_bin seed key_output public_key private_key
 
   ensure_kagami_bin >/dev/null
-  kagami_bin="$SORASWAP_IROHA_ROOT/target/debug/kagami"
+  kagami_bin="${KAGAMI_BIN:-$SORASWAP_IROHA_ROOT/target/debug/kagami}"
   seed="iroha:contract-subject:v1:${contract_id}"
   key_output="$("$kagami_bin" keys --algorithm ed25519 --seed "$seed" --compact 2>/dev/null)"
   public_key="$(awk '/^ed[0-9A-Fa-f]+$/ { print; exit }' <<<"$key_output")"
@@ -1097,25 +1473,27 @@ warm_view "$n3x_hub_contract" quote_mint "$warmup_quote_mint_payload"
 warm_view "$dlmm_router_contract" quote_direct "$warmup_quote_direct_payload"
 warm_view "$dlmm_pool_contract" pool_config
 warm_view "$batch_epoch_auction_contract" epoch_state
-warm_view "$launchpad_liquidity_executor_contract" executor_config
-warm_view "$launchpad_sale_factory_contract" sale_config "$warmup_sale_payload"
-warm_view "$referral_registry_contract" registry_config
-warm_view "$farms_farm_contract" farm_config
-warm_view "$risk_vault_contract" bucket_state "$warmup_bucket_payload"
-warm_view "$perps_engine_contract" engine_config
-warm_view "$perps_engine_contract" market_state "$warmup_market_payload"
-warm_view "$options_manager_contract" manager_config
-warm_view "$options_manager_contract" template_state "$warmup_template_payload"
-warm_view "$options_manager_contract" series_state "$warmup_series_payload"
-warm_view "$options_factory_contract" factory_config
-warm_view "$options_factory_contract" series_state "$warmup_series_payload"
-warm_view "$options_vault_contract" vault_state "$warmup_series_payload"
-warm_view "$options_shout_option_contract" series_state "$warmup_series_payload"
-warm_view "$options_outperformance_option_contract" series_state "$warmup_series_payload"
-warm_view "$cover_policy_manager_contract" manager_config
-warm_view "$cover_policy_manager_contract" policy_state "$warmup_policy_payload"
-warm_view "$automation_job_queue_contract" mirror_job "$warmup_job_payload"
 warm_view "$escrow_conditional_escrow_contract" escrow_state "$warmup_escrow_payload"
+if [[ "$bootstrap_scope" != "foundation" ]]; then
+  warm_view "$launchpad_liquidity_executor_contract" executor_config
+  warm_view "$launchpad_sale_factory_contract" sale_config "$warmup_sale_payload"
+  warm_view "$referral_registry_contract" registry_config
+  warm_view "$farms_farm_contract" farm_config
+  warm_view "$risk_vault_contract" bucket_state "$warmup_bucket_payload"
+  warm_view "$perps_engine_contract" engine_config
+  warm_view "$perps_engine_contract" market_state "$warmup_market_payload"
+  warm_view "$options_manager_contract" manager_config
+  warm_view "$options_manager_contract" template_state "$warmup_template_payload"
+  warm_view "$options_manager_contract" series_state "$warmup_series_payload"
+  warm_view "$options_factory_contract" factory_config
+  warm_view "$options_factory_contract" series_state "$warmup_series_payload"
+  warm_view "$options_vault_contract" vault_state "$warmup_series_payload"
+  warm_view "$options_shout_option_contract" series_state "$warmup_series_payload"
+  warm_view "$options_outperformance_option_contract" series_state "$warmup_series_payload"
+  warm_view "$cover_policy_manager_contract" manager_config
+  warm_view "$cover_policy_manager_contract" policy_state "$warmup_policy_payload"
+  warm_view "$automation_job_queue_contract" mirror_job "$warmup_job_payload"
+fi
 if [[ -n "$sccp_bridge_contract" ]]; then
   warm_view "$sccp_bridge_contract" listing_config
 fi
@@ -1156,12 +1534,15 @@ n3x_init_payload="$(jq -cn \
     redeem_fee_bps: $redeem_fee_bps
   }')"
 if ! view_result_json "$n3x_hub_contract" hub_config null >/dev/null 2>&1; then
-  echo "bootstrap apply: n3x hub config"
-  call_contract_and_wait "$config" "$n3x_hub_contract" "init_hub" "$n3x_init_payload" >/dev/null
-  n3x_actual_json="$(view_result_json_with_retry "$n3x_hub_contract" "hub_config" null)"
-  if ! json_equals "$n3x_actual_json" "$n3x_expected_json"; then
-    fail_bootstrap_diff "n3x hub config" "$n3x_expected_json" "$n3x_actual_json"
-  fi
+  ensure_view_predicate_or_apply \
+    "n3x hub config" \
+    "$n3x_hub_contract" \
+    "hub_config" \
+    null \
+    "$n3x_expected_json" \
+    "init_hub" \
+    "$n3x_init_payload" \
+    '$actual == $expected'
 else
   n3x_actual_json="$(view_result_json "$n3x_hub_contract" "hub_config" null)"
   if json_equals "$n3x_actual_json" "$n3x_expected_json"; then
@@ -1189,6 +1570,8 @@ else
       n3x_basket_usdt="$(jq -r '.[1]' <<<"$n3x_state_json")"
       n3x_basket_usdc="$(jq -r '.[2]' <<<"$n3x_state_json")"
       n3x_basket_kusd="$(jq -r '.[3]' <<<"$n3x_state_json")"
+      n3x_mint_fees_accrued="$(jq -r '.[7]' <<<"$n3x_state_json")"
+      n3x_redeem_fees_accrued="$(jq -r '.[8]' <<<"$n3x_state_json")"
       n3x_source_signer_config="$config"
       n3x_source_signer_cleanup=0
       n3x_source_signer_available=0
@@ -1260,7 +1643,7 @@ else
           authority_kusd_balance="$(asset_value_for_account_id "$config" "$kusd_id" "$SORASWAP_AUTHORITY")"
           if (( authority_usdt_balance < migrate_usdt_topup || authority_usdc_balance < migrate_usdc_topup || authority_kusd_balance < migrate_kusd_topup )); then
             if (( n3x_source_signer_cleanup == 1 )); then
-              rm -f "$n3x_source_signer_config"
+              soraswap_secure_unlink_owned_file "$n3x_source_signer_config"
             fi
             fail_bootstrap_diff \
               "n3x hub custody balances" \
@@ -1283,7 +1666,7 @@ else
           final_target_kusd_balance="$(asset_value_for_account_id "$config" "$kusd_id" "$n3x_vault_account")"
           if (( final_target_usdt_balance < n3x_basket_usdt || final_target_usdc_balance < n3x_basket_usdc || final_target_kusd_balance < n3x_basket_kusd )); then
             if (( n3x_source_signer_cleanup == 1 )); then
-              rm -f "$n3x_source_signer_config"
+              soraswap_secure_unlink_owned_file "$n3x_source_signer_config"
             fi
             fail_bootstrap_diff \
               "n3x hub migrated custody balances" \
@@ -1298,21 +1681,43 @@ else
             "$(jq -cn --arg vault_account "$n3x_vault_account" '{ vault_account: $vault_account }')" \
             >/dev/null
           if (( n3x_source_signer_cleanup == 1 )); then
-            rm -f "$n3x_source_signer_config"
+            soraswap_secure_unlink_owned_file "$n3x_source_signer_config"
           fi
         fi
       else
-        if [[ "$n3x_actual_vault_account" != "$n3x_vault_account" || "$n3x_basket_usdt" != "0" || "$n3x_basket_usdc" != "0" || "$n3x_basket_kusd" != "0" ]]; then
-          echo "bootstrap apply: n3x hub zero-supply repair"
+        if [[ "$n3x_basket_usdt" != "0" || "$n3x_basket_usdc" != "0" || "$n3x_basket_kusd" != "0" || "$n3x_mint_fees_accrued" != "0" || "$n3x_redeem_fees_accrued" != "0" ]]; then
+          if (( n3x_source_signer_cleanup == 1 )); then
+            soraswap_secure_unlink_owned_file "$n3x_source_signer_config"
+          fi
+          fail_bootstrap_diff \
+            "n3x hub zero-supply accounting" \
+            '{"basket_usdt":0,"basket_usdc":0,"basket_kusd":0,"mint_fees_accrued":0,"redeem_fees_accrued":0}' \
+            "$(jq -cn --argjson state "$n3x_state_json" '{ basket_usdt: ($state[1] // 0), basket_usdc: ($state[2] // 0), basket_kusd: ($state[3] // 0), mint_fees_accrued: ($state[7] // 0), redeem_fees_accrued: ($state[8] // 0) }')"
+        fi
+        n3x_fee_state_json="$(view_result_json "$n3x_hub_contract" "fee_reserve_state" null)"
+        if ! jq -en --argjson state "$n3x_fee_state_json" '
+          ($state[0] // 0) == 0
+          and ($state[1] // 0) == 0
+          and ($state[2] // 0) == 0
+          and ($state[3] // 0) == 0
+          and ($state[4] // 0) == 0
+        ' >/dev/null; then
+          if (( n3x_source_signer_cleanup == 1 )); then
+            soraswap_secure_unlink_owned_file "$n3x_source_signer_config"
+          fi
+          fail_bootstrap_diff "n3x hub zero-supply fee reserves" '[0,0,0,0,0]' "$n3x_fee_state_json"
+        fi
+        if [[ "$n3x_actual_vault_account" != "$n3x_vault_account" ]]; then
+          echo "bootstrap apply: n3x hub vault binding"
           call_contract_and_wait \
             "$config" \
             "$n3x_hub_contract" \
-            "repair_zero_supply_state" \
+            "bind_vault_account" \
             "$(jq -cn --arg vault_account "$n3x_vault_account" '{ vault_account: $vault_account }')" \
             >/dev/null
         fi
         if (( n3x_source_signer_cleanup == 1 )); then
-          rm -f "$n3x_source_signer_config"
+          soraswap_secure_unlink_owned_file "$n3x_source_signer_config"
         fi
       fi
 
@@ -1330,7 +1735,17 @@ else
           and ($state[7] // 0) == 0
           and ($state[8] // 0) == 0
         ' >/dev/null; then
-          fail_bootstrap_diff "n3x hub zero-supply repair" '[0,0,0,0,0,0]' "$n3x_state_json"
+          fail_bootstrap_diff "n3x hub zero-supply accounting" '[0,0,0,0,0,0]' "$n3x_state_json"
+        fi
+        n3x_fee_state_json="$(view_result_json_with_retry "$n3x_hub_contract" "fee_reserve_state" null)"
+        if ! jq -en --argjson state "$n3x_fee_state_json" '
+          ($state[0] // 0) == 0
+          and ($state[1] // 0) == 0
+          and ($state[2] // 0) == 0
+          and ($state[3] // 0) == 0
+          and ($state[4] // 0) == 0
+        ' >/dev/null; then
+          fail_bootstrap_diff "n3x hub zero-supply fee reserves" '[0,0,0,0,0]' "$n3x_fee_state_json"
         fi
       fi
     else
@@ -1500,9 +1915,6 @@ pool_init_payload="$(jq -cn \
     max_bins_per_swap: $max_bins_per_swap,
     bin_liquidity_cap: $bin_liquidity_cap
   }')"
-if ! view_result_json "$dlmm_pool_contract" pool_config null >/dev/null 2>&1; then
-  call_contract_and_wait "$config" "$dlmm_pool_contract" warm_write null >/dev/null
-fi
 pool_actual_json="$(view_result_json "$dlmm_pool_contract" "pool_config" null 2>/dev/null || true)"
 if [[ -z "$pool_actual_json" ]]; then
   echo "bootstrap init: dlmm pool config"
@@ -1520,7 +1932,6 @@ pool_current_vault_contract="$(historical_contract_id_for_subject_account "$mode
 if [[ -z "$pool_current_vault_contract" ]]; then
   pool_current_vault_contract="$(historical_contract_id_for_subject_account "$mode" "n3x.n3x_hub" "$pool_current_vault_account" || true)"
 fi
-pool_active_bin_repair_needed=0
 if json_equals "$pool_actual_json" "$pool_expected_json"; then
   echo "bootstrap skip: dlmm pool config already matches expected state"
 elif json_equals "$pool_actual_json" "$pool_legacy_json"; then
@@ -1570,43 +1981,15 @@ elif jq -en \
     and ($actual[5] != $expected[5])
   ' >/dev/null; then
   pool_live_active_bin="$(jq -r '.[5]' <<<"$pool_actual_json")"
-  if [[ "$mode" == "testnet" || "$mode" == "production" ]]; then
-    pool_live_active_bin_state_json="$(view_result_json "$dlmm_pool_contract" "mirror_bin" "$(jq -cn --argjson bin_id "$pool_live_active_bin" '{ bin_id: $bin_id }')")"
-    pool_seed_anchor_state_json="$(view_result_json "$dlmm_pool_contract" "mirror_bin" "$(jq -cn --argjson bin_id "$pool_active_bin" '{ bin_id: $bin_id }')")"
-    pool_seed_position_json="$(view_result_json "$dlmm_pool_contract" "mirror_position" "$(jq -cn --arg position_id "$pool_position_id" '{ position_id: $position_id }')")"
-    if jq -en \
-      --argjson live "$pool_live_active_bin_state_json" \
-      --argjson anchor "$pool_seed_anchor_state_json" \
-      --argjson position "$pool_seed_position_json" \
-      --argjson anchor_bin "$pool_active_bin" \
-      '
-        (($live[0] // 0) + ($live[1] // 0) + ($live[2] // 0)) == 0
-        and (
-          (($anchor[0] // 0) + ($anchor[1] // 0) + ($anchor[2] // 0)) > 0
-          or (
-            ($position[0] // 0) == 1
-            and ($position[1] // 0) == $anchor_bin
-            and ($position[2] // 0) > 0
-          )
-        )
-      ' >/dev/null; then
-      echo "bootstrap note: dlmm pool active bin drift detected on live $mode (live=${pool_live_active_bin}, expected=${pool_active_bin}) but the live bin is empty and the seeded anchor is still populated; repairing back to the seed anchor"
-      pool_active_bin_repair_needed=1
-    else
-      echo "bootstrap note: dlmm pool active bin drift detected on live $mode (live=${pool_live_active_bin}, expected=${pool_active_bin}); preserving live config and relying on swap-time realignment"
-      pool_expected_json="$(jq -cn \
-        --arg base_asset "$xor_id" \
-        --arg quote_asset "$usdt_id" \
-        --arg vault_account "$dlmm_pool_vault_account" \
-        --argjson fee_pips "$pool_fee_pips" \
-        --argjson bin_step "$pool_bin_step" \
-        --argjson active_bin "$pool_live_active_bin" \
-        '[ $base_asset, $quote_asset, $vault_account, $fee_pips, $bin_step, $active_bin ]')"
-    fi
-  else
-    echo "bootstrap note: dlmm pool active bin drifted from the configured seed anchor (live=${pool_live_active_bin}, expected=${pool_active_bin}); repairing active bin"
-    pool_active_bin_repair_needed=1
-  fi
+  echo "bootstrap note: dlmm pool active bin differs from the configured seed anchor (live=${pool_live_active_bin}, expected=${pool_active_bin}); preserving live active bin and leaving price-state realignment to swaps/governed triggers"
+  pool_expected_json="$(jq -cn \
+    --arg base_asset "$xor_id" \
+    --arg quote_asset "$usdt_id" \
+    --arg vault_account "$dlmm_pool_vault_account" \
+    --argjson fee_pips "$pool_fee_pips" \
+    --argjson bin_step "$pool_bin_step" \
+    --argjson active_bin "$pool_live_active_bin" \
+    '[ $base_asset, $quote_asset, $vault_account, $fee_pips, $bin_step, $active_bin ]')"
 else
   fail_bootstrap_diff "dlmm pool config" "$pool_expected_json" "$pool_actual_json" "$(jq -cn --argjson legacy "$pool_legacy_json" --argjson polluted "$pool_n3x_custody_json" --argjson n3x_source "$pool_n3x_source_custody_json" --argjson previous "$pool_previous_custody_json" '[ $legacy, $polluted ] + (if $n3x_source == null then [] else [ $n3x_source ] end) + (if $previous == null then [] else [ $previous ] end)')"
 fi
@@ -1627,22 +2010,6 @@ if ! json_equals "$pool_actual_json" "$pool_expected_json"; then
     ensure_signer_fee_balance "$pool_current_vault_account"
   fi
 
-  if (( pool_active_bin_repair_needed == 1 )); then
-    echo "bootstrap apply: dlmm pool active bin repair"
-    call_contract_and_wait \
-      "$pool_bind_config" \
-      "$dlmm_pool_contract" \
-      "repair_active_bin" \
-      "$(jq -cn --argjson active_bin "$pool_active_bin" '{ active_bin: $active_bin }')" \
-      "$bootstrap_maintenance_gas_limit" \
-      >/dev/null
-    if (( pool_bind_cleanup == 1 )); then
-      rm -f "$pool_bind_config"
-      pool_bind_cleanup=0
-    fi
-    pool_actual_json="$(view_result_json "$dlmm_pool_contract" "pool_config" null)"
-  fi
-
   if json_equals "$pool_actual_json" "$pool_expected_json"; then
     :
   else
@@ -1655,7 +2022,7 @@ if ! json_equals "$pool_actual_json" "$pool_expected_json"; then
     "$bootstrap_maintenance_gas_limit" \
     >/dev/null
   if (( pool_bind_cleanup == 1 )); then
-    rm -f "$pool_bind_config"
+    soraswap_secure_unlink_owned_file "$pool_bind_config"
   fi
   pool_actual_json="$(view_result_json "$dlmm_pool_contract" "pool_config" null)"
   if ! json_equals "$pool_actual_json" "$pool_expected_json"; then
@@ -1712,7 +2079,7 @@ dlmm_seed_expected_json="$(jq -cn \
   }')"
 ensure_dlmm_seed_state "$next_bin_id" "$far_bin_id" "$dlmm_seed_empty_json" "$dlmm_seed_expected_json"
 if (( dlmm_pool_balance_source_cleanup == 1 )); then
-  rm -f "$dlmm_pool_balance_source_signer_config"
+  soraswap_secure_unlink_owned_file "$dlmm_pool_balance_source_signer_config"
 fi
 
 dlmm_range_governor_expected_json="$(jq -cn \
@@ -2084,8 +2451,8 @@ ensure_step_from_prior_or_skip_with_live_predicate \
 
 if [[ "$mode" != "local" ]]; then
   echo "bootstrap apply: risk bucket 1 controller sync"
-  if ! SORASWAP_TX_PIPELINE_WAIT_SECS="${SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_PIPELINE_WAIT_SECS:-20}" \
-    SORASWAP_TX_COMMITTED_WAIT_SECS="${SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_COMMITTED_WAIT_SECS:-20}" \
+  if ! SORASWAP_TX_PIPELINE_WAIT_SECS="$bootstrap_controller_sync_pipeline_wait_secs" \
+    SORASWAP_TX_COMMITTED_WAIT_SECS="$bootstrap_controller_sync_committed_wait_secs" \
     call_contract_and_wait \
       "$config" \
       "$risk_vault_contract" \
@@ -2095,8 +2462,8 @@ if [[ "$mode" != "local" ]]; then
     echo "bootstrap note: risk bucket 1 controller sync did not confirm within the bounded wait; continuing with existing live state" >&2
   fi
   echo "bootstrap apply: risk bucket 2 controller sync"
-  if ! SORASWAP_TX_PIPELINE_WAIT_SECS="${SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_PIPELINE_WAIT_SECS:-20}" \
-    SORASWAP_TX_COMMITTED_WAIT_SECS="${SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_COMMITTED_WAIT_SECS:-20}" \
+  if ! SORASWAP_TX_PIPELINE_WAIT_SECS="$bootstrap_controller_sync_pipeline_wait_secs" \
+    SORASWAP_TX_COMMITTED_WAIT_SECS="$bootstrap_controller_sync_committed_wait_secs" \
     call_contract_and_wait \
       "$config" \
       "$risk_vault_contract" \
@@ -2106,8 +2473,8 @@ if [[ "$mode" != "local" ]]; then
     echo "bootstrap note: risk bucket 2 controller sync did not confirm within the bounded wait; continuing with existing live state" >&2
   fi
   echo "bootstrap apply: risk bucket 3 controller sync"
-  if ! SORASWAP_TX_PIPELINE_WAIT_SECS="${SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_PIPELINE_WAIT_SECS:-20}" \
-    SORASWAP_TX_COMMITTED_WAIT_SECS="${SORASWAP_BOOTSTRAP_CONTROLLER_SYNC_COMMITTED_WAIT_SECS:-20}" \
+  if ! SORASWAP_TX_PIPELINE_WAIT_SECS="$bootstrap_controller_sync_pipeline_wait_secs" \
+    SORASWAP_TX_COMMITTED_WAIT_SECS="$bootstrap_controller_sync_committed_wait_secs" \
     call_contract_and_wait \
       "$config" \
       "$risk_vault_contract" \
@@ -2337,9 +2704,9 @@ perps_engine_initialized_live_state() {
     ' >/dev/null
 }
 
-repair_orphaned_perps_positions() {
+assert_no_orphaned_perps_positions() {
   local engine_json next_position_id position_id position_payload position_json
-  local liability_payload liability_json mark_price_bps index_price_bps
+  local liability_payload liability_json
 
   if ! engine_json="$(view_result_json "$perps_engine_contract" "engine_config" null 2>/dev/null)"; then
     return 0
@@ -2364,30 +2731,18 @@ repair_orphaned_perps_positions() {
 
     liability_payload="$(jq -cn --argjson bucket_id 1 --argjson exposure_id "$position_id" '{ bucket_id: $bucket_id, exposure_id: $exposure_id }')"
     if ! liability_json="$(view_result_json "$risk_vault_contract" "liability_state" "$liability_payload" 2>/dev/null)"; then
-      continue
+      echo "bootstrap invariant failed: unable to read risk vault bucket-1 liability for active perps position $position_id" >&2
+      exit 1
     fi
-    if ! jq -en --argjson liability "$liability_json" '(($liability[0] // 0) == 0)' >/dev/null; then
-      continue
-    fi
-
-    mark_price_bps="$(jq -er 'if (.[8] // 0) > 0 then .[8] elif (.[7] // 0) > 0 then .[7] else 10000 end' <<<"$position_json")"
-    index_price_bps="$(jq -er 'if (.[9] // 0) > 0 then .[9] elif (.[8] // 0) > 0 then .[8] elif (.[7] // 0) > 0 then .[7] else 10000 end' <<<"$position_json")"
-
-    echo "bootstrap apply: perps orphan repair position $position_id"
-    call_contract_and_wait \
-      "$config" \
-      "$perps_engine_contract" \
-      "admin_repair_orphan_position" \
-      "$(jq -cn \
+    if jq -en --argjson liability "$liability_json" '(($liability[0] // 0) == 0)' >/dev/null; then
+      echo "bootstrap invariant failed: active perps position $position_id has no risk vault bucket-1 liability" >&2
+      jq -cn \
         --argjson position_id "$position_id" \
-        --argjson mark_price_bps "$mark_price_bps" \
-        --argjson index_price_bps "$index_price_bps" \
-        '{
-          position_id: $position_id,
-          mark_price_bps: $mark_price_bps,
-          index_price_bps: $index_price_bps
-        }')" \
-      >/dev/null
+        --argjson position "$position_json" \
+        --argjson liability "$liability_json" \
+        '{ position_id: $position_id, position_state: $position, liability_state: $liability }' >&2
+      exit 1
+    fi
   done
 }
 if [[ "$mode" == "local" ]]; then
@@ -2454,7 +2809,7 @@ else
       if perps_engine_initialized_live_state; then
         echo "bootstrap skip: perps engine init already completed on advanced live state"
       elif ! perps_engine_matches_live_state; then
-        printf '%s\n' "$init_output" >&2
+        printf '%s\n' "$(soraswap_redact_sensitive_text "$init_output")" >&2
         exit 1
       fi
     fi
@@ -2545,7 +2900,7 @@ ensure_step_from_prior_or_skip_with_live_predicate \
    and (($actual[10] // 0) >= 0)
    and (($actual[11] // 0) >= 0)
    and (($actual[12] // 0) == ($expected[12] // 0))'
-repair_orphaned_perps_positions
+assert_no_orphaned_perps_positions
 trigger_lifecycle_predicate='
   $actual[0] == $expected[0]
   and $actual[1] == $expected[1]
@@ -2586,6 +2941,14 @@ ensure_init_or_skip_with_live_predicate \
   '$actual[0] == $expected[0]
    and (($actual[2] // 0) >= ($expected[2] // 0))
    and (($actual[3] // 0) >= ($expected[3] // 0))'
+apply_step_and_expect \
+  "options manager oracle stale slots" \
+  "$options_manager_contract" \
+  "oracle_stale_slots" \
+  null \
+  "$(jq -cn --argjson oracle_stale_slots "$options_oracle_stale_slots" '$oracle_stale_slots')" \
+  "configure_oracle_stale_slots" \
+  "$(jq -cn --argjson oracle_stale_slots "$options_oracle_stale_slots" '{ oracle_stale_slots: $oracle_stale_slots }')"
 apply_step_and_expect \
   "options manager automation" \
   "$options_manager_contract" \
@@ -2665,6 +3028,14 @@ ensure_init_or_skip_with_live_predicate \
   "$(jq -cn --arg settlement_asset "$usdt_id" --arg guardian "$vault_account" --arg oracle_public_key "$oracle_public_key_hex" --argjson oracle_scheme "$oracle_scheme" '{ settlement_asset: $settlement_asset, guardian: $guardian, oracle_public_key: $oracle_public_key, oracle_scheme: $oracle_scheme }')" \
   '$actual[0] == $expected[0]
    and (($actual[2] // 0) >= ($expected[2] // 0))'
+apply_step_and_expect \
+  "options factory oracle stale slots" \
+  "$options_factory_contract" \
+  "oracle_stale_slots" \
+  null \
+  "$(jq -cn --argjson oracle_stale_slots "$options_oracle_stale_slots" '$oracle_stale_slots')" \
+  "configure_oracle_stale_slots" \
+  "$(jq -cn --argjson oracle_stale_slots "$options_oracle_stale_slots" '{ oracle_stale_slots: $oracle_stale_slots }')"
 echo "bootstrap apply: options factory bind manager"
 call_contract_and_wait \
   "$config" \
@@ -2786,6 +3157,14 @@ if ! call_contract_and_wait \
   >/dev/null 2>&1; then
   echo "bootstrap skip: options shout product init already applied"
 fi
+apply_step_and_expect \
+  "options shout oracle stale slots" \
+  "$options_shout_option_contract" \
+  "oracle_stale_slots" \
+  null \
+  "$(jq -cn --argjson oracle_stale_slots "$options_oracle_stale_slots" '$oracle_stale_slots')" \
+  "configure_oracle_stale_slots" \
+  "$(jq -cn --argjson oracle_stale_slots "$options_oracle_stale_slots" '{ oracle_stale_slots: $oracle_stale_slots }')"
 echo "bootstrap apply: options shout bind controller"
 call_contract_and_wait \
   "$config" \
@@ -2928,6 +3307,71 @@ ensure_view_predicate_or_apply \
 cover_manager_init_json="$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson oracle_stale_slots "$cover_oracle_stale_slots" '[ $settlement_asset, $risk_vault_contract, 1, $required_observations, $oracle_stale_slots, 0, 0, 0, 0 ]')"
 cover_manager_live_json="$(jq -cn --arg settlement_asset "$usdt_id" --arg risk_vault_contract "$risk_vault_contract_blob_hex" --argjson required_observations "$cover_required_observations" --argjson oracle_stale_slots "$cover_oracle_stale_slots" '[ $settlement_asset, $risk_vault_contract, 0, $required_observations, $oracle_stale_slots, 0, 0, 0, 0 ]')"
 cover_automation_expected_json='[1,301,3,10,0,0,0]'
+sync_cover_manager_oracle_stale_slots() {
+  ensure_view_predicate_or_apply \
+    "cover manager oracle stale slots" \
+    "$cover_policy_manager_contract" \
+    "manager_config" \
+    null \
+    "$cover_manager_live_json" \
+    "configure_oracle_stale_slots" \
+    "$(jq -cn --argjson oracle_stale_slots "$cover_oracle_stale_slots" '{ oracle_stale_slots: $oracle_stale_slots }')" \
+    '$actual[0] == $expected[0]
+     and $actual[1] == $expected[1]
+     and $actual[3] == $expected[3]
+     and $actual[4] == $expected[4]
+     and (($actual[5] // 0) >= ($expected[5] // 0))
+     and (($actual[6] // 0) >= ($expected[6] // 0))
+     and (($actual[7] // 0) >= ($expected[7] // 0))
+     and (($actual[8] // 0) >= ($expected[8] // 0))'
+}
+sync_cover_manager_next_policy_id() {
+  local current_json current_next target_next candidate policy_json liability_json status notional collateral settled
+
+  current_json="$(view_result_json "$cover_policy_manager_contract" "next_policy_id" null 2>/dev/null || true)"
+  if ! current_next="$(jq -er 'select(type == "number" and . > 0)' <<<"$current_json" 2>/dev/null)"; then
+    echo "bootstrap note: cover manager next_policy_id view unavailable; skipping policy id cursor sync" >&2
+    return 0
+  fi
+
+  target_next="$current_next"
+  candidate=1
+  while (( candidate <= cover_policy_id_scan_limit )); do
+    policy_json="$(view_result_json "$cover_policy_manager_contract" "policy_state" "$(jq -cn --argjson policy_id "$candidate" '{ policy_id: $policy_id }')" 2>/dev/null || echo 'null')"
+    if jq -e 'type == "array" and (.[0] // 0) == 1' <<<"$policy_json" >/dev/null 2>&1; then
+      if (( candidate >= target_next )); then
+        target_next=$(( candidate + 1 ))
+      fi
+    fi
+
+    liability_json="$(view_result_json "$risk_vault_contract" "liability_state" "$(jq -cn --argjson exposure_id "$candidate" '{ bucket_id: 3, exposure_id: $exposure_id }')" 2>/dev/null || echo 'null')"
+    if jq -e 'type == "array" and ((.[0] // 0) != 0 or (.[1] // 0) != 0 or (.[2] // 0) != 0 or (.[3] // 0) != 0)' <<<"$liability_json" >/dev/null 2>&1; then
+      if (( candidate >= target_next )); then
+        target_next=$(( candidate + 1 ))
+      fi
+    fi
+
+    candidate=$(( candidate + 1 ))
+  done
+
+  if (( target_next <= current_next )); then
+    echo "bootstrap skip: cover manager next policy id already avoids used risk-vault exposures"
+    return 0
+  fi
+
+  echo "bootstrap apply: cover manager next policy id"
+  call_contract_and_wait \
+    "$config" \
+    "$cover_policy_manager_contract" \
+    "configure_next_policy_id" \
+    "$(jq -cn --argjson next_policy_id "$target_next" '{ next_policy_id: $next_policy_id }')" \
+    >/dev/null
+
+  current_json="$(view_result_json_with_retry "$cover_policy_manager_contract" "next_policy_id" null)"
+  if ! jq -e --argjson target_next "$target_next" 'type == "number" and . >= $target_next' <<<"$current_json" >/dev/null; then
+    fail_bootstrap_diff "cover manager next policy id" "$target_next" "$current_json"
+  fi
+}
 if [[ "$mode" == "local" ]]; then
   ensure_init_or_skip_with_live_predicate \
     "cover manager config" \
@@ -2954,6 +3398,8 @@ if [[ "$mode" == "local" ]]; then
     "bind_contract" \
     "$(jq -cn --arg contract_id "$cover_policy_manager_contract_subject" '{ contract_id: $contract_id }')" \
     >/dev/null
+  sync_cover_manager_next_policy_id
+  sync_cover_manager_oracle_stale_slots
   ensure_step_from_prior_or_skip_with_live_predicate \
     "cover manager exit withdrawal only" \
     "$cover_policy_manager_contract" \
@@ -3000,11 +3446,12 @@ else
       "bind_contract" \
       "$(jq -cn --arg contract_id "$cover_policy_manager_contract_subject" '{ contract_id: $contract_id }')" \
       >/dev/null 2>&1; then
-      echo "bootstrap note: cover manager bind_contract returned a non-fatal live-state error; continuing" >&2
-    fi
-    echo "bootstrap apply: cover manager exit withdrawal only"
-    if ! call_contract_and_wait "$config" "$cover_policy_manager_contract" "exit_withdrawal_only" null >/dev/null 2>&1; then
-      echo "bootstrap note: cover manager exit_withdrawal_only returned a non-fatal live-state error; continuing" >&2
+	    echo "bootstrap note: cover manager bind_contract returned a non-fatal live-state error; continuing" >&2
+	  fi
+	  sync_cover_manager_next_policy_id
+	  echo "bootstrap apply: cover manager exit withdrawal only"
+	  if ! call_contract_and_wait "$config" "$cover_policy_manager_contract" "exit_withdrawal_only" null >/dev/null 2>&1; then
+	    echo "bootstrap note: cover manager exit_withdrawal_only returned a non-fatal live-state error; continuing" >&2
     fi
   else
     echo "bootstrap skip: cover automation already matches expected live state"
@@ -3019,15 +3466,17 @@ else
     echo "bootstrap note: cover manager bind_risk_vault returned a non-fatal live-state error; continuing" >&2
   fi
   echo "bootstrap apply: cover manager bind contract"
-  if ! call_contract_and_wait \
-    "$config" \
-    "$cover_policy_manager_contract" \
-    "bind_contract" \
-    "$(jq -cn --arg contract_id "$cover_policy_manager_contract_subject" '{ contract_id: $contract_id }')" \
-    >/dev/null 2>&1; then
-    echo "bootstrap note: cover manager bind_contract returned a non-fatal live-state error; continuing" >&2
-  fi
-  ensure_step_from_prior_or_skip_with_live_predicate \
+	  if ! call_contract_and_wait \
+	    "$config" \
+	    "$cover_policy_manager_contract" \
+	    "bind_contract" \
+	    "$(jq -cn --arg contract_id "$cover_policy_manager_contract_subject" '{ contract_id: $contract_id }')" \
+	    >/dev/null 2>&1; then
+	    echo "bootstrap note: cover manager bind_contract returned a non-fatal live-state error; continuing" >&2
+	  fi
+	  sync_cover_manager_next_policy_id
+	  sync_cover_manager_oracle_stale_slots
+	  ensure_step_from_prior_or_skip_with_live_predicate \
     "cover manager exit withdrawal only" \
     "$cover_policy_manager_contract" \
     "manager_config" \
@@ -3321,7 +3770,8 @@ ensure_step_from_prior_or_skip_with_live_predicate \
    and (($actual[3] // 0) >= 0)
    and (($actual[4] // 0) >= 0)
    and (($actual[5] // 0) >= 0)
-   and (($actual[6] // 0) == 0)'
+   and (($actual[6] // 0) == 0)' \
+  1
 ensure_step_from_prior_or_skip_with_live_predicate \
   "soraswap launch operator bond" \
   "$operators_registry_contract" \
@@ -3360,15 +3810,19 @@ ensure_step_from_prior_or_skip \
   "$(jq -cn --arg market_id "$soraswap_launch_margin_market_id" --argjson risk_weight_bps "$soraswap_launch_margin_risk_weight_bps" --argjson liquidation_threshold_bps "$soraswap_launch_margin_liquidation_threshold_bps" '{market_id:$market_id, risk_weight_bps:$risk_weight_bps, liquidation_threshold_bps:$liquidation_threshold_bps}')"
 
 launch_rwa_view_payload="$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" '{market_id: $market_id}')"
-ensure_step_from_prior_or_skip \
-  "soraswap launch rwa market" \
-  "$rwa_market_contract" \
-  "rwa_market_state" \
-  "$launch_rwa_view_payload" \
-  '[0,0,0,0]' \
-  "$(jq -cn --argjson nav "$soraswap_launch_rwa_nav" --argjson shares "$soraswap_launch_rwa_shares" '[1,$nav,$shares,1]')" \
-  "issue_lot" \
-  "$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" --arg share_asset "$n3x_id" --arg nav_asset "$usdt_id" --argjson initial_nav_per_share "$soraswap_launch_rwa_nav" --argjson total_shares "$soraswap_launch_rwa_shares" '{market_id:$market_id, share_asset:$share_asset, nav_asset:$nav_asset, initial_nav_per_share:$initial_nav_per_share, total_shares:$total_shares}')"
+if [[ "$rwa_release_enabled" == "1" ]]; then
+  ensure_step_from_prior_or_skip \
+    "soraswap launch rwa market" \
+    "$rwa_market_contract" \
+    "rwa_market_state" \
+    "$launch_rwa_view_payload" \
+    '[0,0,0,0]' \
+    "$(jq -cn --argjson nav "$soraswap_launch_rwa_nav" --argjson shares "$soraswap_launch_rwa_shares" '[1,$nav,$shares,1]')" \
+    "issue_lot" \
+    "$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" --arg share_asset "$n3x_id" --arg nav_asset "$usdt_id" --argjson initial_nav_per_share "$soraswap_launch_rwa_nav" --argjson total_shares "$soraswap_launch_rwa_shares" '{market_id:$market_id, share_asset:$share_asset, nav_asset:$nav_asset, initial_nav_per_share:$initial_nav_per_share, total_shares:$total_shares}')"
+else
+  echo "skipping public RWA market bootstrap; set SORASWAP_ENABLE_RWA_RELEASE=1 only for an explicit RWA launch"
+fi
 
 twamm_init_expected_json="$(jq -cn \
   --argjson cadence_slots "$twamm_trigger_cadence_slots" \

@@ -1,18 +1,69 @@
+// Options position factory with shared-vault collateralization.
+//
+// Buying is fully typed and atomic across the risk vault, accounting vault,
+// and product modules. Oracle-derived mutations remain private until the
+// compiler-owned schema-bound signed-attestation verifier is wired in.
+
 seiyaku OptionsFactory {
+  error enum OptionsFactoryError {
+    OwnerMismatch = 1,
+    GuardianMismatch = 2,
+    WithdrawalOnly = 3,
+    AutomationUnsafe = 4,
+    InvalidKind = 5,
+    InvalidNotional = 6,
+    InvalidPremium = 7,
+    InvalidCollateral = 8,
+    InvalidExpiry = 9,
+    InvalidStrike = 10,
+    InvalidGuard = 11,
+    InvalidCadence = 12,
+    InvalidMaxItems = 13,
+    InvalidEnabled = 14,
+    InvalidJobId = 15,
+    InvalidBacklogCap = 16,
+    InvalidBacklog = 17,
+    InvalidSafeMode = 18,
+    InvalidOracleScheme = 19,
+    InvalidOracleStaleSlots = 20,
+    InvalidOracleSlot = 21,
+    InvalidMark = 22,
+    MissingAttestation = 23,
+    OracleStale = 24,
+    OracleSlotReplay = 25,
+    SeriesExists = 26,
+    SeriesMissing = 27,
+    SeriesInactive = 28,
+    SeriesExpired = 29,
+    SeriesNotExpired = 30,
+    SeriesCapacity = 31,
+    SeriesPausedByGuard = 32,
+    SeriesLimit = 33,
+    PositionMissing = 34,
+    PositionOwnerMismatch = 35,
+    PositionInactive = 36,
+    PositionKindMismatch = 37,
+    PositionLimit = 38,
+    ModuleCallFailed = 39,
+    PayoutMismatch = 40,
+    IndexCorrupt = 41,
+    InvalidAuthoritySeparation = 42,
+  }
+
   state int OptFactoryInitialized;
   state AccountId OptFactoryOwner;
   state AccountId OptFactoryGuardian;
+  state AccountId OptFactoryAccount;
   state AssetDefinitionId OptFactorySettlementAsset;
-  state bytes OptFactoryManagerContract;
+  state int OptFactoryWithdrawalOnly;
   state bytes OptFactoryRiskVaultContract;
+  state bytes OptFactoryManagerContract;
   state bytes OptFactoryVaultContract;
   state bytes OptFactoryShoutContract;
-  state bytes OptFactoryOutperfContract;
-  state int OptFactoryContractBound;
-  state AccountId OptFactoryContractId;
-  state int OptFactoryWithdrawalOnly;
+  state bytes OptFactoryOutperformanceContract;
   state bytes OptFactoryOraclePublicKey;
   state int OptFactoryOracleScheme;
+  state int OptFactoryOracleStaleSlots;
 
   state AccountId OptFactoryAutomationExecutor;
   state int OptFactoryAutomationJobId;
@@ -20,7 +71,6 @@ seiyaku OptionsFactory {
   state int OptFactoryAutomationBacklogCap;
   state int OptFactoryAutomationBacklog;
   state int OptFactoryAutomationSafeMode;
-
   state int OptFactoryLifecycleCadenceSlots;
   state int OptFactoryLifecycleMaxItems;
   state int OptFactoryLifecycleEnabled;
@@ -29,520 +79,543 @@ seiyaku OptionsFactory {
   state int OptFactoryLifecycleLastSlot;
   state int OptFactoryLifecycleLastProcessed;
 
+  state int OptFactorySeriesCount;
   state int OptFactoryNextPositionId;
+  state StateMap<int, int> OptFactorySeriesKind;
+  state StateMap<int, int> OptFactorySeriesStatus;
+  state StateMap<int, quantity> OptFactorySeriesMaxNotional;
+  state StateMap<int, int> OptFactorySeriesPremiumBps;
+  state StateMap<int, int> OptFactorySeriesCollateralMultiplierBps;
+  state StateMap<int, int> OptFactorySeriesExpirySlot;
+  state StateMap<int, int> OptFactorySeriesStrikeBps;
+  state StateMap<int, quantity> OptFactorySeriesOpenNotional;
+  state StateMap<int, int> OptFactorySeriesUtilisationBps;
+  state StateMap<int, int> OptFactorySeriesBumpActivateBps;
+  state StateMap<int, int> OptFactorySeriesBumpDeactivateBps;
+  state StateMap<int, int> OptFactorySeriesPauseThresholdBps;
+  state StateMap<int, int> OptFactorySeriesBumpPercentBps;
+  state StateMap<int, int> OptFactorySeriesLastSettlementSlot;
+  state StateMap<int, int> OptFactorySeriesOracleSlot;
+  state StateMap<int, int> OptFactorySeriesAttestationHash;
+  state StateMap<int, decimal> OptFactorySeriesFinalMark;
+  state StateMap<int, decimal> OptFactorySeriesFinalQuoteMark;
+  state StateMap<int, int> OptFactorySeriesSettlementReady;
 
-  state OptFactorySeriesKind: Map<int, int>;
-  state OptFactorySeriesMaxNotional: Map<int, int>;
-  state OptFactorySeriesPremiumBps: Map<int, int>;
-  state OptFactorySeriesStrikeBps: Map<int, int>;
-  state OptFactorySeriesCollateralMultiplierBps: Map<int, int>;
-  state OptFactorySeriesExpirySlot: Map<int, int>;
-  state OptFactorySeriesOpenNotional: Map<int, int>;
-  state OptFactorySeriesUtilisationBps: Map<int, int>;
-  state OptFactorySeriesBumpActivateBps: Map<int, int>;
-  state OptFactorySeriesBumpDeactivateBps: Map<int, int>;
-  state OptFactorySeriesPauseThresholdBps: Map<int, int>;
-  state OptFactorySeriesBumpPercentBps: Map<int, int>;
-  state OptFactorySeriesLastSettlementSlot: Map<int, int>;
-  state OptFactorySeriesOracleSlot: Map<int, int>;
-  state OptFactorySeriesAttestationHash: Map<int, int>;
-  state OptFactorySeriesFinalMark: Map<int, int>;
-  state OptFactorySeriesFinalQuoteMark: Map<int, int>;
-  state OptFactorySeriesSettlementReady: Map<int, int>;
+  state StateMap<int, AccountId> OptFactoryPositionOwner;
+  state StateMap<int, int> OptFactoryPositionSeriesId;
+  state StateMap<int, int> OptFactoryPositionKind;
+  state StateMap<int, quantity> OptFactoryPositionNotional;
+  state StateMap<int, quantity> OptFactoryPositionPremiumPaid;
+  state StateMap<int, quantity> OptFactoryPositionCollateralLocked;
+  state StateMap<int, int> OptFactoryPositionStatus;
+  state StateMap<int, quantity> OptFactoryPositionRecordedPayout;
+  state StateMap<int, int> OptFactoryPositionSettlementReady;
+  state StateMap<int, int> OptFactoryPositionShoutFloorBps;
+  state StateMap<int, int> OptFactoryPositionLastOracleMarkBps;
+  state StateMap<int, int> OptFactoryPositionLastOracleSlot;
+  state StateMap<int, int> OptFactoryPositionLastAttestationHash;
 
-  state OptFactoryPositionOwner: Map<int, AccountId>;
-  state OptFactoryPositionSeriesId: Map<int, int>;
-  state OptFactoryPositionKind: Map<int, int>;
-  state OptFactoryPositionNotional: Map<int, int>;
-  state OptFactoryPositionPremiumPaid: Map<int, int>;
-  state OptFactoryPositionCollateralLocked: Map<int, int>;
-  state OptFactoryPositionStatus: Map<int, int>;
-  state OptFactoryPositionRecordedPayout: Map<int, int>;
-  state OptFactoryPositionSettlementReady: Map<int, int>;
-  state OptFactoryPositionShoutFloor: Map<int, int>;
-  state OptFactoryPositionLastOracleMark: Map<int, int>;
-  state OptFactoryPositionLastOracleSlot: Map<int, int>;
-  state OptFactoryPositionLastAttestationHash: Map<int, int>;
-
-  register_trigger soraswap_options_factory_lifecycle_tick {
-    call native_lifecycle_tick;
-    on time pre_commit;
+  trigger soraswap_options_factory_lifecycle_tick -> native_lifecycle_tick {
+    on time schedule(40000, 120000);
     repeats indefinitely;
-    metadata { tag: "soraswap"; module: "options.factory"; __enabled: false; }
+    metadata { "tag": "soraswap"; "module": "options.factory"; "__enabled": false; }
   }
 
-  fn assert_initialized() {
-    assert(OptFactoryInitialized == 1, "factory not initialized");
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
+  }
+
+  fn zero_decimal() -> decimal {
+    let decimal zero = 0;
+    return zero;
+  }
+
+  fn universal_dataspace() -> DataSpaceId {
+    let dataspace = DataSpaceId::parse("0");
+    return dataspace;
+  }
+
+  fn max_int(int left, int right) -> int {
+    if left >= right {
+      return left;
+    }
+    return right;
   }
 
   fn assert_owner() {
-    assert_initialized();
-    assert(OptFactoryOwner == authority(), "factory owner mismatch");
+    require(OptFactoryOwner == context::authority(), OptionsFactoryError::OwnerMismatch);
   }
 
-  fn assert_contract_bound() {
-    assert(OptFactoryContractBound == 1, "factory contract unbound");
-  }
-
-  fn assert_series_exists(series_id: int) {
-    assert(OptFactorySeriesKind.contains(series_id), "series missing");
-  }
-
-  fn assert_position_exists(position_id: int) {
-    assert(OptFactoryPositionOwner.contains(position_id), "position missing");
-  }
-
-  fn assert_position_owner(position_id: int) {
-    assert_position_exists(position_id);
-    assert(OptFactoryPositionOwner[position_id] == authority(), "position owner mismatch");
-  }
-
-  fn abs_int(value: int) -> int {
-    if value < 0 {
-      return 0 - value;
+  fn assert_owner_or_guardian() {
+    if OptFactoryOwner == context::authority() {
+      return;
     }
-    return value;
+    require(OptFactoryGuardian == context::authority(), OptionsFactoryError::GuardianMismatch);
   }
 
-  fn max_int(a: int, b: int) -> int {
-    if a >= b {
-      return a;
+  fn assert_risk_on() {
+    require(OptFactoryWithdrawalOnly == 0, OptionsFactoryError::WithdrawalOnly);
+    require(OptFactoryAutomationSafeMode == 0, OptionsFactoryError::AutomationUnsafe);
+    require(
+      OptFactoryAutomationBacklog <= OptFactoryAutomationBacklogCap,
+      OptionsFactoryError::AutomationUnsafe
+    );
+  }
+
+  fn assert_series_exists(int series_id) {
+    require(OptFactorySeriesKind.contains(series_id), OptionsFactoryError::SeriesMissing);
+  }
+
+  fn assert_position_exists(int position_id) {
+    require(OptFactoryPositionOwner.contains(position_id), OptionsFactoryError::PositionMissing);
+  }
+
+  fn assert_position_owner(int position_id) {
+    assert_position_exists(position_id: position_id);
+    require(
+      OptFactoryPositionOwner.get(position_id).unwrap_or(OptFactoryOwner) == context::authority(),
+      OptionsFactoryError::PositionOwnerMismatch
+    );
+  }
+
+  fn move_settlement_asset(
+    AccountId source,
+    AccountId destination,
+    quantity amount
+  ) {
+    if amount > zero_quantity() && source != destination {
+      ledger::asset::transfer(
+        source: source,
+        destination: destination,
+        asset_definition: OptFactorySettlementAsset,
+        amount: amount,
+        dataspace: universal_dataspace()
+      );
     }
-    return b;
   }
 
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
-      }
-    }
+  fn bps_amount(quantity amount, int bps) -> quantity {
+    let decimal scale = 10_000;
+    let rate = decimal::from_int(value: bps) / scale;
+    return amount * rate;
   }
 
-  fn position_registered(position_id: int) -> int {
-    if OptFactoryPositionOwner.contains(position_id) {
-      return 1;
-    }
-    return 0;
+  fn utilisation_bps(int series_id, quantity next_open_notional) -> int {
+    let maximum = OptFactorySeriesMaxNotional.get(series_id).unwrap_or(zero_quantity());
+    require(maximum > zero_quantity(), OptionsFactoryError::InvalidNotional);
+    let ratio = next_open_notional.ratio_round(
+      divisor: maximum,
+      scale: 12,
+      mode: Rounding::ceil
+    );
+    return decimal::to_int_round(value: ratio * 10_000, mode: Rounding::ceil);
   }
 
-  fn verify_series_oracle(series_id: int,
-                          oracle_payload: bytes,
-                          oracle_signature: bytes) -> (int, int, int, int, int) {
-    assert_series_exists(series_id);
-    assert(OptFactoryOracleScheme > 0, "oracle scheme missing");
-    assert(verify_signature(oracle_payload, oracle_signature, OptFactoryOraclePublicKey, OptFactoryOracleScheme), "oracle signature");
-    let payload = decode_json(oracle_payload);
-    assert(payload.get_int(name("domain")) == 2, "oracle domain mismatch");
-    assert(payload.get_int(name("series_id")) == series_id, "oracle series mismatch");
-    let final_mark = payload.get_int(name("final_mark"));
-    let final_quote_mark = payload.get_int(name("final_quote_mark"));
-    let oracle_slot = payload.get_int(name("oracle_slot"));
-    let status_flags = payload.get_int(name("status_flags"));
-    let attestation_hash = payload.get_int(name("attestation_hash"));
-    let current_slot = block_height();
-    assert(final_mark >= 0, "invalid final mark");
-    assert(final_quote_mark >= 0, "invalid final quote mark");
-    assert(attestation_hash > 0, "missing attestation");
-    assert(current_slot >= oracle_slot, "invalid oracle slot");
-    let prior_oracle_slot = OptFactorySeriesOracleSlot.get_or(series_id, 0);
-    if prior_oracle_slot > 0 {
-      assert(oracle_slot > prior_oracle_slot, "oracle slot replay");
-    }
-    assert(current_slot >= OptFactorySeriesExpirySlot.get_or(series_id, 0), "series live");
-    assert(status_flags == 0, "oracle degraded");
-    return (final_mark, final_quote_mark, oracle_slot, current_slot, attestation_hash);
-  }
-
-  fn verify_shout_oracle(position_id: int,
-                         oracle_payload: bytes,
-                         oracle_signature: bytes) -> (int, int, int) {
-    assert_position_exists(position_id);
-    assert(OptFactoryOracleScheme > 0, "oracle scheme missing");
-    assert(verify_signature(oracle_payload, oracle_signature, OptFactoryOraclePublicKey, OptFactoryOracleScheme), "oracle signature");
-    let payload = decode_json(oracle_payload);
-    assert(payload.get_int(name("domain")) == 3, "oracle domain mismatch");
-    assert(payload.get_int(name("position_id")) == position_id, "oracle position mismatch");
-    let mark_price_bps = payload.get_int(name("mark_price_bps"));
-    let oracle_slot = payload.get_int(name("oracle_slot"));
-    let status_flags = payload.get_int(name("status_flags"));
-    let attestation_hash = payload.get_int(name("attestation_hash"));
-    let current_slot = block_height();
-    assert(mark_price_bps >= 0, "invalid mark");
-    assert(attestation_hash > 0, "missing attestation");
-    assert(current_slot >= oracle_slot, "invalid oracle slot");
-    let prior_oracle_slot = OptFactoryPositionLastOracleSlot.get_or(position_id, 0);
-    if prior_oracle_slot > 0 {
-      assert(oracle_slot > prior_oracle_slot, "oracle slot replay");
-    }
-    assert(status_flags == 0, "oracle degraded");
-    return (mark_price_bps, oracle_slot, attestation_hash);
-  }
-
-  fn required_premium(series_id: int, notional: int) -> int {
-    let base_premium = (notional * OptFactorySeriesPremiumBps.get_or(series_id, 0)) / 10_000;
-    let utilisation = OptFactorySeriesUtilisationBps.get_or(series_id, 0);
-    let activate = OptFactorySeriesBumpActivateBps.get_or(series_id, 0);
-    let deactivate = OptFactorySeriesBumpDeactivateBps.get_or(series_id, 0);
-    let bump = OptFactorySeriesBumpPercentBps.get_or(series_id, 0);
+  fn required_premium(int series_id, quantity notional) -> quantity {
+    let base = bps_amount(
+      amount: notional,
+      bps: OptFactorySeriesPremiumBps.get(series_id).unwrap_or(0)
+    );
+    let utilisation = OptFactorySeriesUtilisationBps.get(series_id).unwrap_or(0);
+    let activate = OptFactorySeriesBumpActivateBps.get(series_id).unwrap_or(0);
     if activate > 0 && utilisation >= activate {
-      return (base_premium * (10_000 + bump)) / 10_000;
+      return base + bps_amount(
+        amount: base,
+        bps: OptFactorySeriesBumpPercentBps.get(series_id).unwrap_or(0)
+      );
     }
-    if deactivate > 0 && utilisation <= deactivate {
-      return base_premium;
-    }
-    return base_premium;
+    return base;
   }
 
-  fn next_utilisation_bps(series_id: int, next_open_notional: int) -> int {
-    let max_notional = OptFactorySeriesMaxNotional.get_or(series_id, 0);
-    if max_notional <= 0 {
-      return 0;
-    }
-    return (next_open_notional * 10_000 + max_notional - 1) / max_notional;
+  fn risk_vault_deposit(quantity amount) -> quantity {
+    return contract::invoke(
+      contract: OptFactoryRiskVaultContract,
+      entrypoint: "deposit",
+      returns: "quantity",
+      bucket_id: 2,
+      amount: amount
+    );
   }
 
-  fn risk_vault_lock_liability(position_id: int, notional: int, collateral_locked: int) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 2);
-    let payload = json_set_int(payload, name("exposure_id"), position_id);
-    let payload = json_set_int(payload, name("notional"), notional);
-    let payload = json_set_int(payload, name("collateral_locked"), collateral_locked);
-    let payload = json_set_int(payload, name("backlog"), OptFactoryAutomationBacklog);
-    let result = call_contract(OptFactoryRiskVaultContract, "lock_liability", payload);
-    return decode_int(result);
+  fn risk_vault_lock(
+    int position_id,
+    quantity notional,
+    quantity collateral
+  ) -> int {
+    return contract::invoke(
+      contract: OptFactoryRiskVaultContract,
+      entrypoint: "lock_liability",
+      returns: "int",
+      bucket_id: 2,
+      exposure_id: position_id,
+      notional: notional,
+      collateral_locked: collateral,
+      backlog: OptFactoryAutomationBacklog
+    );
   }
 
-  fn risk_vault_deposit(amount: int) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 2);
-    let payload = json_set_int(payload, name("amount"), amount);
-    let result = call_contract(OptFactoryRiskVaultContract, "deposit", payload);
-    return decode_int(result);
+  fn risk_vault_release(int position_id) -> int {
+    return contract::invoke(
+      contract: OptFactoryRiskVaultContract,
+      entrypoint: "release_liability",
+      returns: "int",
+      bucket_id: 2,
+      exposure_id: position_id,
+      backlog: OptFactoryAutomationBacklog
+    );
   }
 
-  fn risk_vault_release_liability(position_id: int) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 2);
-    let payload = json_set_int(payload, name("exposure_id"), position_id);
-    let payload = json_set_int(payload, name("backlog"), OptFactoryAutomationBacklog);
-    let result = call_contract(OptFactoryRiskVaultContract, "release_liability", payload);
-    return decode_int(result);
+  fn risk_vault_payout(
+    int position_id,
+    AccountId recipient,
+    quantity amount
+  ) -> quantity {
+    return contract::invoke(
+      contract: OptFactoryRiskVaultContract,
+      entrypoint: "settle_payout",
+      returns: "quantity",
+      bucket_id: 2,
+      exposure_id: position_id,
+      recipient: recipient,
+      amount: amount
+    );
   }
 
-  fn risk_vault_settle_payout(position_id: int, recipient: AccountId, amount: int) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 2);
-    let payload = json_set_int(payload, name("exposure_id"), position_id);
-    let payload = json_set_account_id(payload, name("recipient"), recipient);
-    let payload = json_set_int(payload, name("amount"), amount);
-    let result = call_contract(OptFactoryRiskVaultContract, "settle_payout", payload);
-    return decode_int(result);
+  fn vault_sync_series(int series_id) {
+    let accepted = contract::invoke(
+      contract: OptFactoryVaultContract,
+      entrypoint: "sync_series_c2c",
+      returns: "int",
+      series_id: series_id
+    );
+    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
   }
 
-  fn risk_vault_report_bucket() {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 2);
-    let payload = json_set_int(payload, name("backlog"), OptFactoryAutomationBacklog);
-    let payload = json_set_int(payload, name("safe_mode"), OptFactoryAutomationSafeMode);
-    let result = call_contract(OptFactoryRiskVaultContract, "report_bucket_c2c", payload);
-    assert(decode_int(result) == 1, "risk bucket report failed");
+  fn vault_record_position(
+    int position_id,
+    int series_id,
+    AccountId owner,
+    quantity collateral,
+    quantity premium
+  ) {
+    let accepted = contract::invoke(
+      contract: OptFactoryVaultContract,
+      entrypoint: "record_position_c2c",
+      returns: "int",
+      position_id: position_id,
+      series_id: series_id,
+      owner: owner,
+      collateral_locked: collateral,
+      premium_paid: premium
+    );
+    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
   }
 
-  fn vault_sync_series(series_id: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("series_id"), series_id);
-    let result = call_contract(OptFactoryVaultContract, "sync_series_c2c", payload);
-    assert(decode_int(result) == 1, "vault sync failed");
+  fn vault_settle_position(
+    int position_id,
+    quantity payout,
+    quantity premium_burn
+  ) {
+    let accepted = contract::invoke(
+      contract: OptFactoryVaultContract,
+      entrypoint: "settle_position_c2c",
+      returns: "int",
+      position_id: position_id,
+      payout: payout,
+      premium_burn: premium_burn
+    );
+    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
   }
 
-  fn shout_sync_series(series_id: int, expiry_slot: int, strike_bps: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("series_id"), series_id);
-    let payload = json_set_int(payload, name("expiry_slot"), expiry_slot);
-    let payload = json_set_int(payload, name("strike_bps"), strike_bps);
-    let result = call_contract(OptFactoryShoutContract, "sync_series_c2c", payload);
-    assert(decode_int(result) == 1, "shout sync failed");
-  }
-
-  fn outperf_sync_series(series_id: int,
-                         expiry_slot: int,
-                         collateral_multiplier_bps: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("series_id"), series_id);
-    let payload = json_set_int(payload, name("expiry_slot"), expiry_slot);
-    let payload = json_set_int(payload, name("collateral_multiplier_bps"), collateral_multiplier_bps);
-    let result = call_contract(OptFactoryOutperfContract, "sync_series_c2c", payload);
-    assert(decode_int(result) == 1, "outperformance sync failed");
-  }
-
-  fn vault_record_position(position_id: int,
-                           series_id: int,
-                           owner: AccountId,
-                           collateral_locked: int,
-                           premium_paid: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("position_id"), position_id);
-    let payload = json_set_int(payload, name("series_id"), series_id);
-    let payload = json_set_account_id(payload, name("owner"), owner);
-    let payload = json_set_int(payload, name("collateral_locked"), collateral_locked);
-    let payload = json_set_int(payload, name("premium_paid"), premium_paid);
-    let result = call_contract(OptFactoryVaultContract, "record_position_c2c", payload);
-    assert(decode_int(result) == 1, "vault record failed");
-  }
-
-  fn shout_register_position(position_id: int,
-                             series_id: int,
-                             owner: AccountId,
-                             notional: int,
-                             strike_bps: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("position_id"), position_id);
-    let payload = json_set_int(payload, name("series_id"), series_id);
-    let payload = json_set_account_id(payload, name("owner"), owner);
-    let payload = json_set_int(payload, name("notional"), notional);
-    let payload = json_set_int(payload, name("strike_bps"), strike_bps);
-    let result = call_contract(OptFactoryShoutContract, "register_position_c2c", payload);
-    assert(decode_int(result) == 1, "shout register failed");
-  }
-
-  fn outperf_register_position(position_id: int,
-                               series_id: int,
-                               owner: AccountId,
-                               notional: int,
-                               collateral_multiplier_bps: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("position_id"), position_id);
-    let payload = json_set_int(payload, name("series_id"), series_id);
-    let payload = json_set_account_id(payload, name("owner"), owner);
-    let payload = json_set_int(payload, name("notional"), notional);
-    let payload = json_set_int(payload, name("collateral_multiplier_bps"), collateral_multiplier_bps);
-    let result = call_contract(OptFactoryOutperfContract, "register_position_c2c", payload);
-    assert(decode_int(result) == 1, "outperformance register failed");
-  }
-
-  fn manager_settle_series(series_id: int,
-                           final_mark: int,
-                           final_quote_mark: int,
-                           settlement_slot: int,
-                           oracle_slot: int,
-                           attestation_hash: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("series_id"), series_id);
-    let payload = json_set_int(payload, name("final_mark"), final_mark);
-    let payload = json_set_int(payload, name("final_quote_mark"), final_quote_mark);
-    let payload = json_set_int(payload, name("settlement_slot"), settlement_slot);
-    let payload = json_set_int(payload, name("oracle_slot"), oracle_slot);
-    let payload = json_set_int(payload, name("attestation_hash"), attestation_hash);
-    let result = call_contract(OptFactoryManagerContract, "settle_series_c2c", payload);
-    assert(decode_int(result) == 1, "manager settle failed");
-  }
-
-  fn outperf_settle_series(series_id: int,
-                           base_return_bps: int,
-                           quote_return_bps: int,
-                           settlement_slot: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("series_id"), series_id);
-    let payload = json_set_int(payload, name("base_return_bps"), base_return_bps);
-    let payload = json_set_int(payload, name("quote_return_bps"), quote_return_bps);
-    let payload = json_set_int(payload, name("settlement_slot"), settlement_slot);
-    let result = call_contract(OptFactoryOutperfContract, "settle_series_c2c", payload);
-    assert(decode_int(result) == 1, "outperformance settle failed");
-  }
-
-  fn shout_record_position(position_id: int,
-                           mark_price_bps: int,
-                           oracle_slot: int,
-                           attestation_hash: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("position_id"), position_id);
-    let payload = json_set_int(payload, name("mark_price_bps"), mark_price_bps);
-    let payload = json_set_int(payload, name("oracle_slot"), oracle_slot);
-    let payload = json_set_int(payload, name("attestation_hash"), attestation_hash);
-    let result = call_contract(OptFactoryShoutContract, "record_shout_c2c", payload);
-    assert(decode_int(result) == 1, "shout record failed");
-  }
-
-  fn shout_exercise_position(position_id: int,
-                             mark_price_bps: int,
-                             oracle_slot: int,
-                             attestation_hash: int) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("position_id"), position_id);
-    let payload = json_set_int(payload, name("mark_price_bps"), mark_price_bps);
-    let payload = json_set_int(payload, name("oracle_slot"), oracle_slot);
-    let payload = json_set_int(payload, name("attestation_hash"), attestation_hash);
-    return decode_int(call_contract(OptFactoryShoutContract, "exercise_position_c2c", payload));
-  }
-
-  fn outperf_exercise_position(position_id: int) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("position_id"), position_id);
-    return decode_int(call_contract(OptFactoryOutperfContract, "exercise_position", payload));
-  }
-
-  fn vault_settle_position(position_id: int, payout: int, premium_burn: int) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("position_id"), position_id);
-    let payload = json_set_int(payload, name("payout"), payout);
-    let payload = json_set_int(payload, name("premium_burn"), premium_burn);
-    let result = call_contract(OptFactoryVaultContract, "settle_position_c2c", payload);
-    assert(decode_int(result) == 1, "vault settle failed");
-  }
-
-  fn assert_buy_allowed(series_id: int, next_open_notional: int) {
-    assert(OptFactoryWithdrawalOnly == 0, "withdrawal only");
-    assert(OptFactoryAutomationSafeMode == 0, "automation safe mode");
-    if OptFactoryAutomationBacklogCap > 0 {
-      assert(OptFactoryAutomationBacklog <= OptFactoryAutomationBacklogCap, "factory backlog");
-    }
-    let next_utilisation = next_utilisation_bps(series_id, next_open_notional);
-    let pause_threshold = OptFactorySeriesPauseThresholdBps.get_or(series_id, 0);
-    if pause_threshold > 0 {
-      assert(next_utilisation < pause_threshold, "utilisation pause");
+  fn sync_product_series(
+    int series_id,
+    int option_kind,
+    int expiry_slot,
+    int strike_bps,
+    int collateral_multiplier_bps
+  ) {
+    if option_kind == 1 {
+      let accepted = contract::invoke(
+        contract: OptFactoryShoutContract,
+        entrypoint: "sync_series_c2c",
+        returns: "int",
+        series_id: series_id,
+        expiry_slot: expiry_slot,
+        strike_bps: strike_bps
+      );
+      require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
+    } else {
+      let accepted = contract::invoke(
+        contract: OptFactoryOutperformanceContract,
+        entrypoint: "sync_series_c2c",
+        returns: "int",
+        series_id: series_id,
+        expiry_slot: expiry_slot,
+        collateral_multiplier_bps: collateral_multiplier_bps
+      );
+      require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
     }
   }
 
-  fn buy_impl(series_id: int,
-              notional: int,
-              premium_paid: int,
-              collateral_locked: int,
-              option_kind: int) -> int {
-    assert_initialized();
-    assert_series_exists(series_id);
-    assert(notional > 0, "invalid notional");
-    assert(collateral_locked > 0, "invalid collateral");
-    assert(option_kind == OptFactorySeriesKind[series_id], "series kind mismatch");
-    let next_open_notional = OptFactorySeriesOpenNotional.get_or(series_id, 0) + notional;
-    assert_buy_allowed(series_id, next_open_notional);
-    assert(premium_paid >= required_premium(series_id, notional), "premium below guard");
-    assert(next_open_notional <= OptFactorySeriesMaxNotional.get_or(series_id, 0), "series notional cap");
+  fn register_product_position(
+    int position_id,
+    int series_id,
+    int option_kind,
+    AccountId owner,
+    quantity notional,
+    int strike_bps,
+    int collateral_multiplier_bps
+  ) {
+    if option_kind == 1 {
+      let accepted = contract::invoke(
+        contract: OptFactoryShoutContract,
+        entrypoint: "register_position_c2c",
+        returns: "int",
+        position_id: position_id,
+        series_id: series_id,
+        owner: owner,
+        notional: notional,
+        strike_bps: strike_bps
+      );
+      require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
+    } else {
+      let accepted = contract::invoke(
+        contract: OptFactoryOutperformanceContract,
+        entrypoint: "register_position_c2c",
+        returns: "int",
+        position_id: position_id,
+        series_id: series_id,
+        owner: owner,
+        notional: notional,
+        collateral_multiplier_bps: collateral_multiplier_bps
+      );
+      require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
+    }
+  }
 
+  fn buy_position(int series_id, int expected_kind, quantity notional) -> int {
+    assert_risk_on();
+    assert_series_exists(series_id: series_id);
+    require(OptFactorySeriesKind.get(series_id).unwrap_or(0) == expected_kind, OptionsFactoryError::PositionKindMismatch);
+    require(OptFactorySeriesStatus.get(series_id).unwrap_or(0) == 1, OptionsFactoryError::SeriesInactive);
+    require(context::block_height() < OptFactorySeriesExpirySlot.get(series_id).unwrap_or(0), OptionsFactoryError::SeriesExpired);
+    require(notional > zero_quantity(), OptionsFactoryError::InvalidNotional);
+    let next_open = OptFactorySeriesOpenNotional.get(series_id).unwrap_or(zero_quantity()) + notional;
+    require(next_open <= OptFactorySeriesMaxNotional.get(series_id).unwrap_or(zero_quantity()), OptionsFactoryError::SeriesCapacity);
+    let next_utilisation = utilisation_bps(series_id: series_id, next_open_notional: next_open);
+    let pause_threshold = OptFactorySeriesPauseThresholdBps.get(series_id).unwrap_or(10_000);
+    require(next_utilisation <= pause_threshold, OptionsFactoryError::SeriesPausedByGuard);
+    require(OptFactoryNextPositionId > 0 && OptFactoryNextPositionId < 1_000_000_000, OptionsFactoryError::PositionLimit);
     let position_id = OptFactoryNextPositionId;
     OptFactoryNextPositionId = position_id + 1;
-    assert_contract_bound();
-    move_asset_if_needed(
-      authority(),
-      OptFactoryContractId,
-      OptFactorySettlementAsset,
-      premium_paid + collateral_locked
+    let premium = required_premium(series_id: series_id, notional: notional);
+    let collateral = bps_amount(
+      amount: notional,
+      bps: OptFactorySeriesCollateralMultiplierBps.get(series_id).unwrap_or(0)
     );
-    risk_vault_deposit(premium_paid + collateral_locked);
-    risk_vault_lock_liability(position_id, notional, collateral_locked);
-
-    vault_record_position(position_id, series_id, authority(), collateral_locked, premium_paid);
-
-    if option_kind == 1 {
-      shout_register_position(
-        position_id,
-        series_id,
-        authority(),
-        notional,
-        OptFactorySeriesStrikeBps.get_or(series_id, 0)
-      );
-    } else {
-      outperf_register_position(
-        position_id,
-        series_id,
-        authority(),
-        notional,
-        OptFactorySeriesCollateralMultiplierBps.get_or(series_id, 0)
-      );
-    }
-
-    OptFactoryPositionOwner[position_id] = authority();
+    require(premium > zero_quantity(), OptionsFactoryError::InvalidPremium);
+    require(collateral >= notional, OptionsFactoryError::InvalidCollateral);
+    move_settlement_asset(
+      source: context::authority(),
+      destination: OptFactoryAccount,
+      amount: premium + collateral
+    );
+    require(
+      risk_vault_deposit(amount: premium + collateral) >= premium + collateral,
+      OptionsFactoryError::ModuleCallFailed
+    );
+    risk_vault_lock(
+      position_id: position_id,
+      notional: notional,
+      collateral: collateral
+    );
+    vault_record_position(
+      position_id: position_id,
+      series_id: series_id,
+      owner: context::authority(),
+      collateral: collateral,
+      premium: premium
+    );
+    register_product_position(
+      position_id: position_id,
+      series_id: series_id,
+      option_kind: expected_kind,
+      owner: context::authority(),
+      notional: notional,
+      strike_bps: OptFactorySeriesStrikeBps.get(series_id).unwrap_or(0),
+      collateral_multiplier_bps: OptFactorySeriesCollateralMultiplierBps.get(series_id).unwrap_or(0)
+    );
+    OptFactorySeriesOpenNotional[series_id] = next_open;
+    OptFactorySeriesUtilisationBps[series_id] = next_utilisation;
+    OptFactoryPositionOwner[position_id] = context::authority();
     OptFactoryPositionSeriesId[position_id] = series_id;
-    OptFactoryPositionKind[position_id] = option_kind;
+    OptFactoryPositionKind[position_id] = expected_kind;
     OptFactoryPositionNotional[position_id] = notional;
-    OptFactoryPositionPremiumPaid[position_id] = premium_paid;
-    OptFactoryPositionCollateralLocked[position_id] = collateral_locked;
+    OptFactoryPositionPremiumPaid[position_id] = premium;
+    OptFactoryPositionCollateralLocked[position_id] = collateral;
     OptFactoryPositionStatus[position_id] = 1;
-    OptFactoryPositionRecordedPayout[position_id] = 0;
+    OptFactoryPositionRecordedPayout[position_id] = zero_quantity();
     OptFactoryPositionSettlementReady[position_id] = 0;
-    OptFactoryPositionShoutFloor[position_id] = 0;
-    OptFactoryPositionLastOracleMark[position_id] = 0;
-    OptFactoryPositionLastOracleSlot[position_id] = 0;
+    OptFactoryPositionShoutFloorBps[position_id] = 0;
+    OptFactoryPositionLastOracleMarkBps[position_id] = 0;
+    OptFactoryPositionLastOracleSlot[position_id] = -1;
     OptFactoryPositionLastAttestationHash[position_id] = 0;
-    OptFactorySeriesOpenNotional[series_id] = next_open_notional;
-    OptFactorySeriesUtilisationBps[series_id] = next_utilisation_bps(series_id, next_open_notional);
     return position_id;
   }
 
-  kotoage fn main() -> int {
-    return OptFactoryInitialized;
+  fn apply_verified_series_settlement(
+    int series_id,
+    decimal final_mark,
+    decimal final_quote_mark,
+    int base_return_bps,
+    int quote_return_bps,
+    int oracle_slot,
+    int attestation_hash
+  ) {
+    assert_series_exists(series_id: series_id);
+    require(OptFactorySeriesStatus.get(series_id).unwrap_or(0) == 2, OptionsFactoryError::SeriesNotExpired);
+    require(final_mark >= zero_decimal() && final_quote_mark >= zero_decimal(), OptionsFactoryError::InvalidMark);
+    require(base_return_bps >= -1_000_000 && quote_return_bps >= -1_000_000, OptionsFactoryError::InvalidMark);
+    require(attestation_hash > 0, OptionsFactoryError::MissingAttestation);
+    let current_slot = context::block_height();
+    require(oracle_slot >= 0 && current_slot >= oracle_slot, OptionsFactoryError::InvalidOracleSlot);
+    require(current_slot - oracle_slot <= OptFactoryOracleStaleSlots, OptionsFactoryError::OracleStale);
+    require(
+      oracle_slot > OptFactorySeriesOracleSlot.get(series_id).unwrap_or(-1),
+      OptionsFactoryError::OracleSlotReplay
+    );
+    require(OptFactorySeriesKind.get(series_id).unwrap_or(0) == 2, OptionsFactoryError::PositionKindMismatch);
+    let accepted = contract::invoke(
+      contract: OptFactoryOutperformanceContract,
+      entrypoint: "settle_series_c2c",
+      returns: "int",
+      series_id: series_id,
+      base_return_bps: base_return_bps,
+      quote_return_bps: quote_return_bps,
+      settlement_slot: current_slot
+    );
+    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
+    OptFactorySeriesStatus[series_id] = 3;
+    OptFactorySeriesLastSettlementSlot[series_id] = current_slot;
+    OptFactorySeriesOracleSlot[series_id] = oracle_slot;
+    OptFactorySeriesAttestationHash[series_id] = attestation_hash;
+    OptFactorySeriesFinalMark[series_id] = final_mark;
+    OptFactorySeriesFinalQuoteMark[series_id] = final_quote_mark;
+    OptFactorySeriesSettlementReady[series_id] = 1;
   }
 
-  kotoage fn init_factory(settlement_asset: AssetDefinitionId,
-                          guardian: AccountId,
-                          oracle_public_key: bytes,
-                          oracle_scheme: int) {
-    assert(OptFactoryInitialized == 0, "factory initialized");
-    assert(oracle_scheme > 0, "invalid oracle scheme");
+  fn apply_verified_shout_mark(
+    int position_id,
+    int mark_price_bps,
+    int oracle_slot,
+    int attestation_hash
+  ) {
+    assert_position_exists(position_id: position_id);
+    require(OptFactoryPositionKind.get(position_id).unwrap_or(0) == 1, OptionsFactoryError::PositionKindMismatch);
+    require(OptFactoryPositionStatus.get(position_id).unwrap_or(0) == 1, OptionsFactoryError::PositionInactive);
+    require(mark_price_bps >= 0, OptionsFactoryError::InvalidMark);
+    require(attestation_hash > 0, OptionsFactoryError::MissingAttestation);
+    require(oracle_slot >= 0 && context::block_height() >= oracle_slot, OptionsFactoryError::InvalidOracleSlot);
+    require(context::block_height() - oracle_slot <= OptFactoryOracleStaleSlots, OptionsFactoryError::OracleStale);
+    require(
+      oracle_slot > OptFactoryPositionLastOracleSlot.get(position_id).unwrap_or(-1),
+      OptionsFactoryError::OracleSlotReplay
+    );
+    let accepted = contract::invoke(
+      contract: OptFactoryShoutContract,
+      entrypoint: "record_shout_c2c",
+      returns: "int",
+      position_id: position_id,
+      mark_price_bps: mark_price_bps,
+      oracle_slot: oracle_slot,
+      attestation_hash: attestation_hash
+    );
+    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
+    OptFactoryPositionShoutFloorBps[position_id] = max_int(
+      left: OptFactoryPositionShoutFloorBps.get(position_id).unwrap_or(0),
+      right: mark_price_bps
+    );
+    OptFactoryPositionLastOracleMarkBps[position_id] = mark_price_bps;
+    OptFactoryPositionLastOracleSlot[position_id] = oracle_slot;
+    OptFactoryPositionLastAttestationHash[position_id] = attestation_hash;
+  }
+
+  hajimari(
+    AssetDefinitionId settlement_asset,
+    AccountId factory_account,
+    AccountId guardian,
+    bytes risk_vault_contract,
+    bytes manager_contract,
+    bytes vault_contract,
+    bytes shout_contract,
+    bytes outperformance_contract,
+    bytes oracle_public_key,
+    int oracle_scheme,
+    int oracle_stale_slots
+  ) {
+    require(factory_account != context::authority(), OptionsFactoryError::InvalidAuthoritySeparation);
+    require(guardian != context::authority() && guardian != factory_account, OptionsFactoryError::InvalidAuthoritySeparation);
+    require(oracle_scheme > 0, OptionsFactoryError::InvalidOracleScheme);
+    require(oracle_stale_slots >= 0, OptionsFactoryError::InvalidOracleStaleSlots);
     OptFactoryInitialized = 1;
-    OptFactoryOwner = authority();
+    OptFactoryOwner = context::authority();
     OptFactoryGuardian = guardian;
+    OptFactoryAccount = factory_account;
     OptFactorySettlementAsset = settlement_asset;
+    OptFactoryWithdrawalOnly = 1;
+    OptFactoryRiskVaultContract = risk_vault_contract;
+    OptFactoryManagerContract = manager_contract;
+    OptFactoryVaultContract = vault_contract;
+    OptFactoryShoutContract = shout_contract;
+    OptFactoryOutperformanceContract = outperformance_contract;
     OptFactoryOraclePublicKey = oracle_public_key;
     OptFactoryOracleScheme = oracle_scheme;
-    let empty_contract = blob("");
-    OptFactoryManagerContract = empty_contract;
-    OptFactoryRiskVaultContract = empty_contract;
-    OptFactoryVaultContract = empty_contract;
-    OptFactoryShoutContract = empty_contract;
-    OptFactoryOutperfContract = empty_contract;
-    OptFactoryContractBound = 0;
-    OptFactoryContractId = authority();
-    OptFactoryWithdrawalOnly = 1;
+    OptFactoryOracleStaleSlots = oracle_stale_slots;
+    OptFactoryAutomationExecutor = context::authority();
     OptFactoryAutomationJobId = 0;
     OptFactoryAutomationCadence = 0;
     OptFactoryAutomationBacklogCap = 0;
     OptFactoryAutomationBacklog = 0;
     OptFactoryAutomationSafeMode = 0;
-    OptFactoryLifecycleCadenceSlots = 0;
+    OptFactoryLifecycleCadenceSlots = 1;
     OptFactoryLifecycleMaxItems = 1;
     OptFactoryLifecycleEnabled = 0;
     OptFactoryLifecycleNextSlot = 0;
     OptFactoryLifecycleCursor = 1;
     OptFactoryLifecycleLastSlot = 0;
     OptFactoryLifecycleLastProcessed = 0;
+    OptFactorySeriesCount = 0;
     OptFactoryNextPositionId = 1;
   }
 
-  kotoage fn bind_modules(risk_vault_contract: bytes,
-                          vault_contract: bytes,
-                          shout_contract: bytes,
-                          outperf_contract: bytes) {
-    assert_owner();
-    OptFactoryRiskVaultContract = risk_vault_contract;
-    OptFactoryVaultContract = vault_contract;
-    OptFactoryShoutContract = shout_contract;
-    OptFactoryOutperfContract = outperf_contract;
+  view fn main() -> int {
+    return OptFactoryInitialized;
   }
 
-  kotoage fn bind_manager(manager_contract: bytes) {
-    assert_owner();
-    OptFactoryManagerContract = manager_contract;
+  kotoage fn enter_withdrawal_only() authorize("Admin") {
+    assert_owner_or_guardian();
+    OptFactoryWithdrawalOnly = 1;
   }
 
-  kotoage fn bind_contract(contract_id: AccountId) {
+  kotoage fn exit_withdrawal_only() authorize("Admin") {
     assert_owner();
-    OptFactoryContractId = contract_id;
-    OptFactoryContractBound = 1;
+    OptFactoryWithdrawalOnly = 0;
   }
 
-  kotoage fn sync_automation(executor: AccountId,
-                             job_id: int,
-                             cadence_slots: int,
-                             backlog_cap: int,
-                             safe_mode: int) permission(Admin) {
+  kotoage fn sync_automation(
+    AccountId executor,
+    int job_id,
+    int cadence_slots,
+    int backlog_cap,
+    int safe_mode
+  ) authorize("Admin") {
     assert_owner();
-    assert(job_id >= 0, "invalid job id");
-    assert(cadence_slots >= 0, "invalid cadence");
-    assert(backlog_cap >= 0, "invalid backlog cap");
+    require(job_id >= 0, OptionsFactoryError::InvalidJobId);
+    require(cadence_slots >= 0, OptionsFactoryError::InvalidCadence);
+    require(backlog_cap >= 0, OptionsFactoryError::InvalidBacklogCap);
+    require(safe_mode == 0 || safe_mode == 1, OptionsFactoryError::InvalidSafeMode);
+    require(OptFactoryAutomationBacklog <= backlog_cap, OptionsFactoryError::InvalidBacklog);
     OptFactoryAutomationExecutor = executor;
     OptFactoryAutomationJobId = job_id;
     OptFactoryAutomationCadence = cadence_slots;
@@ -550,273 +623,190 @@ seiyaku OptionsFactory {
     OptFactoryAutomationSafeMode = safe_mode;
   }
 
-  kotoage fn heartbeat(current_backlog: int,
-                       safe_mode: int) permission(Admin) {
-    assert_owner();
-    assert(current_backlog >= 0, "invalid backlog");
+  kotoage fn heartbeat(int current_backlog, int safe_mode) authorize("Entry") {
+    require(
+      context::authority() == OptFactoryOwner || context::authority() == OptFactoryAutomationExecutor,
+      OptionsFactoryError::OwnerMismatch
+    );
+    require(current_backlog >= 0 && current_backlog <= OptFactoryAutomationBacklogCap, OptionsFactoryError::InvalidBacklog);
+    require(safe_mode == 0 || safe_mode == 1, OptionsFactoryError::InvalidSafeMode);
     OptFactoryAutomationBacklog = current_backlog;
     OptFactoryAutomationSafeMode = safe_mode;
-    risk_vault_report_bucket();
   }
 
-  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
-                                         max_items_per_tick: int,
-                                         enabled: int) permission(Admin) {
+  kotoage fn configure_trigger_lifecycle(
+    int cadence_slots,
+    int max_items_per_tick,
+    int enabled
+  ) authorize("AssetOps") {
     assert_owner();
-    assert(cadence_slots >= 0, "invalid cadence");
-    assert(max_items_per_tick > 0, "invalid max items");
-    assert(max_items_per_tick <= 16, "max items too high");
-    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    require(cadence_slots > 0, OptionsFactoryError::InvalidCadence);
+    require(max_items_per_tick > 0 && max_items_per_tick <= 64, OptionsFactoryError::InvalidMaxItems);
+    require(enabled == 0 || enabled == 1, OptionsFactoryError::InvalidEnabled);
     OptFactoryLifecycleCadenceSlots = cadence_slots;
     OptFactoryLifecycleMaxItems = max_items_per_tick;
     OptFactoryLifecycleEnabled = enabled;
-    OptFactoryLifecycleNextSlot = block_height() + cadence_slots;
-    if OptFactoryLifecycleCursor <= 0 {
-      OptFactoryLifecycleCursor = 1;
-    }
-    set_trigger_enabled(name("soraswap_options_factory_lifecycle_tick"), enabled);
+    OptFactoryLifecycleNextSlot = context::block_height() + cadence_slots;
+    ledger::trigger::set_enabled(Name::parse("soraswap_options_factory_lifecycle_tick"), enabled);
   }
 
-  kotoage fn native_lifecycle_tick() {
-    if OptFactoryInitialized == 0 {
-      return;
-    }
-    if OptFactoryLifecycleEnabled == 0 {
-      return;
-    }
-    let current_slot = block_height();
-    if OptFactoryLifecycleNextSlot > 0 && current_slot < OptFactoryLifecycleNextSlot {
-      return;
-    }
-    let processed = 0;
-    let series_id = OptFactoryLifecycleCursor;
-    if series_id <= 0 {
-      series_id = 1;
-    }
-    while processed < OptFactoryLifecycleMaxItems && series_id < 1_000_000 {
-      if OptFactorySeriesKind.contains(series_id) {
-        if OptFactorySeriesSettlementReady.get_or(series_id, 0) == 0 &&
-          current_slot >= OptFactorySeriesExpirySlot.get_or(series_id, 0) {
-          OptFactorySeriesSettlementReady[series_id] = 2;
-        }
-        processed = processed + 1;
-      } else {
-        if series_id > 32 {
-          processed = OptFactoryLifecycleMaxItems;
-        } else {
-          processed = processed + 1;
-        }
-      }
-      series_id = series_id + 1;
-    }
-    if series_id >= 1_000_000 {
-      series_id = 1;
-    }
-    OptFactoryLifecycleCursor = series_id;
-    OptFactoryLifecycleLastSlot = current_slot;
-    OptFactoryLifecycleLastProcessed = processed;
-    OptFactoryLifecycleNextSlot = current_slot + OptFactoryLifecycleCadenceSlots;
-  }
-
-  kotoage fn enter_withdrawal_only() {
+  kotoage fn sync_series(
+    int series_id,
+    int option_kind,
+    quantity max_notional,
+    int premium_bps,
+    int collateral_multiplier_bps,
+    int expiry_slot,
+    int strike_bps
+  ) authorize("Admin") {
     assert_owner();
-    OptFactoryWithdrawalOnly = 1;
-  }
-
-  kotoage fn exit_withdrawal_only() {
-    assert_owner();
-    OptFactoryWithdrawalOnly = 0;
-  }
-
-  kotoage fn sync_series(series_id: int,
-                         option_kind: int,
-                         max_notional: int,
-                         premium_bps: int,
-                         strike_bps: int,
-                         collateral_multiplier_bps: int,
-                         expiry_slot: int) permission(Admin) {
-    assert_owner();
-    assert(option_kind == 1 || option_kind == 2, "unsupported option kind");
-    assert(max_notional > 0, "invalid max notional");
-    assert(premium_bps > 0, "invalid premium");
-    assert(strike_bps >= 0, "invalid strike");
-    assert(collateral_multiplier_bps > 0, "invalid collateral multiplier");
+    require(option_kind == 1 || option_kind == 2, OptionsFactoryError::InvalidKind);
+    require(max_notional > zero_quantity(), OptionsFactoryError::InvalidNotional);
+    require(premium_bps > 0 && premium_bps <= 10_000, OptionsFactoryError::InvalidPremium);
+    require(collateral_multiplier_bps >= 10_000, OptionsFactoryError::InvalidCollateral);
+    require(expiry_slot > context::block_height(), OptionsFactoryError::InvalidExpiry);
+    require(strike_bps > 0, OptionsFactoryError::InvalidStrike);
+    if !OptFactorySeriesKind.contains(series_id) {
+      require(OptFactorySeriesCount < 64, OptionsFactoryError::SeriesLimit);
+      OptFactorySeriesCount = OptFactorySeriesCount + 1;
+      OptFactorySeriesOpenNotional[series_id] = zero_quantity();
+      OptFactorySeriesUtilisationBps[series_id] = 0;
+      OptFactorySeriesBumpActivateBps[series_id] = 8_000;
+      OptFactorySeriesBumpDeactivateBps[series_id] = 6_000;
+      OptFactorySeriesPauseThresholdBps[series_id] = 9_500;
+      OptFactorySeriesBumpPercentBps[series_id] = 1_500;
+      OptFactorySeriesLastSettlementSlot[series_id] = 0;
+      OptFactorySeriesOracleSlot[series_id] = -1;
+      OptFactorySeriesAttestationHash[series_id] = 0;
+      OptFactorySeriesFinalMark[series_id] = zero_decimal();
+      OptFactorySeriesFinalQuoteMark[series_id] = zero_decimal();
+      OptFactorySeriesSettlementReady[series_id] = 0;
+    } else {
+      require(
+        OptFactorySeriesOpenNotional.get(series_id).unwrap_or(zero_quantity()) == zero_quantity(),
+        OptionsFactoryError::SeriesCapacity
+      );
+    }
     OptFactorySeriesKind[series_id] = option_kind;
+    OptFactorySeriesStatus[series_id] = 1;
     OptFactorySeriesMaxNotional[series_id] = max_notional;
     OptFactorySeriesPremiumBps[series_id] = premium_bps;
-    OptFactorySeriesStrikeBps[series_id] = strike_bps;
     OptFactorySeriesCollateralMultiplierBps[series_id] = collateral_multiplier_bps;
     OptFactorySeriesExpirySlot[series_id] = expiry_slot;
-    OptFactorySeriesOpenNotional[series_id] = OptFactorySeriesOpenNotional.ensure(series_id, 0);
-    OptFactorySeriesUtilisationBps[series_id] = next_utilisation_bps(series_id, OptFactorySeriesOpenNotional.get_or(series_id, 0));
-    OptFactorySeriesBumpActivateBps[series_id] = OptFactorySeriesBumpActivateBps.ensure(series_id, 0);
-    OptFactorySeriesBumpDeactivateBps[series_id] = OptFactorySeriesBumpDeactivateBps.ensure(series_id, 0);
-    OptFactorySeriesPauseThresholdBps[series_id] = OptFactorySeriesPauseThresholdBps.ensure(series_id, 0);
-    OptFactorySeriesBumpPercentBps[series_id] = OptFactorySeriesBumpPercentBps.ensure(series_id, 0);
-    OptFactorySeriesLastSettlementSlot[series_id] = OptFactorySeriesLastSettlementSlot.ensure(series_id, 0);
-    OptFactorySeriesOracleSlot[series_id] = OptFactorySeriesOracleSlot.ensure(series_id, 0);
-    OptFactorySeriesAttestationHash[series_id] = OptFactorySeriesAttestationHash.ensure(series_id, 0);
-    OptFactorySeriesFinalMark[series_id] = OptFactorySeriesFinalMark.ensure(series_id, 0);
-    OptFactorySeriesFinalQuoteMark[series_id] = OptFactorySeriesFinalQuoteMark.ensure(series_id, 0);
-    OptFactorySeriesSettlementReady[series_id] = OptFactorySeriesSettlementReady.ensure(series_id, 0);
-
-    vault_sync_series(series_id);
-
-    if option_kind == 1 {
-      shout_sync_series(series_id, expiry_slot, strike_bps);
-    } else {
-      outperf_sync_series(series_id, expiry_slot, collateral_multiplier_bps);
-    }
+    OptFactorySeriesStrikeBps[series_id] = strike_bps;
+    vault_sync_series(series_id: series_id);
+    sync_product_series(
+      series_id: series_id,
+      option_kind: option_kind,
+      expiry_slot: expiry_slot,
+      strike_bps: strike_bps,
+      collateral_multiplier_bps: collateral_multiplier_bps
+    );
   }
 
-  kotoage fn configure_utilisation_guard(series_id: int,
-                                         bump_activate_bps: int,
-                                         bump_deactivate_bps: int,
-                                         pause_threshold_bps: int,
-                                         bump_percent_bps: int) {
+  kotoage fn configure_utilisation_guard(
+    int series_id,
+    int bump_activate_bps,
+    int bump_deactivate_bps,
+    int pause_threshold_bps,
+    int bump_percent_bps
+  ) authorize("Admin") {
     assert_owner();
-    assert_series_exists(series_id);
-    assert(bump_activate_bps >= 0, "invalid activate threshold");
-    assert(bump_deactivate_bps >= 0, "invalid deactivate threshold");
-    assert(pause_threshold_bps >= 0, "invalid pause threshold");
-    assert(bump_percent_bps >= 0, "invalid bump percent");
+    assert_series_exists(series_id: series_id);
+    require(
+      bump_activate_bps >= 0 && bump_activate_bps <= 10_000 &&
+      bump_deactivate_bps >= 0 && bump_deactivate_bps <= bump_activate_bps &&
+      pause_threshold_bps >= bump_activate_bps && pause_threshold_bps <= 10_000 &&
+      bump_percent_bps >= 0 && bump_percent_bps <= 10_000,
+      OptionsFactoryError::InvalidGuard
+    );
     OptFactorySeriesBumpActivateBps[series_id] = bump_activate_bps;
     OptFactorySeriesBumpDeactivateBps[series_id] = bump_deactivate_bps;
     OptFactorySeriesPauseThresholdBps[series_id] = pause_threshold_bps;
     OptFactorySeriesBumpPercentBps[series_id] = bump_percent_bps;
   }
 
-  kotoage fn buy_shout(series_id: int,
-                       notional: int,
-                       premium_paid: int,
-                       collateral_locked: int) -> int permission(AssetOps) {
-    return buy_impl(series_id, notional, premium_paid, collateral_locked, 1);
+  kotoage fn buy_shout(int series_id, quantity notional) -> int authorize("AssetOps") {
+    return buy_position(series_id: series_id, expected_kind: 1, notional: notional);
   }
 
-  kotoage fn buy_outperformance(series_id: int,
-                                notional: int,
-                                premium_paid: int,
-                                collateral_locked: int) -> int permission(AssetOps) {
-    return buy_impl(series_id, notional, premium_paid, collateral_locked, 2);
+  kotoage fn buy_outperformance(int series_id, quantity notional) -> int authorize("AssetOps") {
+    return buy_position(series_id: series_id, expected_kind: 2, notional: notional);
   }
 
-  kotoage fn settle_series(series_id: int,
-                           oracle_payload: bytes,
-                           oracle_signature: bytes) permission(AssetOps) {
-    assert_series_exists(series_id);
-    let oracle = verify_series_oracle(series_id, oracle_payload, oracle_signature);
-    let final_mark = oracle.0;
-    let final_quote_mark = oracle.1;
-    let oracle_slot = oracle.2;
-    let settlement_slot = oracle.3;
-    let attestation_hash = oracle.4;
-
-    manager_settle_series(
-      series_id,
-      final_mark,
-      final_quote_mark,
-      settlement_slot,
-      oracle_slot,
-      attestation_hash
+  kotoage fn exercise_outperformance_position(int position_id) -> quantity authorize("AssetOps") {
+    assert_position_owner(position_id: position_id);
+    require(OptFactoryPositionKind.get(position_id).unwrap_or(0) == 2, OptionsFactoryError::PositionKindMismatch);
+    require(OptFactoryPositionStatus.get(position_id).unwrap_or(0) == 1, OptionsFactoryError::PositionInactive);
+    let series_id = OptFactoryPositionSeriesId.get(position_id).unwrap_or(0);
+    require(OptFactorySeriesSettlementReady.get(series_id).unwrap_or(0) == 1, OptionsFactoryError::SeriesNotExpired);
+    let quoted_payout = contract::invoke(
+      contract: OptFactoryOutperformanceContract,
+      entrypoint: "exercise_position",
+      returns: "quantity",
+      position_id: position_id
     );
+    let paid = risk_vault_payout(
+      position_id: position_id,
+      recipient: context::authority(),
+      amount: quoted_payout
+    );
+    require(paid == quoted_payout, OptionsFactoryError::PayoutMismatch);
+    vault_settle_position(
+      position_id: position_id,
+      payout: paid,
+      premium_burn: OptFactoryPositionPremiumPaid.get(position_id).unwrap_or(zero_quantity())
+    );
+    risk_vault_release(position_id: position_id);
+    let notional = OptFactoryPositionNotional.get(position_id).unwrap_or(zero_quantity());
+    let open_notional = OptFactorySeriesOpenNotional.get(series_id).unwrap_or(zero_quantity());
+    require(open_notional >= notional, OptionsFactoryError::IndexCorrupt);
+    OptFactorySeriesOpenNotional[series_id] = open_notional - notional;
+    OptFactorySeriesUtilisationBps[series_id] = utilisation_bps(
+      series_id: series_id,
+      next_open_notional: open_notional - notional
+    );
+    OptFactoryPositionRecordedPayout[position_id] = paid;
+    OptFactoryPositionSettlementReady[position_id] = 1;
+    OptFactoryPositionStatus[position_id] = 3;
+    return paid;
+  }
 
-    OptFactorySeriesFinalMark[series_id] = final_mark;
-    OptFactorySeriesFinalQuoteMark[series_id] = final_quote_mark;
-    OptFactorySeriesSettlementReady[series_id] = 1;
-    OptFactorySeriesLastSettlementSlot[series_id] = settlement_slot;
-    OptFactorySeriesOracleSlot[series_id] = oracle_slot;
-    OptFactorySeriesAttestationHash[series_id] = attestation_hash;
-
-    if OptFactorySeriesKind.get_or(series_id, 0) == 2 {
-      outperf_settle_series(series_id, final_mark, final_quote_mark, settlement_slot);
+  kotoage fn native_lifecycle_tick() authorize("AssetOps") {
+    if OptFactoryInitialized == 0 || OptFactoryLifecycleEnabled == 0 {
+      return;
     }
-  }
-
-  kotoage fn record_shout(position_id: int,
-                          oracle_payload: bytes,
-                          oracle_signature: bytes) permission(AssetOps) {
-    assert_initialized();
-    assert_position_owner(position_id);
-    assert(OptFactoryPositionKind.get_or(position_id, 0) == 1, "position not shout");
-    let oracle = verify_shout_oracle(position_id, oracle_payload, oracle_signature);
-    let mark_price_bps = oracle.0;
-    let oracle_slot = oracle.1;
-    let attestation_hash = oracle.2;
-    shout_record_position(position_id, mark_price_bps, oracle_slot, attestation_hash);
-    OptFactoryPositionShoutFloor[position_id] = max_int(
-      OptFactoryPositionShoutFloor.get_or(position_id, 0),
-      mark_price_bps
-    );
-    OptFactoryPositionLastOracleMark[position_id] = mark_price_bps;
-    OptFactoryPositionLastOracleSlot[position_id] = oracle_slot;
-    OptFactoryPositionLastAttestationHash[position_id] = attestation_hash;
-  }
-
-  kotoage fn exercise_shout_position(position_id: int,
-                                     oracle_payload: bytes,
-                                     oracle_signature: bytes) -> int permission(AssetOps) {
-    assert_initialized();
-    assert_position_owner(position_id);
-    assert(OptFactoryPositionStatus.get_or(position_id, 0) == 1, "position not active");
-    assert(OptFactoryPositionKind.get_or(position_id, 0) == 1, "position not shout");
-    let oracle = verify_shout_oracle(position_id, oracle_payload, oracle_signature);
-    let mark_price_bps = oracle.0;
-    let oracle_slot = oracle.1;
-    let attestation_hash = oracle.2;
-
-    let desired_payout = shout_exercise_position(
-      position_id,
-      mark_price_bps,
-      oracle_slot,
-      attestation_hash
-    );
-    let settled_payout = risk_vault_settle_payout(position_id, authority(), desired_payout);
-    risk_vault_release_liability(position_id);
-
-    vault_settle_position(position_id, settled_payout, OptFactoryPositionPremiumPaid.get_or(position_id, 0));
-
-    let series_id = OptFactoryPositionSeriesId[position_id];
-    OptFactoryPositionLastOracleMark[position_id] = mark_price_bps;
-    OptFactoryPositionLastOracleSlot[position_id] = oracle_slot;
-    OptFactoryPositionLastAttestationHash[position_id] = attestation_hash;
-    OptFactoryPositionRecordedPayout[position_id] = settled_payout;
-    OptFactoryPositionSettlementReady[position_id] = 1;
-    OptFactoryPositionStatus[position_id] = 3;
-    OptFactorySeriesOpenNotional[series_id] = OptFactorySeriesOpenNotional.get_or(series_id, 0) - OptFactoryPositionNotional.get_or(position_id, 0);
-    OptFactorySeriesUtilisationBps[series_id] = next_utilisation_bps(
-      series_id,
-      OptFactorySeriesOpenNotional.get_or(series_id, 0)
-    );
-    return settled_payout;
-  }
-
-  kotoage fn exercise_outperformance_position(position_id: int) -> int permission(AssetOps) {
-    assert_initialized();
-    assert_position_owner(position_id);
-    assert(OptFactoryPositionStatus.get_or(position_id, 0) == 1, "position not active");
-    assert(OptFactoryPositionKind.get_or(position_id, 0) == 2, "position not outperformance");
-    let series_id = OptFactoryPositionSeriesId[position_id];
-    assert(OptFactorySeriesSettlementReady.get_or(series_id, 0) == 1, "settlement not ready");
-
-    let desired_payout = outperf_exercise_position(position_id);
-    let settled_payout = risk_vault_settle_payout(position_id, authority(), desired_payout);
-    risk_vault_release_liability(position_id);
-
-    vault_settle_position(position_id, settled_payout, OptFactoryPositionPremiumPaid.get_or(position_id, 0));
-
-    OptFactoryPositionRecordedPayout[position_id] = settled_payout;
-    OptFactoryPositionSettlementReady[position_id] = 1;
-    OptFactoryPositionStatus[position_id] = 3;
-    OptFactorySeriesOpenNotional[series_id] = OptFactorySeriesOpenNotional.get_or(series_id, 0) - OptFactoryPositionNotional.get_or(position_id, 0);
-    OptFactorySeriesUtilisationBps[series_id] = next_utilisation_bps(
-      series_id,
-      OptFactorySeriesOpenNotional.get_or(series_id, 0)
-    );
-    return settled_payout;
+    let current_slot = context::block_height();
+    if OptFactoryLifecycleNextSlot > 0 && current_slot < OptFactoryLifecycleNextSlot {
+      return;
+    }
+    var processed = 0;
+    var cursor = OptFactoryLifecycleCursor;
+    for _step in range(64) {
+      if processed < OptFactoryLifecycleMaxItems && OptFactorySeriesCount > 0 {
+        if cursor < 1 {
+          cursor = 1;
+        }
+        if OptFactorySeriesKind.contains(cursor) {
+          if OptFactorySeriesStatus.get(cursor).unwrap_or(0) == 1 &&
+            current_slot >= OptFactorySeriesExpirySlot.get(cursor).unwrap_or(0) {
+            OptFactorySeriesStatus[cursor] = 2;
+          }
+          processed = processed + 1;
+        }
+        cursor = cursor + 1;
+        if cursor >= 1_000_000 {
+          cursor = 1;
+        }
+      }
+    }
+    OptFactoryLifecycleCursor = cursor;
+    OptFactoryLifecycleLastSlot = current_slot;
+    OptFactoryLifecycleLastProcessed = processed;
+    OptFactoryLifecycleNextSlot = current_slot + OptFactoryLifecycleCadenceSlots;
   }
 
   view fn factory_config() -> (AssetDefinitionId, int, int, int, int, int, int) {
-    assert_initialized();
     return (
       OptFactorySettlementAsset,
       OptFactoryWithdrawalOnly,
@@ -828,46 +818,72 @@ seiyaku OptionsFactory {
     );
   }
 
-  view fn series_state(series_id: int) -> (int, int, int, int, int, int, int, int, int, int) {
-    let registered = 0;
-    if OptFactorySeriesKind.contains(series_id) {
-      registered = 1;
-    }
+  view fn series_state(int series_id) -> (
+    int,
+    int,
+    quantity,
+    int,
+    int,
+    quantity,
+    int,
+    int,
+    int,
+    int
+  ) {
+    let exists = OptFactorySeriesKind.contains(series_id) ? 1 : 0;
     return (
-      registered,
-      OptFactorySeriesKind.get_or(series_id, 0),
-      OptFactorySeriesMaxNotional.get_or(series_id, 0),
-      OptFactorySeriesPremiumBps.get_or(series_id, 0),
-      OptFactorySeriesCollateralMultiplierBps.get_or(series_id, 0),
-      OptFactorySeriesOpenNotional.get_or(series_id, 0),
-      OptFactorySeriesUtilisationBps.get_or(series_id, 0),
-      OptFactorySeriesPauseThresholdBps.get_or(series_id, 0),
-      OptFactorySeriesBumpPercentBps.get_or(series_id, 0),
-      OptFactorySeriesLastSettlementSlot.get_or(series_id, 0)
+      exists,
+      OptFactorySeriesKind.get(series_id).unwrap_or(0),
+      OptFactorySeriesMaxNotional.get(series_id).unwrap_or(zero_quantity()),
+      OptFactorySeriesPremiumBps.get(series_id).unwrap_or(0),
+      OptFactorySeriesCollateralMultiplierBps.get(series_id).unwrap_or(0),
+      OptFactorySeriesOpenNotional.get(series_id).unwrap_or(zero_quantity()),
+      OptFactorySeriesUtilisationBps.get(series_id).unwrap_or(0),
+      OptFactorySeriesPauseThresholdBps.get(series_id).unwrap_or(0),
+      OptFactorySeriesBumpPercentBps.get(series_id).unwrap_or(0),
+      OptFactorySeriesLastSettlementSlot.get(series_id).unwrap_or(0)
     );
   }
 
-  view fn position_state(position_id: int) -> (int, int, int, int, int, int, int, int, int) {
+  view fn position_state(int position_id) -> (
+    int,
+    int,
+    int,
+    quantity,
+    quantity,
+    quantity,
+    int,
+    quantity,
+    int
+  ) {
+    let exists = OptFactoryPositionOwner.contains(position_id) ? 1 : 0;
     return (
-      position_registered(position_id),
-      OptFactoryPositionSeriesId.get_or(position_id, 0),
-      OptFactoryPositionKind.get_or(position_id, 0),
-      OptFactoryPositionNotional.get_or(position_id, 0),
-      OptFactoryPositionPremiumPaid.get_or(position_id, 0),
-      OptFactoryPositionCollateralLocked.get_or(position_id, 0),
-      OptFactoryPositionStatus.get_or(position_id, 0),
-      OptFactoryPositionRecordedPayout.get_or(position_id, 0),
-      OptFactoryPositionSettlementReady.get_or(position_id, 0)
+      exists,
+      OptFactoryPositionSeriesId.get(position_id).unwrap_or(0),
+      OptFactoryPositionKind.get(position_id).unwrap_or(0),
+      OptFactoryPositionNotional.get(position_id).unwrap_or(zero_quantity()),
+      OptFactoryPositionPremiumPaid.get(position_id).unwrap_or(zero_quantity()),
+      OptFactoryPositionCollateralLocked.get(position_id).unwrap_or(zero_quantity()),
+      OptFactoryPositionStatus.get(position_id).unwrap_or(0),
+      OptFactoryPositionRecordedPayout.get(position_id).unwrap_or(zero_quantity()),
+      OptFactoryPositionSettlementReady.get(position_id).unwrap_or(0)
+    );
+  }
+
+  view fn series_settlement(int series_id) -> (decimal, decimal, int, int, int) {
+    assert_series_exists(series_id: series_id);
+    return (
+      OptFactorySeriesFinalMark.get(series_id).unwrap_or(zero_decimal()),
+      OptFactorySeriesFinalQuoteMark.get(series_id).unwrap_or(zero_decimal()),
+      OptFactorySeriesOracleSlot.get(series_id).unwrap_or(-1),
+      OptFactorySeriesAttestationHash.get(series_id).unwrap_or(0),
+      OptFactorySeriesSettlementReady.get(series_id).unwrap_or(0)
     );
   }
 
   view fn automation_state() -> (int, int, int, int, int, int, int) {
-    let executor_bound = 0;
-    if OptFactoryAutomationJobId > 0 {
-      executor_bound = 1;
-    }
     return (
-      executor_bound,
+      OptFactoryInitialized,
       OptFactoryAutomationJobId,
       OptFactoryAutomationCadence,
       OptFactoryAutomationBacklogCap,

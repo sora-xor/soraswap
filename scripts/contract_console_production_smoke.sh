@@ -1,5 +1,6 @@
 #!/bin/zsh
 set -euo pipefail
 
-export SORASWAP_PUBLIC_ENV=production
-exec "$(cd "$(dirname "$0")" && pwd)/contract_console_public_smoke.sh" "$@"
+SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+exec env SORASWAP_PUBLIC_ENV=production "$SCRIPT_ROOT/contract_console_public_smoke.sh" "$@"

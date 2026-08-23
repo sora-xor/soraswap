@@ -1,119 +1,239 @@
+// Immutable launchpad-to-DLMM liquidity bridge.
+//
+// Only the configured sale-factory contract subject may stage a sale's seed
+// assets. The executor transfers those assets into its own contract subject and
+// then performs an exact schema-bound pool call. Failed calls roll back both
+// transfers. Every seed position is unique and its minted shares are recorded.
+
 seiyaku LaunchpadLiquidityExecutor {
+  error enum LaunchpadLiquidityExecutorError {
+    IdenticalAssets = 1,
+    ExecutorAccountIsOwner = 2,
+    ExecutorOwnerMismatch = 3,
+    ExecutorGuardianMismatch = 4,
+    ExecutorPaused = 5,
+    InvalidPaused = 6,
+    SaleFactoryMismatch = 7,
+    FundingAccountMismatch = 8,
+    ZeroLiquidity = 9,
+    DuplicatePosition = 10,
+    PositionMissing = 11,
+    PoolSeedFailed = 12,
+  }
+
   state int ExecutorInitialized;
   state AccountId ExecutorOwner;
+  state AccountId ExecutorGuardian;
+  state int ExecutorPaused;
   state bytes PoolContract;
   state AssetDefinitionId BaseAsset;
   state AssetDefinitionId QuoteAsset;
-  state int ExecutorContractBound;
-  state AccountId ExecutorContractId;
-  state int SaleFactoryBound;
-  state AccountId SaleFactoryContractId;
+  state AccountId ExecutorContractAccount;
+  state AccountId SaleFactoryContractAccount;
 
-  fn assert_initialized() {
-    assert(ExecutorInitialized == 1, "executor not initialized");
+  state int SeedCount;
+  state StateMap<Name, int> SeedCompleted;
+  state StateMap<Name, int> SeedBinId;
+  state StateMap<Name, quantity> SeedBaseAmount;
+  state StateMap<Name, quantity> SeedQuoteAmount;
+  state StateMap<Name, quantity> SeedShares;
+  state StateMap<Name, int> SeedSlot;
+
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
+  }
+
+  fn universal_dataspace() -> DataSpaceId {
+    let dataspace = DataSpaceId::parse("0");
+    return dataspace;
   }
 
   fn assert_owner() {
-    assert_initialized();
-    assert(ExecutorOwner == authority(), "executor owner mismatch");
+    require(
+      ExecutorOwner == context::authority(),
+      LaunchpadLiquidityExecutorError::ExecutorOwnerMismatch
+    );
   }
 
-  fn assert_contract_bound() {
-    assert(ExecutorContractBound == 1, "executor contract unbound");
+  fn assert_owner_or_guardian() {
+    if ExecutorOwner == context::authority() {
+      return;
+    }
+    require(
+      ExecutorGuardian == context::authority(),
+      LaunchpadLiquidityExecutorError::ExecutorGuardianMismatch
+    );
+  }
+
+  fn assert_not_paused() {
+    require(ExecutorPaused == 0, LaunchpadLiquidityExecutorError::ExecutorPaused);
   }
 
   fn assert_sale_factory() {
-    assert(SaleFactoryBound == 1, "sale factory unbound");
-    assert(SaleFactoryContractId == authority(), "sale factory mismatch");
+    require(
+      SaleFactoryContractAccount == context::authority(),
+      LaunchpadLiquidityExecutorError::SaleFactoryMismatch
+    );
   }
 
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
-      }
+  fn move_asset_if_needed(
+    AccountId source,
+    AccountId destination,
+    AssetDefinitionId asset,
+    quantity amount
+  ) {
+    if amount > zero_quantity() && source != destination {
+      ledger::asset::transfer(
+        source: source,
+        destination: destination,
+        asset_definition: asset,
+        amount: amount,
+        dataspace: universal_dataspace()
+      );
     }
   }
 
-  kotoage fn main() -> int {
-    return ExecutorInitialized;
-  }
+  hajimari(
+    bytes pool_contract,
+    AssetDefinitionId base_asset,
+    AssetDefinitionId quote_asset,
+    AccountId executor_account,
+    AccountId sale_factory_account,
+    AccountId guardian
+  ) {
+    require(base_asset != quote_asset, LaunchpadLiquidityExecutorError::IdenticalAssets);
+    require(
+      executor_account != context::authority(),
+      LaunchpadLiquidityExecutorError::ExecutorAccountIsOwner
+    );
 
-  kotoage fn init_executor(pool_contract: bytes,
-                           base_asset: AssetDefinitionId,
-                           quote_asset: AssetDefinitionId) {
-    assert(ExecutorInitialized == 0, "executor initialized");
     ExecutorInitialized = 1;
-    ExecutorOwner = authority();
+    ExecutorOwner = context::authority();
+    ExecutorGuardian = guardian;
+    ExecutorPaused = 1;
     PoolContract = pool_contract;
     BaseAsset = base_asset;
     QuoteAsset = quote_asset;
-    ExecutorContractBound = 0;
-    ExecutorContractId = authority();
-    SaleFactoryBound = 0;
-    SaleFactoryContractId = authority();
+    ExecutorContractAccount = executor_account;
+    SaleFactoryContractAccount = sale_factory_account;
+    SeedCount = 0;
   }
 
-  kotoage fn bind_contract(contract_id: AccountId) {
-    assert_owner();
-    ExecutorContractId = contract_id;
-    ExecutorContractBound = 1;
+  view fn main() -> int {
+    return ExecutorInitialized;
   }
 
-  kotoage fn bind_sale_factory(factory_contract: AccountId) {
-    assert_owner();
-    SaleFactoryContractId = factory_contract;
-    SaleFactoryBound = 1;
+  kotoage fn set_paused(int paused) authorize("Admin") {
+    require(
+      paused == 0 || paused == 1,
+      LaunchpadLiquidityExecutorError::InvalidPaused
+    );
+    if paused == 1 {
+      assert_owner_or_guardian();
+    } else {
+      assert_owner();
+    }
+    ExecutorPaused = paused;
   }
 
-  kotoage fn bind_pool_contract(pool_contract: bytes) {
-    assert_owner();
-    PoolContract = pool_contract;
-  }
-
-  view fn executor_config() -> (AssetDefinitionId, AssetDefinitionId, int, int) {
-    assert_initialized();
+  view fn executor_config(
+  ) -> (AssetDefinitionId, AssetDefinitionId, AccountId, AccountId, int) {
     return (
       BaseAsset,
       QuoteAsset,
-      ExecutorContractBound,
-      SaleFactoryBound
+      ExecutorContractAccount,
+      SaleFactoryContractAccount,
+      ExecutorPaused
     );
   }
 
   view fn executor_binding_details() -> (bytes, AccountId, AccountId, int, int) {
-    assert_initialized();
     return (
       PoolContract,
-      ExecutorContractId,
-      SaleFactoryContractId,
-      ExecutorContractBound,
-      SaleFactoryBound
+      ExecutorContractAccount,
+      SaleFactoryContractAccount,
+      1,
+      1
     );
   }
 
-  kotoage fn seed_liquidity(funding_account: AccountId,
-                            bin_id: int,
-                            base_amount: int,
-                            quote_amount: int) -> int permission(AssetOps) {
-    let payload = json_object();
-    let payload = json_set_int(payload, name("bin_id"), bin_id);
-    let payload = json_set_int(payload, name("base_amount"), base_amount);
-    let payload = json_set_int(payload, name("quote_amount"), quote_amount);
-    assert_initialized();
-    assert_contract_bound();
+  view fn seed_count() -> int {
+    return SeedCount;
+  }
+
+  view fn mirror_seed(
+    Name position_id
+  ) -> (int, int, quantity, quantity, quantity, int) {
+    require(
+      SeedCompleted.contains(position_id),
+      LaunchpadLiquidityExecutorError::PositionMissing
+    );
+    return (
+      SeedCompleted.get(position_id).unwrap_or(0),
+      SeedBinId.get(position_id).unwrap_or(0),
+      SeedBaseAmount.get(position_id).unwrap_or(zero_quantity()),
+      SeedQuoteAmount.get(position_id).unwrap_or(zero_quantity()),
+      SeedShares.get(position_id).unwrap_or(zero_quantity()),
+      SeedSlot.get(position_id).unwrap_or(0)
+    );
+  }
+
+  kotoage fn seed_liquidity(
+    Name position_id,
+    AccountId funding_account,
+    int bin_id,
+    quantity base_amount,
+    quantity quote_amount
+  ) -> quantity authorize("AssetOps") {
+    assert_not_paused();
     assert_sale_factory();
-    assert(base_amount >= 0, "invalid base_amount");
-    assert(quote_amount >= 0, "invalid quote_amount");
-    assert(base_amount > 0 || quote_amount > 0, "zero liquidity");
-    assert(funding_account == authority(), "funding account mismatch");
-    move_asset_if_needed(funding_account, ExecutorContractId, BaseAsset, base_amount);
-    move_asset_if_needed(funding_account, ExecutorContractId, QuoteAsset, quote_amount);
-    let seeded = call_contract(PoolContract, "seed_bin_c2c", payload);
-    assert(decode_int(seeded) == 1, "pool seed failed");
-    return base_amount + quote_amount;
+    require(
+      funding_account == SaleFactoryContractAccount,
+      LaunchpadLiquidityExecutorError::FundingAccountMismatch
+    );
+    require(
+      base_amount > zero_quantity() || quote_amount > zero_quantity(),
+      LaunchpadLiquidityExecutorError::ZeroLiquidity
+    );
+    require(
+      !SeedCompleted.contains(position_id),
+      LaunchpadLiquidityExecutorError::DuplicatePosition
+    );
+
+    move_asset_if_needed(
+      source: funding_account,
+      destination: ExecutorContractAccount,
+      asset: BaseAsset,
+      amount: base_amount
+    );
+    move_asset_if_needed(
+      source: funding_account,
+      destination: ExecutorContractAccount,
+      asset: QuoteAsset,
+      amount: quote_amount
+    );
+    let minted_shares = contract::invoke(
+      contract: PoolContract,
+      entrypoint: "seed_bin_c2c",
+      returns: "quantity",
+      position_id: position_id,
+      bin_id: bin_id,
+      base_amount: base_amount,
+      quote_amount: quote_amount
+    );
+    require(
+      minted_shares > zero_quantity(),
+      LaunchpadLiquidityExecutorError::PoolSeedFailed
+    );
+
+    SeedCompleted[position_id] = 1;
+    SeedBinId[position_id] = bin_id;
+    SeedBaseAmount[position_id] = base_amount;
+    SeedQuoteAmount[position_id] = quote_amount;
+    SeedShares[position_id] = minted_shares;
+    SeedSlot[position_id] = context::block_height();
+    SeedCount = SeedCount + 1;
+    return minted_shares;
   }
 }

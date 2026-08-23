@@ -20,6 +20,15 @@ localnet_commit_inflight_timeout_ms="${SORASWAP_LOCALNET_COMMIT_INFLIGHT_TIMEOUT
 localnet_block_time_ms="${SORASWAP_LOCALNET_BLOCK_TIME_MS:-}"
 localnet_commit_time_ms="${SORASWAP_LOCALNET_COMMIT_TIME_MS:-}"
 
+soraswap_require_positive_integer_at_most_setting "SORASWAP_LOCALNET_BASE_API_PORT" "$base_api_port" 65535 || exit 1
+soraswap_require_positive_integer_at_most_setting "SORASWAP_LOCALNET_BASE_P2P_PORT" "$base_p2p_port" 65535 || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_GUEST_STACK_BYTES" "$localnet_guest_stack_bytes" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_GAS_TO_STACK_MULTIPLIER" "$localnet_gas_to_stack_multiplier" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_MAX_STACK_BYTES" "$localnet_max_stack_bytes" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_COMMIT_INFLIGHT_TIMEOUT_MS" "$localnet_commit_inflight_timeout_ms" || exit 1
+[[ -z "$localnet_block_time_ms" ]] || soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_BLOCK_TIME_MS" "$localnet_block_time_ms" || exit 1
+[[ -z "$localnet_commit_time_ms" ]] || soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_COMMIT_TIME_MS" "$localnet_commit_time_ms" || exit 1
+
 mkdir -p "$SORASWAP_ROOT/tmp"
 ensure_localnet_tool_bins
 
@@ -64,6 +73,6 @@ NORITO_SKIP_BINDINGS_SYNC=1 SKIP_TOOL_BUILD=true \
 
 torii_url="$(torii_url_from_config "$local_client")"
 
-echo "started local Nexus using generated localnet in $localnet_dir"
-echo "client config: $local_client"
+echo "started local Nexus using generated localnet in $(soraswap_display_path "$localnet_dir")"
+echo "client config: $(soraswap_display_path "$local_client")"
 echo "torii url: $torii_url"

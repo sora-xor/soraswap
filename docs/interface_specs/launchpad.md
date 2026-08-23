@@ -12,7 +12,6 @@ Contracts:
 - `bind_executor(executor_contract)`
 - `configure_trigger_lifecycle(cadence_slots, max_items_per_tick, enabled)`
 - `native_lifecycle_tick()`
-- `contribute(sale, payment_amount) -> int`
 - `contribute_recorded(sale, allocation, payment_amount) -> int`
 - `close_sale(sale)`
 - `deposit_seed_inventory(sale, amount) -> int`
@@ -44,10 +43,10 @@ Contracts:
 Notes:
 - Sale config is init-only; post-init asset override entrypoints remain removed.
 - `init_factory()` must be called before any owner-gated setup. The factory owner is explicit instead of lazily captured on first admin use.
-- Direct `contribute(...)` is retained only as a hard-rejecting compatibility trap; recorded allocations through `contribute_recorded(...)` are the only purchase path.
+- Recorded allocations through `contribute_recorded(...)` are the only purchase path.
 - Recorded-allocation flows are caller-bound through `authority()`.
 - Claim window checks use `block_height()` internally; callers no longer provide a current slot.
 - `register_seed_liquidity(...)` records the seed plan before activation; it does not require the sale to be closed because `finalize_sale_activation(...)` closes and activates in one signed path.
 - `finalize_sale_activation(...)` is the canonical production activation path. It closes the sale if needed, deposits claim inventory when provided, stages both seed assets through the factory contract subject, then invokes the dedicated executor contract to seed DLMM liquidity on chain.
 - The release path does not rely on an operator-only off-chain seeding workflow. `liquidity_executor.ko` is the only release-eligible bridge between launchpad sale proceeds and DLMM pool seeding.
-- `soraswap_launchpad_lifecycle_tick` is a bounded pre-commit trigger. It closes due sales and auto-seeds only when the seed plan is contract-custodied; otherwise it marks activation pending for explicit completion.
+- `soraswap_launchpad_lifecycle_tick` is a bounded time trigger registered on a `schedule(20000, 120000)` native schedule. It still enforces the configured slot cadence inside the contract, closes due sales, and auto-seeds only when the seed plan is contract-custodied; otherwise it marks activation pending for explicit completion.

@@ -1,93 +1,219 @@
 seiyaku IntentSettlementRouter {
-  state IntentOwner: Map<Name, AccountId>;
-  state IntentInputAsset: Map<Name, AssetDefinitionId>;
-  state IntentOutputAsset: Map<Name, AssetDefinitionId>;
-  state IntentAmountIn: Map<Name, int>;
-  state IntentMinOut: Map<Name, int>;
-  state IntentSolverFeeBps: Map<Name, int>;
-  state IntentDeadlineSlot: Map<Name, int>;
-  state IntentNonce: Map<Name, int>;
-  state IntentStatus: Map<Name, int>;
-  state IntentSolver: Map<Name, AccountId>;
-  state IntentAmountOut: Map<Name, int>;
-  state IntentFillSlot: Map<Name, int>;
-
-  fn assert_intent_exists(intent_id: Name) {
-    assert(IntentOwner.contains(intent_id), "intent missing");
-  }
-
-  fn assert_intent_owner(intent_id: Name) {
-    assert_intent_exists(intent_id);
-    assert(IntentOwner[intent_id] == authority(), "intent owner mismatch");
-  }
-
-  kotoage fn main() -> int {
-    return 1;
-  }
-
-  kotoage fn open_intent(intent_id: Name,
-                         input_asset: AssetDefinitionId,
-                         output_asset: AssetDefinitionId,
-                         amount_in: int,
-                         min_out: int,
-                         solver_fee_bps: int,
-                         deadline_slot: int,
-                         nonce: int) permission(AssetOps) {
-    assert(!IntentOwner.contains(intent_id), "intent exists");
-    assert(amount_in > 0, "invalid amount in");
-    assert(min_out > 0, "invalid min out");
-    assert(solver_fee_bps >= 0, "invalid solver fee");
-    assert(solver_fee_bps <= 10_000, "invalid solver fee");
-    assert(deadline_slot >= 0, "invalid deadline");
-    assert(nonce >= 0, "invalid nonce");
-    IntentOwner[intent_id] = authority();
-    IntentInputAsset[intent_id] = input_asset;
-    IntentOutputAsset[intent_id] = output_asset;
-    IntentAmountIn[intent_id] = amount_in;
-    IntentMinOut[intent_id] = min_out;
-    IntentSolverFeeBps[intent_id] = solver_fee_bps;
-    IntentDeadlineSlot[intent_id] = deadline_slot;
-    IntentNonce[intent_id] = nonce;
-    IntentStatus[intent_id] = 1;
-  }
-
-  kotoage fn cancel_intent(intent_id: Name) {
-    assert_intent_owner(intent_id);
-    assert(IntentStatus.ensure(intent_id, 0) == 1, "intent not open");
-    IntentStatus[intent_id] = 3;
-  }
-
-  kotoage fn fill_intent(intent_id: Name, amount_out: int) {
-    assert_intent_exists(intent_id);
-    assert(IntentStatus.ensure(intent_id, 0) == 1, "intent not open");
-    assert(amount_out >= IntentMinOut.ensure(intent_id, 0), "insufficient output");
-    let fill_slot = block_height();
-    assert(fill_slot <= IntentDeadlineSlot.ensure(intent_id, 0), "intent expired");
-    IntentStatus[intent_id] = 2;
-    IntentSolver[intent_id] = authority();
-    IntentAmountOut[intent_id] = amount_out;
-    IntentFillSlot[intent_id] = fill_slot;
-  }
-
-  view fn intent_state(intent_id: Name) -> (int, int, int, int, int, int, int, int, int) {
-    let registered = 0;
-    let solver_bound = 0;
-    if IntentOwner.contains(intent_id) {
-      registered = 1;
+    error enum IntentError {
+        IntentMissing = 1, OwnerMismatch = 2, IntentAlreadyExists = 3, IdenticalAssets = 4, InvalidAmountIn = 5, InvalidMinimumOutput = 6, InvalidSolverFee = 7, InvalidDeadline = 8, InvalidNonce = 9, IntentNotOpen = 10, InsufficientOutput = 11, IntentExpired = 12, IntentIncomplete = 13, InvalidQuantityConversion = 14,
     }
-    if IntentSolver.contains(intent_id) {
-      solver_bound = 1;
+
+    state AccountId RouterCustodyAccount;
+    state AccountId RouterFeeAccount;
+    state StateMap<Name, AccountId> IntentOwner;
+    state StateMap<Name, AssetDefinitionId> IntentInputAsset;
+    state StateMap<Name, AssetDefinitionId> IntentOutputAsset;
+    state StateMap<Name, quantity> IntentAmountIn;
+    state StateMap<Name, quantity> IntentMinOut;
+    state StateMap<Name, int> IntentSolverFeeBps;
+    state StateMap<Name, int> IntentDeadlineSlot;
+    state StateMap<Name, int> IntentNonce;
+    state StateMap<Name, int> IntentStatus;
+    state StateMap<Name, AccountId> IntentSolver;
+    state StateMap<Name, quantity> IntentAmountOut;
+    state StateMap<Name, quantity> IntentSolverFee;
+    state StateMap<Name, int> IntentFillSlot;
+    fn checked_quantity(decimal value) -> quantity {
+        return match quantity::try_from_decimal(value: value) {
+            Result::ok(amount) => amount,
+            Result::err(_) => {
+                require(false, IntentError::InvalidQuantityConversion);
+                0
+            },
+        };
     }
-    return (
-      registered,
-      IntentStatus.get_or(intent_id, 0),
-      IntentAmountIn.get_or(intent_id, 0),
-      IntentMinOut.get_or(intent_id, 0),
-      IntentSolverFeeBps.get_or(intent_id, 0),
-      IntentDeadlineSlot.get_or(intent_id, 0),
-      IntentNonce.get_or(intent_id, 0),
-      solver_bound,
-      IntentAmountOut.get_or(intent_id, 0)
-    );
-  }
+
+    fn move_asset(
+        AccountId source,
+        AccountId destination,
+        AssetDefinitionId asset,
+        quantity amount,
+    ) {
+        if amount > 0 && source != destination {
+            ledger::asset::transfer(
+                source: source,
+                destination: destination,
+                asset_definition: asset,
+                amount: amount,
+                dataspace: DataSpaceId::parse("0"),
+            );
+        }
+    }
+
+    fn assert_intent_exists(Name intent_id) {
+        require(IntentOwner.contains(key: intent_id), IntentError::IntentMissing);
+    }
+
+    fn assert_intent_complete(Name intent_id) {
+        assert_intent_exists(intent_id: intent_id);
+        require(
+            IntentInputAsset.contains(key: intent_id) && IntentOutputAsset.contains(key: intent_id) && IntentAmountIn.contains(
+                key: intent_id,
+            ) && IntentMinOut.contains(key: intent_id) && IntentSolverFeeBps.contains(
+                key: intent_id,
+            ) && IntentDeadlineSlot.contains(key: intent_id) && IntentStatus.contains(
+                key: intent_id,
+            ),
+            IntentError::IntentIncomplete,
+        );
+    }
+
+    fn intent_owner(Name intent_id) -> AccountId {
+        assert_intent_exists(intent_id: intent_id);
+        return IntentOwner.get(key: intent_id).unwrap_or(default: context::authority());
+    }
+
+    fn assert_intent_owner(Name intent_id) {
+        require(
+            intent_owner(intent_id: intent_id) == context::authority(),
+            IntentError::OwnerMismatch,
+        );
+    }
+
+    hajimari(AccountId custody_account, AccountId fee_account) {
+        RouterCustodyAccount = custody_account;
+        RouterFeeAccount = fee_account;
+    }
+
+    view fn main() -> int {
+        return 1;
+    }
+
+    kotoage fn open_intent(
+        Name intent_id,
+        AssetDefinitionId input_asset,
+        AssetDefinitionId output_asset,
+        quantity amount_in,
+        quantity min_out,
+        int solver_fee_bps,
+        int deadline_slot,
+        int nonce,
+    ) authorize("AssetOps") {
+        require(!IntentOwner.contains(key: intent_id), IntentError::IntentAlreadyExists);
+        require(input_asset != output_asset, IntentError::IdenticalAssets);
+        require(amount_in > 0, IntentError::InvalidAmountIn);
+        require(min_out > 0, IntentError::InvalidMinimumOutput);
+        require(solver_fee_bps >= 0 && solver_fee_bps <= 10_000, IntentError::InvalidSolverFee);
+        require(deadline_slot >= context::block_height(), IntentError::InvalidDeadline);
+        require(nonce >= 0, IntentError::InvalidNonce);
+        move_asset(
+            source: context::authority(),
+            destination: RouterCustodyAccount,
+            asset: input_asset,
+            amount: amount_in,
+        );
+        IntentOwner[intent_id] = context::authority();
+        IntentInputAsset[intent_id] = input_asset;
+        IntentOutputAsset[intent_id] = output_asset;
+        IntentAmountIn[intent_id] = amount_in;
+        IntentMinOut[intent_id] = min_out;
+        IntentSolverFeeBps[intent_id] = solver_fee_bps;
+        IntentDeadlineSlot[intent_id] = deadline_slot;
+        IntentNonce[intent_id] = nonce;
+        IntentStatus[intent_id] = 1;
+        IntentAmountOut[intent_id] = 0;
+        IntentSolverFee[intent_id] = 0;
+        IntentFillSlot[intent_id] = 0;
+    }
+
+    kotoage fn cancel_intent(Name intent_id) authorize("AssetOps") {
+        assert_intent_owner(intent_id: intent_id);
+        assert_intent_complete(intent_id: intent_id);
+        require(IntentStatus.get_or(key: intent_id, default: 0) == 1, IntentError::IntentNotOpen, );
+        let amount_in = IntentAmountIn.get_or(key: intent_id, default: 0);
+        if let Option::some(input_asset) = IntentInputAsset.get(key: intent_id) {
+            move_asset(
+                source: RouterCustodyAccount,
+                destination: context::authority(),
+                asset: input_asset,
+                amount: amount_in,
+            );
+        } else {
+            require(false, IntentError::IntentIncomplete);
+        }
+        IntentStatus[intent_id] = 3;
+    }
+
+    kotoage fn fill_intent(Name intent_id, quantity amount_out) authorize("AssetOps") {
+        assert_intent_complete(intent_id: intent_id);
+        require(IntentStatus.get_or(key: intent_id, default: 0) == 1, IntentError::IntentNotOpen, );
+        require(
+            amount_out >= IntentMinOut.get_or(key: intent_id, default: 0),
+            IntentError::InsufficientOutput,
+        );
+        let fill_slot = context::block_height();
+        require(
+            fill_slot <= IntentDeadlineSlot.get_or(key: intent_id, default: 0),
+            IntentError::IntentExpired,
+        );
+        let solver = context::authority();
+        let owner = intent_owner(intent_id: intent_id);
+        let amount_in = IntentAmountIn.get_or(key: intent_id, default: 0);
+        let fee = checked_quantity(
+            value: (decimal::from_quantity(value: amount_in) * decimal::from_int(
+                value: IntentSolverFeeBps.get_or(key: intent_id, default: 0),
+            )) / 10_000,
+        );
+        let solver_input = amount_in - fee;
+        if let Option::some(input_asset) = IntentInputAsset.get(key: intent_id) {
+            if let Option::some(output_asset) = IntentOutputAsset.get(key: intent_id) {
+                move_asset(
+                    source: solver,
+                    destination: owner,
+                    asset: output_asset,
+                    amount: amount_out,
+                );
+                move_asset(
+                    source: RouterCustodyAccount,
+                    destination: solver,
+                    asset: input_asset,
+                    amount: solver_input,
+                );
+                move_asset(
+                    source: RouterCustodyAccount,
+                    destination: RouterFeeAccount,
+                    asset: input_asset,
+                    amount: fee,
+                );
+            } else {
+                require(false, IntentError::IntentIncomplete);
+            }
+        } else {
+            require(false, IntentError::IntentIncomplete);
+        }
+        IntentStatus[intent_id] = 2;
+        IntentSolver[intent_id] = solver;
+        IntentAmountOut[intent_id] = amount_out;
+        IntentSolverFee[intent_id] = fee;
+        IntentFillSlot[intent_id] = fill_slot;
+    }
+
+    view fn intent_state(Name intent_id, ) -> (int, int, quantity, quantity, int, int, int, int, quantity, quantity) {
+        var int registered = 0;
+        var int solver_bound = 0;
+        if IntentOwner.contains(key: intent_id) {
+            registered = 1;
+        }
+        if IntentSolver.contains(key: intent_id) {
+            solver_bound = 1;
+        }
+        return (registered, IntentStatus.get_or(key: intent_id, default: 0), IntentAmountIn.get_or(
+            key: intent_id,
+            default: 0,
+        ), IntentMinOut.get_or(key: intent_id, default: 0), IntentSolverFeeBps.get_or(
+            key: intent_id,
+            default: 0,
+        ), IntentDeadlineSlot.get_or(key: intent_id, default: 0), IntentNonce.get_or(
+            key: intent_id,
+            default: 0,
+        ), solver_bound, IntentAmountOut.get_or(key: intent_id, default: 0), IntentSolverFee.get_or(
+            key: intent_id,
+            default: 0,
+        ));
+    }
 }

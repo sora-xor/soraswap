@@ -60,8 +60,8 @@ Notes:
 - The layout is intentionally singleton and deterministic for the first Kotodama port.
 - Basket balances are redeemable backing only. Mint fees are credited into per-asset fee reserves instead of basket backing; redeem burns the gross basket share, pays the user net output, and moves the redeem fees into reserves.
 - `MintFeesAccrued` tracks aggregate mint-side fees in basket units, and `RedeemFeesAccrued` tracks the sum of per-asset redeem-side fees. `claim_fees(recipient)` is owner-only and transfers only `FeeReserve*` balances, then zeroes those reserves without changing basket backing.
-- Target weights are configuration-only in this repo slice; they are returned for operator readback and smoke assertions, not yet enforced by a rebalancer.
+- Target weights are configuration-only in the v1 SoraSwap surface; they are returned for operator readback and smoke assertions, and automatic basket rebalancing is outside the release-eligible contract scope.
 - Repo bootstrap targets the current `n3x_hub` contract subject for public `testnet|production` `VaultAccount` and migrates seeded balances forward from previous contract-subject custody after upgrades; `local` still defaults to the isolated `n3x_hub` contract subject unless `SORASWAP_N3X_VAULT_ACCOUNT` overrides it.
 - `VaultAccount` can now be repaired in-place through `bind_vault_account(...)` when live custody drifts but basket state remains valid.
-- `repair_zero_supply_state(...)` is a stricter owner-gated repair path that rebinds custody and zeroes basket/fee counters when `TotalN3x == 0`.
-- `scripts/smoke_testnet.sh` reads those fields through `/v1/contracts/view` and records both raw view tuples and decoded integer values in the smoke report.
+- Bootstrap treats nonzero basket or fee counters with `TotalN3x == 0` as a hard accounting mismatch instead of zeroing state through a production entrypoint.
+- The public smoke targets, `make smoke-testnet-readonly` and `SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make smoke-testnet`, read those fields through `/v1/contracts/view` and record both raw view tuples and decoded integer values in the smoke reports.

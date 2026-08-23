@@ -1,227 +1,415 @@
+// Outperformance option accounting product.
+// Settlement compares base and quote returns in basis points and records a
+// quantity payout. The factory remains the user-facing orchestration surface.
+
 seiyaku OutperformanceOption {
+  error enum OutperformanceOptionError {
+    ProductOwnerMismatch = 1,
+    ProductControllerMismatch = 2,
+    ProductGuardianMismatch = 3,
+    WithdrawalOnly = 4,
+    InvalidExpiry = 5,
+    InvalidCollateralMultiplier = 6,
+    SeriesMissing = 7,
+    SeriesConfigMismatch = 8,
+    SeriesInactive = 9,
+    SeriesLive = 10,
+    SeriesAlreadySettled = 11,
+    SettlementBeforeExpiry = 12,
+    PositionExists = 13,
+    PositionMissing = 14,
+    PositionOwnerMismatch = 15,
+    PositionInactive = 16,
+    PositionSeriesMismatch = 17,
+    SettlementNotReady = 18,
+  }
+
   state int OutperfInitialized;
   state AccountId OutperfOwner;
   state AccountId OutperfController;
   state AccountId OutperfGuardian;
   state int OutperfWithdrawalOnly;
 
-  state OutperfSeriesExpirySlot: Map<int, int>;
-  state OutperfSeriesCollateralMultiplierBps: Map<int, int>;
-  state OutperfSeriesStatus: Map<int, int>;
-  state OutperfSeriesFinalBaseReturnBps: Map<int, int>;
-  state OutperfSeriesFinalQuoteReturnBps: Map<int, int>;
-  state OutperfSeriesSettlementReady: Map<int, int>;
+  state StateMap<int, int> OutperfSeriesExpirySlot;
+  state StateMap<int, int> OutperfSeriesCollateralMultiplierBps;
+  state StateMap<int, int> OutperfSeriesStatus;
+  state StateMap<int, int> OutperfSeriesFinalBaseReturnBps;
+  state StateMap<int, int> OutperfSeriesFinalQuoteReturnBps;
+  state StateMap<int, int> OutperfSeriesSettlementReady;
 
-  state OutperfPositionOwner: Map<int, AccountId>;
-  state OutperfPositionSeriesId: Map<int, int>;
-  state OutperfPositionNotional: Map<int, int>;
-  state OutperfPositionCollateralMultiplierBps: Map<int, int>;
-  state OutperfPositionBaseReturnBps: Map<int, int>;
-  state OutperfPositionQuoteReturnBps: Map<int, int>;
-  state OutperfPositionPayout: Map<int, int>;
-  state OutperfPositionSettlementReady: Map<int, int>;
-  state OutperfPositionStatus: Map<int, int>;
+  state StateMap<int, AccountId> OutperfPositionOwner;
+  state StateMap<int, int> OutperfPositionSeriesId;
+  state StateMap<int, quantity> OutperfPositionNotional;
+  state StateMap<int, int> OutperfPositionCollateralMultiplierBps;
+  state StateMap<int, int> OutperfPositionBaseReturnBps;
+  state StateMap<int, int> OutperfPositionQuoteReturnBps;
+  state StateMap<int, quantity> OutperfPositionPayout;
+  state StateMap<int, int> OutperfPositionSettlementReady;
+  state StateMap<int, int> OutperfPositionStatus;
 
-  fn assert_initialized() {
-    assert(OutperfInitialized == 1, "product not initialized");
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
+  }
+
+  fn max_int(int left, int right) -> int {
+    if left >= right {
+      return left;
+    }
+    return right;
   }
 
   fn assert_owner() {
-    assert_initialized();
-    assert(OutperfOwner == authority(), "product owner mismatch");
+    require(OutperfOwner == context::authority(), OutperformanceOptionError::ProductOwnerMismatch);
   }
 
   fn assert_owner_or_controller() {
-    assert_initialized();
-    if OutperfOwner == authority() {
+    if OutperfOwner == context::authority() {
       return;
     }
-    assert(OutperfController == authority(), "product controller mismatch");
+    require(
+      OutperfController == context::authority(),
+      OutperformanceOptionError::ProductControllerMismatch
+    );
   }
 
-  fn assert_position_exists(position_id: int) {
-    assert(OutperfPositionOwner.contains(position_id), "position missing");
+  fn assert_owner_or_guardian() {
+    if OutperfOwner == context::authority() {
+      return;
+    }
+    require(
+      OutperfGuardian == context::authority(),
+      OutperformanceOptionError::ProductGuardianMismatch
+    );
   }
 
-  fn assert_position_owner(position_id: int) {
+  fn assert_series_exists(int series_id) {
+    require(OutperfSeriesExpirySlot.contains(series_id), OutperformanceOptionError::SeriesMissing);
+    require(OutperfSeriesStatus.contains(series_id), OutperformanceOptionError::SeriesMissing);
+  }
+
+  fn series_expiry_value(int series_id) -> int {
+    assert_series_exists(series_id);
+    return OutperfSeriesExpirySlot.get(series_id).unwrap_or(0);
+  }
+
+  fn series_multiplier_value(int series_id) -> int {
+    assert_series_exists(series_id);
+    return OutperfSeriesCollateralMultiplierBps.get(series_id).unwrap_or(0);
+  }
+
+  fn series_status_value(int series_id) -> int {
+    return OutperfSeriesStatus.get(series_id).unwrap_or(0);
+  }
+
+  fn series_base_return_value(int series_id) -> int {
+    return OutperfSeriesFinalBaseReturnBps.get(series_id).unwrap_or(0);
+  }
+
+  fn series_quote_return_value(int series_id) -> int {
+    return OutperfSeriesFinalQuoteReturnBps.get(series_id).unwrap_or(0);
+  }
+
+  fn assert_position_exists(int position_id) {
+    require(OutperfPositionOwner.contains(position_id), OutperformanceOptionError::PositionMissing);
+    require(OutperfPositionSeriesId.contains(position_id), OutperformanceOptionError::PositionMissing);
+  }
+
+  fn position_owner_value(int position_id) -> AccountId {
     assert_position_exists(position_id);
-    assert(OutperfPositionOwner[position_id] == authority(), "position owner mismatch");
+    return OutperfPositionOwner.get(position_id).unwrap_or(context::authority());
   }
 
-  fn assert_position_operator(position_id: int) {
+  fn position_series_value(int position_id) -> int {
     assert_position_exists(position_id);
-    if OutperfPositionOwner[position_id] == authority() {
+    return OutperfPositionSeriesId.get(position_id).unwrap_or(0);
+  }
+
+  fn position_notional_value(int position_id) -> quantity {
+    return OutperfPositionNotional.get(position_id).unwrap_or(zero_quantity());
+  }
+
+  fn position_multiplier_value(int position_id) -> int {
+    return OutperfPositionCollateralMultiplierBps.get(position_id).unwrap_or(0);
+  }
+
+  fn position_payout_value(int position_id) -> quantity {
+    return OutperfPositionPayout.get(position_id).unwrap_or(zero_quantity());
+  }
+
+  fn position_status_value(int position_id) -> int {
+    return OutperfPositionStatus.get(position_id).unwrap_or(0);
+  }
+
+  fn assert_position_operator(int position_id) {
+    if position_owner_value(position_id) == context::authority() {
       return;
     }
     assert_owner_or_controller();
   }
 
-  fn position_registered(position_id: int) -> int {
-    if OutperfPositionOwner.contains(position_id) {
-      return 1;
-    }
-    return 0;
-  }
-
-  fn max_int(a: int, b: int) -> int {
-    if a >= b {
-      return a;
-    }
-    return b;
-  }
-
-  kotoage fn main() -> int {
-    return OutperfInitialized;
-  }
-
-  kotoage fn init_product(guardian: AccountId) {
-    assert(OutperfInitialized == 0, "product initialized");
-    OutperfInitialized = 1;
-    OutperfOwner = authority();
-    OutperfController = authority();
-    OutperfGuardian = guardian;
-    OutperfWithdrawalOnly = 1;
-  }
-
-  kotoage fn bind_controller(controller: AccountId) {
-    assert_owner();
-    OutperfController = controller;
-  }
-
-  kotoage fn enter_withdrawal_only() {
-    assert_owner();
-    OutperfWithdrawalOnly = 1;
-  }
-
-  kotoage fn exit_withdrawal_only() {
-    assert_owner();
-    OutperfWithdrawalOnly = 0;
-  }
-
-  kotoage fn sync_series(series_id: int,
-                         expiry_slot: int,
-                         collateral_multiplier_bps: int) {
+  fn sync_series_impl(
+    int series_id,
+    int expiry_slot,
+    int collateral_multiplier_bps
+  ) {
     assert_owner_or_controller();
-    assert(expiry_slot >= 0, "invalid expiry");
-    assert(collateral_multiplier_bps > 0, "invalid collateral multiplier");
+    require(expiry_slot >= 0, OutperformanceOptionError::InvalidExpiry);
+    require(
+      collateral_multiplier_bps > 0,
+      OutperformanceOptionError::InvalidCollateralMultiplier
+    );
+    if OutperfSeriesExpirySlot.contains(series_id) {
+      require(
+        series_expiry_value(series_id) == expiry_slot,
+        OutperformanceOptionError::SeriesConfigMismatch
+      );
+      require(
+        series_multiplier_value(series_id) == collateral_multiplier_bps,
+        OutperformanceOptionError::SeriesConfigMismatch
+      );
+      return;
+    }
     OutperfSeriesExpirySlot[series_id] = expiry_slot;
     OutperfSeriesCollateralMultiplierBps[series_id] = collateral_multiplier_bps;
-    OutperfSeriesStatus[series_id] = OutperfSeriesStatus.ensure(series_id, 1);
-    OutperfSeriesFinalBaseReturnBps[series_id] = OutperfSeriesFinalBaseReturnBps.ensure(series_id, 0);
-    OutperfSeriesFinalQuoteReturnBps[series_id] = OutperfSeriesFinalQuoteReturnBps.ensure(series_id, 0);
-    OutperfSeriesSettlementReady[series_id] = OutperfSeriesSettlementReady.ensure(series_id, 0);
+    OutperfSeriesStatus[series_id] = 1;
+    OutperfSeriesFinalBaseReturnBps[series_id] = 0;
+    OutperfSeriesFinalQuoteReturnBps[series_id] = 0;
+    OutperfSeriesSettlementReady[series_id] = 0;
   }
 
-  kotoage fn sync_series_c2c(series_id: int,
-                             expiry_slot: int,
-                             collateral_multiplier_bps: int) -> int {
-    sync_series(series_id, expiry_slot, collateral_multiplier_bps);
-    return 1;
-  }
-
-  kotoage fn register_position(position_id: int,
-                               series_id: int,
-                               owner: AccountId,
-                               notional: int,
-                               collateral_multiplier_bps: int) {
-    assert_initialized();
+  fn register_position_impl(
+    int position_id,
+    int series_id,
+    AccountId owner,
+    quantity notional,
+    int collateral_multiplier_bps
+  ) {
     assert_owner_or_controller();
-    assert(OutperfWithdrawalOnly == 0, "withdrawal only");
-    assert(!OutperfPositionOwner.contains(position_id), "position exists");
-    assert(notional > 0, "invalid notional");
+    require(OutperfWithdrawalOnly == 0, OutperformanceOptionError::WithdrawalOnly);
+    assert_series_exists(series_id);
+    require(series_status_value(series_id) == 1, OutperformanceOptionError::SeriesInactive);
+    require(
+      collateral_multiplier_bps == series_multiplier_value(series_id),
+      OutperformanceOptionError::PositionSeriesMismatch
+    );
+    require(!OutperfPositionOwner.contains(position_id), OutperformanceOptionError::PositionExists);
+    require(notional > zero_quantity(), OutperformanceOptionError::PositionInactive);
     OutperfPositionOwner[position_id] = owner;
     OutperfPositionSeriesId[position_id] = series_id;
     OutperfPositionNotional[position_id] = notional;
     OutperfPositionCollateralMultiplierBps[position_id] = collateral_multiplier_bps;
     OutperfPositionBaseReturnBps[position_id] = 0;
     OutperfPositionQuoteReturnBps[position_id] = 0;
-    OutperfPositionPayout[position_id] = 0;
+    OutperfPositionPayout[position_id] = zero_quantity();
     OutperfPositionSettlementReady[position_id] = 0;
     OutperfPositionStatus[position_id] = 1;
   }
 
-  kotoage fn register_position_c2c(position_id: int,
-                                   series_id: int,
-                                   owner: AccountId,
-                                   notional: int,
-                                   collateral_multiplier_bps: int) -> int {
-    register_position(position_id, series_id, owner, notional, collateral_multiplier_bps);
-    return 1;
-  }
-
-  kotoage fn settle_series(series_id: int,
-                           base_return_bps: int,
-                           quote_return_bps: int,
-                           settlement_slot: int) {
+  fn settle_series_impl(
+    int series_id,
+    int base_return_bps,
+    int quote_return_bps,
+    int settlement_slot
+  ) {
     assert_owner_or_controller();
-    assert(OutperfSeriesExpirySlot.contains(series_id), "series missing");
+    assert_series_exists(series_id);
+    require(series_status_value(series_id) == 1, OutperformanceOptionError::SeriesAlreadySettled);
+    require(
+      settlement_slot >= series_expiry_value(series_id),
+      OutperformanceOptionError::SettlementBeforeExpiry
+    );
     OutperfSeriesFinalBaseReturnBps[series_id] = base_return_bps;
     OutperfSeriesFinalQuoteReturnBps[series_id] = quote_return_bps;
     OutperfSeriesSettlementReady[series_id] = 1;
     OutperfSeriesStatus[series_id] = 2;
-    OutperfSeriesExpirySlot[series_id] = max_int(OutperfSeriesExpirySlot.get_or(series_id, 0), settlement_slot);
+    OutperfSeriesExpirySlot[series_id] = settlement_slot;
   }
 
-  kotoage fn settle_series_c2c(series_id: int,
-                               base_return_bps: int,
-                               quote_return_bps: int,
-                               settlement_slot: int) -> int {
-    settle_series(series_id, base_return_bps, quote_return_bps, settlement_slot);
+  hajimari(AccountId guardian) {
+    OutperfInitialized = 1;
+    OutperfOwner = context::authority();
+    OutperfController = context::authority();
+    OutperfGuardian = guardian;
+    OutperfWithdrawalOnly = 1;
+  }
+
+  view fn main() -> int {
+    return OutperfInitialized;
+  }
+
+  kotoage fn bind_controller(AccountId controller) authorize("Admin") {
+    assert_owner();
+    OutperfController = controller;
+  }
+
+  kotoage fn enter_withdrawal_only() authorize("Admin") {
+    assert_owner_or_guardian();
+    OutperfWithdrawalOnly = 1;
+  }
+
+  kotoage fn exit_withdrawal_only() authorize("Admin") {
+    assert_owner();
+    OutperfWithdrawalOnly = 0;
+  }
+
+  kotoage fn sync_series(
+    int series_id,
+    int expiry_slot,
+    int collateral_multiplier_bps
+  ) authorize("Entry") {
+    sync_series_impl(
+      series_id: series_id,
+      expiry_slot: expiry_slot,
+      collateral_multiplier_bps: collateral_multiplier_bps
+    );
+  }
+
+  kotoage fn sync_series_c2c(
+    int series_id,
+    int expiry_slot,
+    int collateral_multiplier_bps
+  ) -> int authorize("Entry") {
+    sync_series_impl(
+      series_id: series_id,
+      expiry_slot: expiry_slot,
+      collateral_multiplier_bps: collateral_multiplier_bps
+    );
     return 1;
   }
 
-  kotoage fn exercise_position(position_id: int) -> int {
-    assert_initialized();
-    assert_position_operator(position_id);
-    assert(OutperfPositionStatus.get_or(position_id, 0) == 1, "position inactive");
-    let series_id = OutperfPositionSeriesId[position_id];
-    assert(OutperfSeriesSettlementReady.get_or(series_id, 0) == 1, "settlement not ready");
-    let outperformance_bps = max_int(
-      OutperfSeriesFinalBaseReturnBps.get_or(series_id, 0) - OutperfSeriesFinalQuoteReturnBps.get_or(series_id, 0),
-      0
+  kotoage fn register_position(
+    int position_id,
+    int series_id,
+    AccountId owner,
+    quantity notional,
+    int collateral_multiplier_bps
+  ) authorize("Entry") {
+    register_position_impl(
+      position_id: position_id,
+      series_id: series_id,
+      owner: owner,
+      notional: notional,
+      collateral_multiplier_bps: collateral_multiplier_bps
     );
-    let payout = (OutperfPositionNotional.get_or(position_id, 0) *
-      outperformance_bps *
-      OutperfPositionCollateralMultiplierBps.get_or(position_id, 0)) / 10_000 / 10_000;
-    OutperfPositionBaseReturnBps[position_id] = OutperfSeriesFinalBaseReturnBps.get_or(series_id, 0);
-    OutperfPositionQuoteReturnBps[position_id] = OutperfSeriesFinalQuoteReturnBps.get_or(series_id, 0);
+  }
+
+  kotoage fn register_position_c2c(
+    int position_id,
+    int series_id,
+    AccountId owner,
+    quantity notional,
+    int collateral_multiplier_bps
+  ) -> int authorize("Entry") {
+    register_position_impl(
+      position_id: position_id,
+      series_id: series_id,
+      owner: owner,
+      notional: notional,
+      collateral_multiplier_bps: collateral_multiplier_bps
+    );
+    return 1;
+  }
+
+  kotoage fn settle_series(
+    int series_id,
+    int base_return_bps,
+    int quote_return_bps,
+    int settlement_slot
+  ) authorize("Entry") {
+    settle_series_impl(
+      series_id: series_id,
+      base_return_bps: base_return_bps,
+      quote_return_bps: quote_return_bps,
+      settlement_slot: settlement_slot
+    );
+  }
+
+  kotoage fn settle_series_c2c(
+    int series_id,
+    int base_return_bps,
+    int quote_return_bps,
+    int settlement_slot
+  ) -> int authorize("Entry") {
+    settle_series_impl(
+      series_id: series_id,
+      base_return_bps: base_return_bps,
+      quote_return_bps: quote_return_bps,
+      settlement_slot: settlement_slot
+    );
+    return 1;
+  }
+
+  kotoage fn exercise_position(int position_id) -> quantity authorize("Entry") {
+    assert_position_operator(position_id);
+    require(position_status_value(position_id) == 1, OutperformanceOptionError::PositionInactive);
+    let series_id = position_series_value(position_id);
+    require(
+      OutperfSeriesSettlementReady.get(series_id).unwrap_or(0) == 1,
+      OutperformanceOptionError::SettlementNotReady
+    );
+    let outperformance_bps = max_int(
+      left: series_base_return_value(series_id) - series_quote_return_value(series_id),
+      right: 0
+    );
+    let decimal bps_scale = 10_000;
+    let outperformance_rate = decimal::from_int(value: outperformance_bps) / bps_scale;
+    let collateral_rate = decimal::from_int(value: position_multiplier_value(position_id)) /
+      bps_scale;
+    let payout = position_notional_value(position_id) * outperformance_rate * collateral_rate;
+    OutperfPositionBaseReturnBps[position_id] = series_base_return_value(series_id);
+    OutperfPositionQuoteReturnBps[position_id] = series_quote_return_value(series_id);
     OutperfPositionPayout[position_id] = payout;
     OutperfPositionSettlementReady[position_id] = 1;
     OutperfPositionStatus[position_id] = 2;
     return payout;
   }
 
-  kotoage fn expire_series(series_id: int) {
+  kotoage fn expire_series(int series_id) authorize("Entry") {
     assert_owner_or_controller();
-    assert(OutperfSeriesExpirySlot.contains(series_id), "series missing");
-    let current_slot = block_height();
-    assert(current_slot >= OutperfSeriesExpirySlot[series_id], "series live");
+    assert_series_exists(series_id);
+    require(series_status_value(series_id) == 1, OutperformanceOptionError::SeriesInactive);
+    require(
+      context::block_height() >= series_expiry_value(series_id),
+      OutperformanceOptionError::SeriesLive
+    );
     OutperfSeriesStatus[series_id] = 3;
   }
 
-  view fn series_state(series_id: int) -> (int, int, int, int) {
-    let registered = 0;
-    if OutperfSeriesExpirySlot.contains(series_id) {
-      registered = 1;
-    }
+  view fn series_state(int series_id) -> (int, int, int, int) {
+    let registered = OutperfSeriesExpirySlot.contains(series_id) ? 1 : 0;
     return (
       registered,
-      OutperfSeriesExpirySlot.get_or(series_id, 0),
-      OutperfSeriesCollateralMultiplierBps.get_or(series_id, 0),
-      OutperfSeriesStatus.get_or(series_id, 0)
+      OutperfSeriesExpirySlot.get(series_id).unwrap_or(0),
+      OutperfSeriesCollateralMultiplierBps.get(series_id).unwrap_or(0),
+      series_status_value(series_id)
     );
   }
 
-  view fn position_state(position_id: int) -> (int, int, int, int, int, int, int, int) {
+  view fn position_state(int position_id) -> (
+    int,
+    int,
+    quantity,
+    int,
+    int,
+    int,
+    quantity,
+    int
+  ) {
+    let registered = OutperfPositionOwner.contains(position_id) ? 1 : 0;
     return (
-      position_registered(position_id),
-      OutperfPositionSeriesId.get_or(position_id, 0),
-      OutperfPositionNotional.get_or(position_id, 0),
-      OutperfPositionCollateralMultiplierBps.get_or(position_id, 0),
-      OutperfPositionBaseReturnBps.get_or(position_id, 0),
-      OutperfPositionQuoteReturnBps.get_or(position_id, 0),
-      OutperfPositionPayout.get_or(position_id, 0),
-      OutperfPositionStatus.get_or(position_id, 0)
+      registered,
+      OutperfPositionSeriesId.get(position_id).unwrap_or(0),
+      position_notional_value(position_id),
+      position_multiplier_value(position_id),
+      OutperfPositionBaseReturnBps.get(position_id).unwrap_or(0),
+      OutperfPositionQuoteReturnBps.get(position_id).unwrap_or(0),
+      position_payout_value(position_id),
+      position_status_value(position_id)
     );
+  }
+
+  view fn position_owner(int position_id) -> AccountId {
+    return position_owner_value(position_id);
   }
 }

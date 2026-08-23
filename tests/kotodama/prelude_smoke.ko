@@ -1,88 +1,126 @@
-fixture actors {
-  actor("owner", account_id("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
-  actor("attacker", account_id("ed0120BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"));
-}
-
 seiyaku PreludeSmoke {
-  kotoage fn fee_quote() -> int {
-    return checked_sub_amount(checked_add_amount(bps_fee(10000, 25), 10), 5);
+  error enum PreludeSmokeError {
+    AuthorityMismatch = 1,
+    Underflow = 2,
+    InvalidBasisPoints = 3,
   }
 
-  kotoage fn reject_negative_fee_amount() -> int {
-    return bps_fee(-1, 25);
+  fixture actors {
+    actor(
+      "owner",
+      AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX"),
+      "0x0909090909090909090909090909090909090909090909090909090909090909"
+    );
+    actor(
+      "attacker",
+      AccountId::parse("sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6")
+    );
+    grant_permission("owner", "Entry");
+    grant_permission("attacker", "Entry");
   }
 
-  kotoage fn reject_negative_fee_bps() -> int {
-    return bps_fee(100, -1);
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
   }
 
-  kotoage fn reject_negative_checked_add() -> int {
-    return checked_add_amount(-1, 1);
+  fn basis_point_fee(quantity amount, int basis_points) -> quantity {
+    require(basis_points >= 0, PreludeSmokeError::InvalidBasisPoints);
+    require(basis_points <= 10_000, PreludeSmokeError::InvalidBasisPoints);
+    let decimal scale = 10_000;
+    let rate = decimal::from_int(value: basis_points) / scale;
+    return amount * rate;
   }
 
-  kotoage fn reject_negative_checked_add_right() -> int {
-    return checked_add_amount(1, -1);
+  fn checked_sub(quantity left, quantity right) -> quantity {
+    require(left >= right, PreludeSmokeError::Underflow);
+    return left - right;
   }
 
-  kotoage fn reject_checked_sub_underflow() -> int {
-    return checked_sub_amount(1, 2);
-  }
-
-  kotoage fn reject_negative_checked_sub_left() -> int {
-    return checked_sub_amount(-1, 0);
-  }
-
-  kotoage fn reject_negative_checked_sub_right() -> int {
-    return checked_sub_amount(1, -1);
-  }
-
-  kotoage fn require_authority_payload(expected: AccountId) -> int {
-    require_authority(expected);
+  kotoage fn require_authority_payload(
+    AccountId expected
+  ) -> int authorize("Entry") {
+    require(context::authority() == expected, PreludeSmokeError::AuthorityMismatch);
     return 1;
   }
 
-  kotoage fn require_owner_payload(expected: AccountId) -> int {
-    require_owner(expected);
-    return 1;
+  kotoage fn checked_sub_probe(
+    quantity left,
+    quantity right
+  ) -> quantity authorize("Entry") {
+    return checked_sub(left: left, right: right);
   }
 
-  kotoage fn current_block_height() -> int {
-    return block_height();
+  kotoage fn basis_point_fee_probe(
+    quantity amount,
+    int basis_points
+  ) -> quantity authorize("Entry") {
+    return basis_point_fee(amount: amount, basis_points: basis_points);
+  }
+
+  view fn current_block_height() -> int {
+    return context::block_height();
   }
 
   #[test]
-  fn first_release_prelude_math_helpers() {
-    assert(fee_quote() == 30, "prelude math");
-    assert(current_block_height() == 0, "block height default");
+  fn first_release_quantity_and_decimal_helpers_are_exact() {
+    let quantity principal = 10_000;
+    let quantity adjustment = 10;
+    let fee = basis_point_fee(amount: principal, basis_points: 25);
+    test::assert(fee == 25);
+    test::assert(checked_sub(left: fee + adjustment, right: 5) == 30);
+    test::assert(zero_quantity() == 0);
   }
 
-  #[test(fixture="actors")]
-  fn first_release_prelude_owner_checks_use_actor_authority() {
-    let owner_payload = json("{}");
-    let owner_payload = json_set_account_id(owner_payload, name("expected"), actor_account("owner"));
-    invoke_entrypoint_as("owner", "require_owner_payload", owner_payload);
-    invoke_entrypoint_as("owner", "require_authority_payload", owner_payload);
-    expect_reject_as("attacker", "require_owner_payload", owner_payload);
-    expect_reject_as("attacker", "require_authority_payload", owner_payload);
-    expect_reject_as("owner", "require_owner_payload", json("{}"));
-    expect_reject_as("owner", "require_authority_payload", json("{}"));
-
-    let attacker_payload = json("{}");
-    let attacker_payload = json_set_account_id(attacker_payload, name("expected"), actor_account("attacker"));
-    expect_reject_as("owner", "require_owner_payload", attacker_payload);
-    expect_reject_as("owner", "require_authority_payload", attacker_payload);
-    invoke_entrypoint_as("attacker", "require_owner_payload", attacker_payload);
-    invoke_entrypoint_as("attacker", "require_authority_payload", attacker_payload);
+  #[test(fixture = "actors")]
+  fn first_release_quantity_underflow_rejects() {
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "checked_sub_probe",
+      arguments: Json::parse("{\"left\":\"1\",\"right\":\"2\"}")
+    );
   }
 
-  #[test(fixture="actors")]
-  fn first_release_prelude_rejects_bad_amounts() {
-    expect_reject_as("owner", "reject_negative_fee_amount", json("{}"));
-    expect_reject_as("owner", "reject_negative_fee_bps", json("{}"));
-    expect_reject_as("owner", "reject_negative_checked_add", json("{}"));
-    expect_reject_as("owner", "reject_negative_checked_add_right", json("{}"));
-    expect_reject_as("owner", "reject_checked_sub_underflow", json("{}"));
-    expect_reject_as("owner", "reject_negative_checked_sub_left", json("{}"));
-    expect_reject_as("owner", "reject_negative_checked_sub_right", json("{}"));
+  #[test(fixture = "actors")]
+  fn first_release_basis_points_are_bounded() {
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "basis_point_fee_probe",
+      arguments: Json::parse("{\"amount\":\"100\",\"basis_points\":\"-1\"}")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "basis_point_fee_probe",
+      arguments: Json::parse("{\"amount\":\"100\",\"basis_points\":\"10001\"}")
+    );
+  }
+
+  #[test(fixture = "actors")]
+  fn first_release_authority_checks_use_actor_context() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "require_authority_payload",
+      arguments: Json::parse("{\"expected\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\"}")
+    );
+    test::expect_reject_as(
+      actor: "attacker",
+      entrypoint: "require_authority_payload",
+      arguments: Json::parse("{\"expected\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\"}")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "require_authority_payload",
+      arguments: Json::parse("{\"expected\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
+    );
+  }
+
+  #[test(fixture = "actors")]
+  fn first_release_context_view_uses_test_runtime() {
+    let height = test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "current_block_height",
+      arguments: Json::parse("{}")
+    );
+    test::assert(height == 0);
   }
 }

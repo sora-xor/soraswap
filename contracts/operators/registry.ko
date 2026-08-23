@@ -1,72 +1,195 @@
 seiyaku OperatorRegistry {
-  state OperatorOwner: Map<Name, AccountId>;
-  state OperatorBondAsset: Map<Name, AssetDefinitionId>;
-  state OperatorMinBond: Map<Name, int>;
-  state OperatorBonded: Map<Name, int>;
-  state OperatorHealthBps: Map<Name, int>;
-  state OperatorLastHeartbeatSlot: Map<Name, int>;
-  state OperatorFeesAccrued: Map<Name, int>;
-  state OperatorJailed: Map<Name, int>;
-
-  fn assert_operator_service(service: Name) {
-    assert(OperatorOwner.contains(service), "operator missing");
-    assert(OperatorOwner[service] == authority(), "operator mismatch");
-  }
-
-  kotoage fn main() -> int {
-    return 1;
-  }
-
-  kotoage fn register_operator(service: Name, bond_asset: AssetDefinitionId, min_bond: int) {
-    assert(!OperatorOwner.contains(service), "operator exists");
-    assert(min_bond > 0, "invalid min bond");
-    OperatorOwner[service] = authority();
-    OperatorBondAsset[service] = bond_asset;
-    OperatorMinBond[service] = min_bond;
-    OperatorBonded[service] = 0;
-    OperatorHealthBps[service] = 10_000;
-    OperatorJailed[service] = 0;
-  }
-
-  kotoage fn bond(service: Name, amount: int) permission(AssetOps) {
-    assert_operator_service(service);
-    assert(amount > 0, "invalid bond");
-    OperatorBonded[service] = OperatorBonded.ensure(service, 0) + amount;
-  }
-
-  kotoage fn heartbeat(service: Name, slot: int, health_bps: int, fees_accrued: int) {
-    assert_operator_service(service);
-    assert(health_bps >= 0, "invalid health");
-    assert(health_bps <= 10_000, "invalid health");
-    assert(fees_accrued >= 0, "invalid fees");
-    OperatorLastHeartbeatSlot[service] = slot;
-    OperatorHealthBps[service] = health_bps;
-    OperatorFeesAccrued[service] = OperatorFeesAccrued.ensure(service, 0) + fees_accrued;
-    if health_bps < 5_000 {
-      OperatorJailed[service] = 1;
+    error enum OperatorError {
+        OperatorMissing = 1, OperatorMismatch = 2, OperatorAlreadyExists = 3, InvalidMinimumBond = 4, InvalidBond = 5, IncompleteBondConfiguration = 6, BondBelowMinimum = 7, InvalidHeartbeatSlot = 8, HeartbeatFromFuture = 9, InvalidHealth = 10, InvalidFees = 11, OperatorJailed = 12, IncompleteFeeConfiguration = 13, NoFeesAccrued = 14,
     }
-  }
 
-  kotoage fn claim_fees(service: Name) -> int {
-    assert_operator_service(service);
-    let amount = OperatorFeesAccrued.ensure(service, 0);
-    OperatorFeesAccrued[service] = 0;
-    return amount;
-  }
-
-  view fn operator_state(service: Name) -> (int, int, int, int, int, int, int) {
-    let registered = 0;
-    if OperatorOwner.contains(service) {
-      registered = 1;
+    state StateMap<Name, AccountId> OperatorOwner;
+    state StateMap<Name, AssetDefinitionId> OperatorBondAsset;
+    state StateMap<Name, AccountId> OperatorBondVault;
+    state StateMap<Name, AssetDefinitionId> OperatorFeeAsset;
+    state StateMap<Name, AccountId> OperatorFeeVault;
+    state StateMap<Name, quantity> OperatorMinBond;
+    state StateMap<Name, quantity> OperatorBonded;
+    state StateMap<Name, decimal> OperatorHealthBps;
+    state StateMap<Name, int> OperatorLastHeartbeatSlot;
+    state StateMap<Name, quantity> OperatorFeesAccrued;
+    state StateMap<Name, int> OperatorJailed;
+    fn assert_operator_exists(Name service) {
+        require(OperatorOwner.contains(key: service), OperatorError::OperatorMissing);
     }
-    return (
-      registered,
-      OperatorMinBond.get_or(service, 0),
-      OperatorBonded.get_or(service, 0),
-      OperatorHealthBps.get_or(service, 0),
-      OperatorLastHeartbeatSlot.get_or(service, 0),
-      OperatorFeesAccrued.get_or(service, 0),
-      OperatorJailed.get_or(service, 0)
-    );
-  }
+
+    fn assert_operator_service(Name service) {
+        assert_operator_exists(service: service);
+        let owner = OperatorOwner.get(key: service).unwrap_or(default: context::authority());
+        require(owner == context::authority(), OperatorError::OperatorMismatch);
+    }
+
+    fn move_asset(
+        AccountId source,
+        AccountId destination,
+        AssetDefinitionId asset,
+        quantity amount,
+    ) {
+        ledger::asset::transfer(
+            source: source,
+            destination: destination,
+            asset_definition: asset,
+            amount: amount,
+            dataspace: DataSpaceId::parse("0"),
+        );
+    }
+
+    view fn main() -> int {
+        return 1;
+    }
+
+    kotoage fn register_operator(
+        Name service,
+        AccountId operator_owner,
+        AssetDefinitionId bond_asset,
+        AccountId bond_vault,
+        AssetDefinitionId fee_asset,
+        AccountId fee_vault,
+        quantity min_bond,
+    ) authorize("Admin") {
+        require(!OperatorOwner.contains(key: service), OperatorError::OperatorAlreadyExists);
+        require(min_bond > 0, OperatorError::InvalidMinimumBond);
+        OperatorOwner[service] = operator_owner;
+        OperatorBondAsset[service] = bond_asset;
+        OperatorBondVault[service] = bond_vault;
+        OperatorFeeAsset[service] = fee_asset;
+        OperatorFeeVault[service] = fee_vault;
+        OperatorMinBond[service] = min_bond;
+        OperatorBonded[service] = 0;
+        OperatorHealthBps[service] = 10_000;
+        OperatorLastHeartbeatSlot[service] = 0;
+        OperatorFeesAccrued[service] = 0;
+        OperatorJailed[service] = 1;
+    }
+
+    kotoage fn bond(Name service, quantity amount) authorize("AssetOps") {
+        assert_operator_service(service: service);
+        require(amount > 0, OperatorError::InvalidBond);
+        require(
+            OperatorBondAsset.contains(key: service) && OperatorBondVault.contains(key: service),
+            OperatorError::IncompleteBondConfiguration,
+        );
+        if let Option::some(bond_asset) = OperatorBondAsset.get(key: service) {
+            if let Option::some(bond_vault) = OperatorBondVault.get(key: service) {
+                move_asset(
+                    source: context::authority(),
+                    destination: bond_vault,
+                    asset: bond_asset,
+                    amount: amount,
+                );
+            } else {
+                require(false, OperatorError::IncompleteBondConfiguration);
+            }
+        } else {
+            require(false, OperatorError::IncompleteBondConfiguration);
+        }
+        let bonded = OperatorBonded.get_or(key: service, default: 0) + amount;
+        OperatorBonded[service] = bonded;
+        if bonded >= OperatorMinBond.get_or(key: service, default: 0) && OperatorHealthBps.get_or(
+            key: service,
+            default: 0,
+        ) >= 5_000 {
+            OperatorJailed[service] = 0;
+        }
+    }
+
+    kotoage fn heartbeat(Name service, int slot, decimal health_bps, ) authorize("Entry") {
+        assert_operator_service(service: service);
+        require(
+            OperatorBonded.get_or(key: service, default: 0) >= OperatorMinBond.get_or(
+                key: service,
+                default: 0,
+            ),
+            OperatorError::BondBelowMinimum,
+        );
+        require(
+            slot > OperatorLastHeartbeatSlot.get_or(key: service, default: 0),
+            OperatorError::InvalidHeartbeatSlot,
+        );
+        require(slot <= context::block_height(), OperatorError::HeartbeatFromFuture);
+        require(health_bps >= 0 && health_bps <= 10_000, OperatorError::InvalidHealth);
+        OperatorLastHeartbeatSlot[service] = slot;
+        OperatorHealthBps[service] = health_bps;
+        if health_bps < 5_000 {
+            OperatorJailed[service] = 1;
+        } else {
+            OperatorJailed[service] = 0;
+        }
+    }
+
+    kotoage fn accrue_fees(Name service, quantity amount) authorize("AssetOps") {
+        assert_operator_exists(service: service);
+        require(amount > 0, OperatorError::InvalidFees);
+        require(
+            OperatorFeeAsset.contains(key: service) && OperatorFeeVault.contains(key: service),
+            OperatorError::IncompleteFeeConfiguration,
+        );
+        if let Option::some(fee_asset) = OperatorFeeAsset.get(key: service) {
+            if let Option::some(fee_vault) = OperatorFeeVault.get(key: service) {
+                move_asset(
+                    source: context::authority(),
+                    destination: fee_vault,
+                    asset: fee_asset,
+                    amount: amount,
+                );
+            } else {
+                require(false, OperatorError::IncompleteFeeConfiguration);
+            }
+        } else {
+            require(false, OperatorError::IncompleteFeeConfiguration);
+        }
+        OperatorFeesAccrued[service] = OperatorFeesAccrued.get_or(key: service, default: 0) + amount;
+    }
+
+    kotoage fn claim_fees(Name service) -> quantity authorize("AssetOps") {
+        assert_operator_service(service: service);
+        require(
+            OperatorJailed.get_or(key: service, default: 1) == 0,
+            OperatorError::OperatorJailed,
+        );
+        let amount = OperatorFeesAccrued.get_or(key: service, default: 0);
+        require(amount > 0, OperatorError::NoFeesAccrued);
+        require(
+            OperatorFeeAsset.contains(key: service) && OperatorFeeVault.contains(key: service),
+            OperatorError::IncompleteFeeConfiguration,
+        );
+        if let Option::some(fee_asset) = OperatorFeeAsset.get(key: service) {
+            if let Option::some(fee_vault) = OperatorFeeVault.get(key: service) {
+                move_asset(
+                    source: fee_vault,
+                    destination: context::authority(),
+                    asset: fee_asset,
+                    amount: amount,
+                );
+            } else {
+                require(false, OperatorError::IncompleteFeeConfiguration);
+            }
+        } else {
+            require(false, OperatorError::IncompleteFeeConfiguration);
+        }
+        OperatorFeesAccrued[service] = 0;
+        return amount;
+    }
+
+    view fn operator_state(Name service, ) -> (int, quantity, quantity, decimal, int, quantity, int) {
+        var int registered = 0;
+        if OperatorOwner.contains(key: service) {
+            registered = 1;
+        }
+        return (registered, OperatorMinBond.get_or(key: service, default: 0), OperatorBonded.get_or(
+            key: service,
+            default: 0,
+        ), OperatorHealthBps.get_or(key: service, default: 0), OperatorLastHeartbeatSlot.get_or(
+            key: service,
+            default: 0,
+        ), OperatorFeesAccrued.get_or(key: service, default: 0), OperatorJailed.get_or(
+            key: service,
+            default: 0,
+        ));
+    }
 }

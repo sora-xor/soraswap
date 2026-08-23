@@ -26,6 +26,7 @@
             <input id="authority-input" type="text" placeholder="i105...">
           </label>
           <button id="refresh-workspace" class="action-button primary" type="button">Refresh</button>
+          <button id="clear-trader-state" class="action-button" type="button">Clear State</button>
         </div>
       </header>
 
@@ -263,7 +264,7 @@
 
             <label class="field">
               <span>Gas Limit</span>
-              <input id="trade-gas-limit-input" type="number" min="1" step="1" value="100000">
+              <input id="trade-gas-limit-input" type="number" min="1" max="50000000" step="1" value="100000">
             </label>
 
             <div class="preview-block">

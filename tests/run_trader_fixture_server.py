@@ -156,6 +156,7 @@ CONTRACTS = [
     },
 ]
 
+FIXTURE_GENERATED_AT = "20260415T000000Z"
 ALIAS_TO_ADDRESS = {contract["contract_key"]: contract["contract_address"] for contract in CONTRACTS}
 ADDRESS_TO_ALIAS = {contract["contract_address"]: contract["contract_key"] for contract in CONTRACTS}
 MODULE_TO_CONTRACT_KEY = {
@@ -209,6 +210,46 @@ MODULE_ORDER = [
     "rwa",
     "dlmmHooks",
 ]
+
+
+def fixture_hash(seed: int, offset: int) -> str:
+    return f"{seed + offset:064x}"
+
+
+def fixture_code_hash(contract: dict[str, Any]) -> str:
+    return fixture_hash(int(contract["deploy_nonce"]), 0x1000)
+
+
+def fixture_abi_hash(contract: dict[str, Any]) -> str:
+    return fixture_hash(int(contract["deploy_nonce"]), 0x2000)
+
+
+def fixture_entrypoints(contract_key: str) -> list[dict[str, Any]]:
+    entrypoint_names: list[str] = []
+    if contract_key == "dlmm.dlmm_router":
+        entrypoint_names.extend([
+            "mirror_swap_history",
+            "route_swap",
+            "router_assets",
+            "swap_history_head",
+        ])
+    return [
+        {
+            "name": name,
+            "kind": {
+                "kind": (
+                    "View"
+                    if name in {"mirror_swap_history", "router_assets", "swap_history_head"}
+                    else "Public"
+                )
+            },
+            "params": [],
+            "return_type": "tuple",
+        }
+        for name in sorted(set(entrypoint_names))
+    ]
+
+
 ALIAS_TO_MODULE = {
     "dlmm.dlmm_router": "swaps",
     "batch_amm.epoch_auction": "batchAuction",
@@ -286,7 +327,6 @@ ENTRYPOINT_TO_EVENT_KIND = {
     "settle_redemption": "rwa_redemption_settled",
     "configure_hook_policy": "dlmm_hook_configured",
     "place_limit_order": "dlmm_hook_limit_order_placed",
-    "schedule_twamm": "dlmm_hook_twamm_scheduled",
     "schedule_twamm_v2": "dlmm_hook_twamm_scheduled",
     "cancel_twamm": "dlmm_hook_twamm_cancelled",
     "claim_twamm": "dlmm_hook_twamm_claimed",
@@ -328,6 +368,11 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
     (root / "ui").mkdir(parents=True, exist_ok=True)
     os.symlink(REPO_ROOT / "ui" / "trader", root / "ui" / "trader", target_is_directory=True)
 
+    for contract in CONTRACTS:
+        source_path = root / contract["contract_source"]
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_text("// fixture Kotodama source\n", encoding="utf-8")
+
     (root / "config").mkdir(parents=True, exist_ok=True)
     (root / "config" / "fixture.client.toml").write_text(
         "\n".join(
@@ -347,36 +392,56 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
     )
 
     environment_root = root / "deployments" / "fixture"
+    chain_fingerprint = {
+        "generated_at": FIXTURE_GENERATED_AT,
+        "environment": "fixture",
+        "torii_url": torii_url,
+        "chain": "fixture-chain",
+        "block_1_hash": "fixture-block-1",
+    }
     write_json(
         environment_root / "chain.latest.json",
-        {
-            "torii_url": torii_url,
-            "chain": "fixture-chain",
-            "block_1_hash": "fixture-block-1",
-        },
+        chain_fingerprint,
     )
     write_json(
         environment_root / "contracts.latest.json",
         {
-            "generated_at": "20260415T000000Z",
-            "chain_fingerprint": {
-                "torii_url": torii_url,
-                "chain": "fixture-chain",
-                "block_1_hash": "fixture-block-1",
-            },
+            "generated_at": FIXTURE_GENERATED_AT,
+            "status": "completed",
+            "environment": "fixture",
+            "chain_fingerprint": chain_fingerprint,
             "contracts": [
                 {
                     **contract,
+                    "environment": "fixture",
                     "dataspace": "universal",
+                    "code_hash_hex": fixture_code_hash(contract),
+                    "abi_hash_hex": fixture_abi_hash(contract),
                     "instance": {
                         "verification": "transaction_and_manifest",
                         "tx_hash_hex": f"{contract['deploy_nonce']:064x}",
+                        "contract_address": contract["contract_address"],
+                        "deploy_nonce": contract["deploy_nonce"],
+                        "code_hash_hex": fixture_code_hash(contract),
+                        "abi_hash_hex": fixture_abi_hash(contract),
                     },
                 }
                 for contract in CONTRACTS
             ],
         },
     )
+    for contract in CONTRACTS:
+        write_json(
+            environment_root / f"{contract['contract_key']}.manifest.json",
+            {
+                "generated_at": FIXTURE_GENERATED_AT,
+                "environment": "fixture",
+                "contract_key": contract["contract_key"],
+                "code_hash": "hash:" + fixture_code_hash(contract),
+                "abi_hash": "hash:" + fixture_abi_hash(contract),
+                "entrypoints": fixture_entrypoints(contract["contract_key"]),
+            },
+        )
 
 
 def parse_int(query: dict[str, list[str]], key: str, default: int) -> int:
@@ -438,6 +503,7 @@ class MockToriiState:
         self.append_swap_fill(FIXTURE_AUTHORITY, 1, 120, 111, 108)
         self.append_swap_fill(OTHER_AUTHORITY, 1, 90, 83, 80)
         self.append_swap_fill(FIXTURE_AUTHORITY, 0, 60, 68, 64)
+        self.seed_extra_swap_fills()
 
         self.append_event("batch_amm.epoch_auction", "submit_order", FIXTURE_AUTHORITY, {
             "order_id": "bid-alpha",
@@ -498,6 +564,25 @@ class MockToriiState:
             "interval_slots": 2,
             "start_slot": 1,
         })
+
+    def seed_extra_swap_fills(self) -> None:
+        raw_count = os.environ.get("SORASWAP_TRADER_FIXTURE_EXTRA_FILLS", "0")
+        try:
+            count = int(raw_count)
+        except ValueError:
+            count = 0
+        count = max(0, min(1000, count))
+        for index in range(count):
+            input_is_base = 0 if index % 4 == 3 else 1
+            if input_is_base:
+                amount_in = 80 + (index % 13)
+                amount_out = amount_in + 7 + (index % 5)
+                min_out = max(1, amount_out - 4)
+            else:
+                amount_in = 70 + (index % 11)
+                amount_out = amount_in - 6
+                min_out = max(1, amount_out - 3)
+            self.append_swap_fill(FIXTURE_AUTHORITY, input_is_base, amount_in, amount_out, min_out)
 
     def next_hash_hex(self) -> str:
         self.next_hash_counter += 1
@@ -793,7 +878,11 @@ class MockToriiState:
 
     def swaps_candles_rollup(self, query: dict[str, list[str]]) -> dict[str, Any]:
         authority = parse_str(query, "authority") or FIXTURE_AUTHORITY
-        bucket_ms = max(60_000, parse_int(query, "bucket_ms", DEFAULT_BUCKET_MS))
+        if "bucket_secs" in query:
+            bucket_ms = parse_int(query, "bucket_secs", DEFAULT_BUCKET_MS // 1000) * 1000
+        else:
+            bucket_ms = parse_int(query, "bucket_ms", DEFAULT_BUCKET_MS)
+        bucket_ms = max(60_000, bucket_ms)
         limit = max(1, parse_int(query, "limit", 120))
         offset = max(0, parse_int(query, "offset", 0))
         buckets: dict[int, dict[str, Any]] = {}
@@ -835,6 +924,7 @@ class MockToriiState:
         return {
             "ok": True,
             "authority": authority,
+            "bucketSecs": bucket_ms // 1000,
             "bucketMs": bucket_ms,
             "items": items,
         }
@@ -1423,11 +1513,6 @@ class MockToriiState:
             normalized.setdefault("hook_id", "limit")
             normalized.setdefault("amount_in", 100)
             normalized.setdefault("min_out", 99)
-        elif entrypoint == "schedule_twamm":
-            normalized.setdefault("order_id", "twamm-1")
-            normalized.setdefault("hook_id", "twamm")
-            normalized.setdefault("amount_in", 1000)
-            normalized.setdefault("min_out", 990)
         elif entrypoint == "schedule_twamm_v2":
             normalized.setdefault("order_id", "twamm-1")
             normalized.setdefault("input_is_base", 1)

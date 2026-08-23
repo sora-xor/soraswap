@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "pool_contract_address": "<reviewed-taira-dlmm-contract-address>",
+  "pool_vault_account_id": "<reviewed-taira-dlmm-pool-subject-account-id>",
+  "payout_vault_account_id": "<reviewed-taira-payout-contract-subject-account-id>",
+  "sbd_asset_definition_id": "7ZepsJTHCVLKsrFFNZGSRGZgvBhv",
+  "xor_asset_definition_id": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+  "batch_sbd": "10",
+  "min_xor_out": "4",
+  "max_xor_out": "100",
+  "recipient_account_ids": [
+    "<reviewed-validator-account-id-1>",
+    "<reviewed-validator-account-id-2>",
+    "<reviewed-validator-account-id-3>",
+    "<reviewed-validator-account-id-4>"
+  ]
+}

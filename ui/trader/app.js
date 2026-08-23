@@ -2,6 +2,7 @@ const DEFAULT_VISIBLE_FILL_LIMIT = 120;
 const DEFAULT_GAS_LIMIT = 100000;
 const DEFAULT_UNIFIED_ACTIVITY_LIMIT = 28;
 const DEFAULT_CANDLE_LIMIT = 96;
+const DEFAULT_CANDLE_BUCKET_SECS = 900;
 const DEFAULT_MODULE_ACTIVITY_LIMIT = 12;
 const LIVE_FALLBACK_REFRESH_INTERVAL_MS = 15000;
 const LIVE_EVENT_REFRESH_DEBOUNCE_MS = 1500;
@@ -828,6 +829,7 @@ const state = {
 const environmentSelect = document.querySelector("#environment-select");
 const authorityInput = document.querySelector("#authority-input");
 const refreshWorkspaceButton = document.querySelector("#refresh-workspace");
+const clearTraderStateButton = document.querySelector("#clear-trader-state");
 const statusBanner = document.querySelector("#status-banner");
 const liveStatus = document.querySelector("#live-status");
 const liveDetail = document.querySelector("#live-detail");
@@ -908,9 +910,34 @@ function saveStorage(key, value) {
   }
 }
 
+function clearStorage(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    console.warn(`failed to clear ${key}`, error);
+  }
+}
+
 function setBanner(element, text, kind = "muted") {
   element.textContent = text;
   element.className = `banner ${kind}`;
+}
+
+const SENSITIVE_JSON_KEYS = new Set([
+  "privatekey",
+  "secret",
+  "mnemonic",
+  "token",
+  "apitoken",
+  "apikey",
+  "authorization",
+  "bearertoken",
+  "password",
+  "passphrase",
+]);
+
+function isSensitiveJsonKey(key) {
+  return SENSITIVE_JSON_KEYS.has(String(key).toLowerCase().replace(/[^a-z0-9]/g, ""));
 }
 
 function sanitizeJsonForDisplay(value) {
@@ -920,7 +947,7 @@ function sanitizeJsonForDisplay(value) {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
-        .filter(([key]) => !["private_key", "privateKey", "secret", "mnemonic"].includes(key))
+        .filter(([key]) => !isSensitiveJsonKey(key))
         .map(([key, entry]) => [key, sanitizeJsonForDisplay(entry)]),
     );
   }
@@ -1841,13 +1868,17 @@ function normalizeEnvironmentSelection(catalog) {
   applyEnvironment(preferred);
 }
 
-function applyEnvironment(environmentName) {
+function applyEnvironment(environmentName, options = {}) {
+  const {
+    persistSelection = true,
+    useDefaultAuthority = true,
+  } = options;
   state.currentEnvironment =
     state.environments.find((environment) => environment.name === environmentName) || null;
   state.currentContract = resolveRouterContract(state.currentEnvironment);
   environmentSelect.value = state.currentEnvironment?.name || "";
 
-  if (state.currentEnvironment?.name) {
+  if (persistSelection && state.currentEnvironment?.name) {
     state.local.selectedEnvironment = state.currentEnvironment.name;
     saveStorage(STORAGE_KEYS.selectedEnvironment, state.local.selectedEnvironment);
   }
@@ -1855,7 +1886,7 @@ function applyEnvironment(environmentName) {
   const savedAuthority = state.currentEnvironment
     ? state.local.authorityByEnvironment[state.currentEnvironment.name] || ""
     : "";
-  const defaultAuthority = savedAuthority || state.currentEnvironment?.signer?.authority || "";
+  const defaultAuthority = savedAuthority || (useDefaultAuthority ? state.currentEnvironment?.signer?.authority || "" : "");
   authorityInput.value = defaultAuthority;
 
   renderDeploymentSummary();
@@ -1916,6 +1947,29 @@ function rememberAuthority() {
   saveStorage(STORAGE_KEYS.authorityByEnvironment, state.local.authorityByEnvironment);
 }
 
+function clearTraderState() {
+  for (const key of Object.values(STORAGE_KEYS)) {
+    clearStorage(key);
+  }
+  stopLiveInfrastructure();
+  state.refreshToken += 1;
+  state.local.selectedEnvironment = "";
+  state.local.authorityByEnvironment = {};
+  state.liveModeEnabled = true;
+  state.liveConnectionState = "connecting";
+  state.lastRefreshMs = null;
+  state.workspace = null;
+  applyEnvironment(state.currentEnvironment?.name || state.environments[0]?.name || "", {
+    persistSelection: false,
+    useDefaultAuthority: false,
+  });
+  renderWorkspace();
+  syncTradeControls();
+  ensureLiveFollow();
+  setBanner(statusBanner, "Cleared browser-local trader state.", "success");
+  setBanner(tradeResult, "No trade submitted.", "muted");
+}
+
 function selectedTradeModule() {
   return currentSelectedModule() || workspaceModules().find((module) => module.key === "swaps") || null;
 }
@@ -1947,11 +2001,11 @@ function tradeValidationError() {
   if (!environment) {
     return "No environment selected.";
   }
-  if (!module?.contractAddress) {
-    return "The selected product is not deployed in this environment.";
-  }
   if (!authority) {
     return "Enter an authority to load trader state and submit actions.";
+  }
+  if (!module?.contractAddress) {
+    return "The selected product is not deployed in this environment.";
   }
   if (!action) {
     return "No action rail is available for the selected product.";
@@ -3839,6 +3893,7 @@ async function refreshWorkspace(options = {}) {
         environment: environment.name,
         authority,
         limit: DEFAULT_CANDLE_LIMIT,
+        bucket_secs: DEFAULT_CANDLE_BUCKET_SECS,
       }),
       fetchProxyGet("/api/contracts/rollups/trader/activity", {
         environment: environment.name,
@@ -4043,6 +4098,10 @@ async function submitTrade() {
 function attachEventListeners() {
   refreshWorkspaceButton.addEventListener("click", () => {
     refreshWorkspace({ reloadCatalog: true });
+  });
+
+  clearTraderStateButton.addEventListener("click", () => {
+    clearTraderState();
   });
 
   environmentSelect.addEventListener("change", () => {

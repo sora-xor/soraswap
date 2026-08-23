@@ -123,5 +123,5 @@ Notes:
 - `SeedInventory` tracks remaining sale-token inventory available for DLMM seeding, while `SeedSaleUsed` records the committed amount.
 - `SeedPositionId`, `SeedVault`, `SeedBinId`, `SeedPaymentAmount`, and `SeedSaleAmount` form the registered DLMM seed plan for a sale, while `SeedActivationValue` records the on-chain executor result for the canonical activation path.
 - `FactoryOwnerSet` is explicit and is written only by `init_factory()`. Admin flows no longer lazily capture the first caller as owner.
-- `claim_allocation(...)` uses `block_height()` internally for claim-window enforcement, and direct `contribute(...)` is a hard-rejecting trap; only `contribute_recorded(...)` creates allocations.
+- `claim_allocation(...)` uses `block_height()` internally for claim-window enforcement, and only `contribute_recorded(...)` creates allocations.
 - Trigger lifecycle state is stored in `LaunchLifecycleCadenceSlots`, `LaunchLifecycleMaxItems`, `LaunchLifecycleEnabled`, `LaunchLifecycleNextSlot`, `LaunchLifecycleCursor`, `LaunchLifecycleLastSlot`, and `LaunchLifecycleLastProcessed`. `SaleByIndex` and `NextSaleIndex` bound trigger scans.

@@ -7,9 +7,9 @@
     "build": "tsc --noEmit",
     "simulate:smoke": "jest --config jest.config.cjs --runInBand simulations/tests/smoke.spec.ts",
     "simulate:full": "jest --config jest.config.cjs --runInBand",
-    "test:contract-console-ui": "playwright test tests/contract_console_ui.spec.js",
-    "test:contract-console-integration": "playwright test tests/contract_console_integration.spec.js",
-    "test:trader-ui": "playwright test tests/trader_ui.spec.js",
+    "test:contract-console-ui": "SORASWAP_PLAYWRIGHT_PORT=43174 playwright test tests/contract_console_ui.spec.js",
+    "test:contract-console-integration": "SORASWAP_PLAYWRIGHT_STATIC_SERVER=0 SORASWAP_PLAYWRIGHT_PORT=43175 playwright test tests/contract_console_integration.spec.js",
+    "test:trader-ui": "SORASWAP_PLAYWRIGHT_STATIC_SERVER=0 SORASWAP_PLAYWRIGHT_PORT=43176 playwright test tests/trader_ui.spec.js",
     "test": "npm run simulate:full"
   },
   "devDependencies": {

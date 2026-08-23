@@ -153,17 +153,17 @@ artifact = "artifacts/compiled/escrow/conditional_escrow.to"
 
 [profiles.local]
 client_config = "tmp/iroha-localnet/client.toml"
-default_gas_limit = 500000
+default_gas_limit = 1_500_000
 fee_asset_id = "6TEAJqbb8oEPmLncoNiMRbLEK6tw"
 
 [profiles.testnet]
 client_config = "config/testnet/taira.client.toml"
-default_gas_limit = 500000
+default_gas_limit = 1_500_000
 fee_asset_id = "6TEAJqbb8oEPmLncoNiMRbLEK6tw"
 
 [profiles.production]
 client_config = "config/production/production.client.toml"
-default_gas_limit = 500000
+default_gas_limit = 1_500_000
 fee_asset_id = "xor#universal"
 
 [[tests]]
@@ -174,6 +174,48 @@ path = "tests/kotodama/epoch_auction_regressions.test.ko"
 
 [[tests]]
 path = "tests/kotodama/dlmm_hooks_twamm_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/dlmm_pool_v1_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/dlmm_router_v1_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/launchpad_liquidity_executor_v1_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/automation_job_queue_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/perps_admin_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/options_factory_admin_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/options_manager_admin_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/options_shout_oracle_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/options_vault_v1_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/outperformance_option_v1_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/cover_policy_manager_admin_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/bridge_governance_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/sccp_bridge_v1_regressions.test.ko"
+
+[[tests]]
+path = "tests/kotodama/risk_vault_v1_regressions.test.ko"
 
 [[smoke]]
 id = "n3x_state_view"

@@ -1,0 +1,156 @@
+module OutperformanceOptionV1Regressions {
+  koto_test { target: "../../contracts/options/outperformance_option.ko" }
+
+  fixture product_owner {
+    actor(
+      "owner",
+      AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX"),
+      "0x0909090909090909090909090909090909090909090909090909090909090909"
+    );
+    grant_permission("owner", "Admin");
+    grant_permission("owner", "Entry");
+  }
+
+  fn initialize_outperformance_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "hajimari",
+      arguments: Json::parse("{\"guardian\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\"}")
+    );
+  }
+
+  fn enable_outperformance_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "exit_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+  }
+
+  fn create_series_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "sync_series",
+      arguments: Json::parse("{\"series_id\":\"2\",\"expiry_slot\":\"100\",\"collateral_multiplier_bps\":\"20000\"}")
+    );
+  }
+
+  fn create_position_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "register_position",
+      arguments: Json::parse("{\"position_id\":\"7\",\"series_id\":\"2\",\"owner\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"notional\":\"1000\",\"collateral_multiplier_bps\":\"20000\"}")
+    );
+  }
+
+  fn settle_series_for_test(int base_return_bps, int quote_return_bps) {
+    settle_series_impl(
+      series_id: 2,
+      base_return_bps: base_return_bps,
+      quote_return_bps: quote_return_bps,
+      settlement_slot: 100
+    );
+  }
+
+  #[test(fixture = "product_owner")]
+  fn lifecycle_starts_paused() {
+    initialize_outperformance_for_test();
+    test::assert(OutperfInitialized == 1);
+    test::assert(OutperfWithdrawalOnly == 1);
+    test::assert(OutperfOwner == test::actor_account("owner"));
+  }
+
+  #[test(fixture = "product_owner")]
+  fn series_configuration_is_immutable_after_creation() {
+    initialize_outperformance_for_test();
+    create_series_for_test();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "sync_series",
+      arguments: Json::parse("{\"series_id\":\"2\",\"expiry_slot\":\"101\",\"collateral_multiplier_bps\":\"20000\"}")
+    );
+    test::assert(series_expiry_value(2) == 100);
+  }
+
+  #[test(fixture = "product_owner")]
+  fn position_requires_a_live_series() {
+    initialize_outperformance_for_test();
+    enable_outperformance_for_test();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "register_position",
+      arguments: Json::parse("{\"position_id\":\"7\",\"series_id\":\"404\",\"owner\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"notional\":\"1000\",\"collateral_multiplier_bps\":\"20000\"}")
+    );
+    test::assert(!OutperfPositionOwner.contains(7));
+  }
+
+  #[test(fixture = "product_owner")]
+  fn position_multiplier_must_match_series() {
+    initialize_outperformance_for_test();
+    enable_outperformance_for_test();
+    create_series_for_test();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "register_position",
+      arguments: Json::parse("{\"position_id\":\"7\",\"series_id\":\"2\",\"owner\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"notional\":\"1000\",\"collateral_multiplier_bps\":\"10000\"}")
+    );
+  }
+
+  #[test(fixture = "product_owner")]
+  fn settlement_cannot_precede_expiry() {
+    initialize_outperformance_for_test();
+    create_series_for_test();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "settle_series",
+      arguments: Json::parse("{\"series_id\":\"2\",\"base_return_bps\":\"2000\",\"quote_return_bps\":\"500\",\"settlement_slot\":\"99\"}")
+    );
+    test::assert(series_status_value(2) == 1);
+  }
+
+  #[test(fixture = "product_owner")]
+  fn exercise_uses_quantity_safe_double_rate_product() {
+    initialize_outperformance_for_test();
+    enable_outperformance_for_test();
+    create_series_for_test();
+    create_position_for_test();
+    settle_series_for_test(base_return_bps: 2000, quote_return_bps: 500);
+    let payout = test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "exercise_position",
+      arguments: Json::parse("{\"position_id\":\"7\"}")
+    );
+    test::assert(payout == 300);
+    test::assert(position_payout_value(7) == 300);
+    test::assert(position_status_value(7) == 2);
+  }
+
+  #[test(fixture = "product_owner")]
+  fn underperformance_has_zero_not_negative_payout() {
+    initialize_outperformance_for_test();
+    enable_outperformance_for_test();
+    create_series_for_test();
+    create_position_for_test();
+    settle_series_for_test(base_return_bps: -1000, quote_return_bps: 500);
+    let payout = test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "exercise_position",
+      arguments: Json::parse("{\"position_id\":\"7\"}")
+    );
+    test::assert(payout == zero_quantity());
+  }
+
+  #[test(fixture = "product_owner")]
+  fn duplicate_series_settlement_rejects_without_overwrite() {
+    initialize_outperformance_for_test();
+    create_series_for_test();
+    settle_series_for_test(base_return_bps: 2000, quote_return_bps: 500);
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "settle_series",
+      arguments: Json::parse("{\"series_id\":\"2\",\"base_return_bps\":\"9000\",\"quote_return_bps\":\"0\",\"settlement_slot\":\"100\"}")
+    );
+    test::assert(series_base_return_value(2) == 2000);
+    test::assert(series_quote_return_value(2) == 500);
+  }
+}

@@ -4,14 +4,24 @@ set -euo pipefail
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
 mode="${1:-local}"
+case "$mode" in
+  testnet|production)
+    require_public_mutation_consent "$mode" "$mode bootstrap assets"
+    ;;
+esac
+
 config="$(client_config_or_default "$mode")"
+treasury_seed_balance="${SORASWAP_TREASURY_SEED_BALANCE:-1000000}"
+soraswap_require_positive_integer_setting "SORASWAP_TREASURY_SEED_BALANCE" "$treasury_seed_balance" || exit 1
+if [[ "$mode" == "local" ]]; then
+  soraswap_require_nonnegative_integer_setting "SORASWAP_LOCAL_FEE_ASSET_SCALE" "$SORASWAP_LOCAL_FEE_ASSET_SCALE" || exit 1
+fi
 ensure_client "$config"
 ensure_authority "$config"
 treasury_account="$(treasury_account_for_mode "$mode")"
-treasury_seed_balance="${SORASWAP_TREASURY_SEED_BALANCE:-1000000}"
 domain_id="soraswap.universal"
 
-echo "bootstrap domain and helper assets via $config"
+echo "bootstrap domain and helper assets via $(soraswap_display_path "$config")"
 
 if ! public_env_for_config "$config" >/dev/null 2>&1; then
   local_fee_asset_definition_id="$(localnet_fee_asset_definition_id_for_config "$config" 2>/dev/null || true)"
@@ -28,7 +38,23 @@ fi
 ensure_domain_sns_lease "$config" soraswap
 
 if ! iroha_cli_json --config "$config" ledger domain get --id "$domain_id" >/dev/null 2>&1; then
-  iroha_cli_with_gas_metadata "$config" ledger domain register --id "$domain_id"
+  domain_register_output=""
+  domain_register_status=0
+  set +e
+  domain_register_output="$(iroha_cli_with_gas_metadata "$config" ledger domain register --id "$domain_id" 2>&1)"
+  domain_register_status=$?
+  set -e
+  if (( domain_register_status != 0 )); then
+    if [[ "$domain_register_output" == *"Repeated instruction"* || "$domain_register_output" == *"Repetition of \`Register\`"* ]] \
+      && iroha_cli_json --config "$config" ledger domain get --id "$domain_id" >/dev/null 2>&1; then
+      echo "domain already present after duplicate register rejection: $domain_id"
+    else
+      soraswap_redact_sensitive_text "$domain_register_output" >&2
+      exit "$domain_register_status"
+    fi
+  elif [[ -n "$domain_register_output" ]]; then
+    printf '%s\n' "$domain_register_output"
+  fi
 fi
 
 ensure_account_registered "$config" "$treasury_account" "$domain_id"

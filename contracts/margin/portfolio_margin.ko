@@ -1,111 +1,242 @@
 seiyaku PortfolioMargin {
-  state MarketOwner: Map<Name, AccountId>;
-  state MarketRiskWeightBps: Map<Name, int>;
-  state MarketLiquidationThresholdBps: Map<Name, int>;
-  state AccountOwner: Map<Name, AccountId>;
-  state AccountCollateral: Map<Name, int>;
-  state AccountExposure: Map<Name, int>;
-  state AccountHealthBps: Map<Name, int>;
-  state LiquidationCount: Map<Name, int>;
-
-  fn assert_market_exists(market_id: Name) {
-    assert(MarketOwner.contains(market_id), "market missing");
-  }
-
-  fn assert_account_owner(account_key: Name) {
-    assert(AccountOwner.contains(account_key), "account missing");
-    assert(AccountOwner[account_key] == authority(), "account owner mismatch");
-  }
-
-  fn assert_exposure_operator(market_id: Name, account_key: Name) {
-    assert_market_exists(market_id);
-    if MarketOwner[market_id] == authority() {
-      return;
+    error enum MarginError {
+        MarketMissing = 1, MarketAlreadyExists = 2, InvalidRiskWeight = 3, InvalidLiquidationThreshold = 4, AccountMissing = 5, AccountOwnerMismatch = 6, AccountMarketMismatch = 7, MarketOwnerMismatch = 8, InvalidCollateral = 9, InsufficientCollateral = 10, InvalidExposure = 11, InsufficientExposure = 12, MarginUnhealthy = 13, AccountHealthy = 14, IncompleteMarketConfiguration = 15,
     }
-    assert_account_owner(account_key);
-  }
 
-  fn recalc(account_key: Name) {
-    let collateral = AccountCollateral.ensure(account_key, 0);
-    let exposure = AccountExposure.ensure(account_key, 0);
-    if exposure == 0 {
-      AccountHealthBps[account_key] = 10_000;
-      return;
+    state StateMap<Name, AccountId> MarketOwner;
+    state StateMap<Name, AssetDefinitionId> MarketCollateralAsset;
+    state StateMap<Name, AccountId> MarketCollateralVault;
+    state StateMap<Name, decimal> MarketRiskWeightBps;
+    state StateMap<Name, decimal> MarketLiquidationThresholdBps;
+    state StateMap<Name, AccountId> AccountOwner;
+    state StateMap<Name, Name> AccountMarket;
+    state StateMap<Name, quantity> AccountCollateral;
+    state StateMap<Name, quantity> AccountExposure;
+    state StateMap<Name, decimal> AccountHealthBps;
+    state StateMap<Name, int> LiquidationCount;
+    fn assert_market_exists(Name market_id) {
+        require(MarketOwner.contains(key: market_id), MarginError::MarketMissing);
     }
-    AccountHealthBps[account_key] = (collateral * 10_000) / exposure;
-  }
 
-  kotoage fn main() -> int {
-    return 1;
-  }
-
-  kotoage fn register_market(market_id: Name, risk_weight_bps: int, liquidation_threshold_bps: int) {
-    assert(!MarketOwner.contains(market_id), "market exists");
-    assert(risk_weight_bps >= 0, "invalid risk weight");
-    assert(risk_weight_bps <= 10_000, "invalid risk weight");
-    assert(liquidation_threshold_bps >= 0, "invalid threshold");
-    assert(liquidation_threshold_bps <= 10_000, "invalid threshold");
-    MarketOwner[market_id] = authority();
-    MarketRiskWeightBps[market_id] = risk_weight_bps;
-    MarketLiquidationThresholdBps[market_id] = liquidation_threshold_bps;
-  }
-
-  kotoage fn deposit_collateral(account_key: Name, amount: int) permission(AssetOps) {
-    assert(amount > 0, "invalid collateral");
-    if AccountOwner.contains(account_key) {
-      assert_account_owner(account_key);
-    } else {
-      AccountOwner[account_key] = authority();
+    fn market_owner(Name market_id) -> AccountId {
+        assert_market_exists(market_id: market_id);
+        return MarketOwner.get(key: market_id).unwrap_or(default: context::authority());
     }
-    AccountCollateral[account_key] = AccountCollateral.ensure(account_key, 0) + amount;
-    recalc(account_key);
-  }
 
-  kotoage fn withdraw_collateral(account_key: Name, amount: int) permission(AssetOps) {
-    assert_account_owner(account_key);
-    assert(amount > 0, "invalid collateral");
-    assert(AccountCollateral.ensure(account_key, 0) >= amount, "insufficient collateral");
-    AccountCollateral[account_key] = AccountCollateral.ensure(account_key, 0) - amount;
-    recalc(account_key);
-    assert(AccountHealthBps.ensure(account_key, 0) >= 1_000, "margin unhealthy");
-  }
-
-  kotoage fn lock_exposure(market_id: Name, account_key: Name, exposure_delta: int) {
-    assert_exposure_operator(market_id, account_key);
-    assert(exposure_delta >= 0, "invalid exposure");
-    AccountExposure[account_key] = AccountExposure.ensure(account_key, 0) + exposure_delta;
-    recalc(account_key);
-  }
-
-  kotoage fn liquidate_account(account_key: Name) -> int {
-    let health = AccountHealthBps.ensure(account_key, 10_000);
-    assert(health < 1_000, "account healthy");
-    let collateral = AccountCollateral.ensure(account_key, 0);
-    AccountCollateral[account_key] = 0;
-    AccountExposure[account_key] = 0;
-    AccountHealthBps[account_key] = 10_000;
-    LiquidationCount[account_key] = LiquidationCount.ensure(account_key, 0) + 1;
-    return collateral;
-  }
-
-  view fn market_state(market_id: Name) -> (int, int, int) {
-    let registered = 0;
-    if MarketOwner.contains(market_id) {
-      registered = 1;
+    fn assert_market_owner(Name market_id) {
+        require(
+            market_owner(market_id: market_id) == context::authority(),
+            MarginError::MarketOwnerMismatch,
+        );
     }
-    return (
-      registered,
-      MarketRiskWeightBps.get_or(market_id, 0),
-      MarketLiquidationThresholdBps.get_or(market_id, 0)
-    );
-  }
 
-  view fn account_health(account_key: Name) -> (int, int, int, int) {
-    return (
-      AccountCollateral.get_or(account_key, 0),
-      AccountExposure.get_or(account_key, 0),
-      AccountHealthBps.get_or(account_key, 10_000),
-      LiquidationCount.get_or(account_key, 0)
-    );
-  }
+    fn assert_account_exists(Name account_key) {
+        require(AccountOwner.contains(key: account_key), MarginError::AccountMissing);
+        require(AccountMarket.contains(key: account_key), MarginError::AccountMissing);
+    }
+
+    fn account_market(Name account_key) -> Name {
+        assert_account_exists(account_key: account_key);
+        return AccountMarket.get(key: account_key).unwrap_or(default: account_key);
+    }
+
+    fn assert_account_owner(Name account_key) {
+        assert_account_exists(account_key: account_key);
+        let owner = AccountOwner.get(key: account_key).unwrap_or(default: context::authority());
+        require(owner == context::authority(), MarginError::AccountOwnerMismatch);
+    }
+
+    fn assert_account_market(Name market_id, Name account_key) {
+        require(
+            account_market(account_key: account_key) == market_id,
+            MarginError::AccountMarketMismatch,
+        );
+    }
+
+    fn move_market_collateral(
+        Name market_id,
+        AccountId source,
+        AccountId destination,
+        quantity amount,
+    ) {
+        require(
+            MarketCollateralAsset.contains(key: market_id) && MarketCollateralVault.contains(
+                key: market_id,
+            ),
+            MarginError::IncompleteMarketConfiguration,
+        );
+        if let Option::some(collateral_asset) = MarketCollateralAsset.get(key: market_id) {
+            ledger::asset::transfer(
+                source: source,
+                destination: destination,
+                asset_definition: collateral_asset,
+                amount: amount,
+                dataspace: DataSpaceId::parse("0"),
+            );
+        } else {
+            require(false, MarginError::IncompleteMarketConfiguration);
+        }
+    }
+
+    fn recalc(Name account_key) {
+        let market_id = account_market(account_key: account_key);
+        let collateral = AccountCollateral.get_or(key: account_key, default: 0);
+        let exposure = AccountExposure.get_or(key: account_key, default: 0);
+        if exposure == 0 {
+            AccountHealthBps[account_key] = 10_000;
+            return;
+        }
+        let risk_weight = MarketRiskWeightBps.get_or(key: market_id, default: 10_000);
+        let weighted_exposure = (decimal::from_quantity(value: exposure) * risk_weight) / 10_000;
+        AccountHealthBps[account_key] = (decimal::from_quantity(value: collateral) * 10_000) / weighted_exposure;
+    }
+
+    view fn main() -> int {
+        return 1;
+    }
+
+    kotoage fn register_market(
+        Name market_id,
+        AssetDefinitionId collateral_asset,
+        AccountId collateral_vault,
+        decimal risk_weight_bps,
+        decimal liquidation_threshold_bps,
+    ) authorize("Admin") {
+        require(!MarketOwner.contains(key: market_id), MarginError::MarketAlreadyExists);
+        require(risk_weight_bps > 0 && risk_weight_bps <= 10_000, MarginError::InvalidRiskWeight, );
+        require(
+            liquidation_threshold_bps > 0 && liquidation_threshold_bps <= 10_000,
+            MarginError::InvalidLiquidationThreshold,
+        );
+        MarketOwner[market_id] = context::authority();
+        MarketCollateralAsset[market_id] = collateral_asset;
+        MarketCollateralVault[market_id] = collateral_vault;
+        MarketRiskWeightBps[market_id] = risk_weight_bps;
+        MarketLiquidationThresholdBps[market_id] = liquidation_threshold_bps;
+    }
+
+    kotoage fn deposit_collateral(Name market_id, Name account_key, quantity amount, ) authorize(
+        "AssetOps"
+    ) {
+        assert_market_exists(market_id: market_id);
+        require(amount > 0, MarginError::InvalidCollateral);
+        if AccountOwner.contains(key: account_key) {
+            assert_account_owner(account_key: account_key);
+            assert_account_market(market_id: market_id, account_key: account_key);
+        } else {
+            AccountOwner[account_key] = context::authority();
+            AccountMarket[account_key] = market_id;
+            AccountCollateral[account_key] = 0;
+            AccountExposure[account_key] = 0;
+            AccountHealthBps[account_key] = 10_000;
+            LiquidationCount[account_key] = 0;
+        }
+        let collateral_vault = MarketCollateralVault.get(key: market_id).unwrap_or(
+            default: context::authority(),
+        );
+        move_market_collateral(
+            market_id: market_id,
+            source: context::authority(),
+            destination: collateral_vault,
+            amount: amount,
+        );
+        AccountCollateral[account_key] = AccountCollateral.get_or(key: account_key, default: 0) + amount;
+        recalc(account_key: account_key);
+    }
+
+    kotoage fn withdraw_collateral(Name account_key, quantity amount) authorize("AssetOps") {
+        assert_account_owner(account_key: account_key);
+        require(amount > 0, MarginError::InvalidCollateral);
+        let collateral = AccountCollateral.get_or(key: account_key, default: 0);
+        require(collateral >= amount, MarginError::InsufficientCollateral);
+        AccountCollateral[account_key] = collateral - amount;
+        recalc(account_key: account_key);
+        let market_id = account_market(account_key: account_key);
+        let threshold = MarketLiquidationThresholdBps.get_or(key: market_id, default: 10_000);
+        require(
+            AccountHealthBps.get_or(key: account_key, default: 10_000) >= threshold,
+            MarginError::MarginUnhealthy,
+        );
+        let collateral_vault = MarketCollateralVault.get(key: market_id).unwrap_or(
+            default: context::authority(),
+        );
+        move_market_collateral(
+            market_id: market_id,
+            source: collateral_vault,
+            destination: context::authority(),
+            amount: amount,
+        );
+    }
+
+    kotoage fn lock_exposure(Name market_id, Name account_key, quantity exposure_delta, ) authorize(
+        "Entry"
+    ) {
+        assert_market_owner(market_id: market_id);
+        assert_account_exists(account_key: account_key);
+        assert_account_market(market_id: market_id, account_key: account_key);
+        require(exposure_delta > 0, MarginError::InvalidExposure);
+        AccountExposure[account_key] = AccountExposure.get_or(key: account_key, default: 0) + exposure_delta;
+        recalc(account_key: account_key);
+    }
+
+    kotoage fn release_exposure(Name market_id, Name account_key, quantity exposure_delta, ) authorize(
+        "Entry"
+    ) {
+        assert_market_owner(market_id: market_id);
+        assert_account_exists(account_key: account_key);
+        assert_account_market(market_id: market_id, account_key: account_key);
+        require(exposure_delta > 0, MarginError::InvalidExposure);
+        let exposure = AccountExposure.get_or(key: account_key, default: 0);
+        require(exposure >= exposure_delta, MarginError::InsufficientExposure);
+        AccountExposure[account_key] = exposure - exposure_delta;
+        recalc(account_key: account_key);
+    }
+
+    kotoage fn liquidate_account(Name account_key) -> quantity authorize("AssetOps") {
+        assert_account_exists(account_key: account_key);
+        let market_id = account_market(account_key: account_key);
+        let health = AccountHealthBps.get_or(key: account_key, default: 10_000);
+        let threshold = MarketLiquidationThresholdBps.get_or(key: market_id, default: 10_000);
+        require(health < threshold, MarginError::AccountHealthy);
+        let collateral = AccountCollateral.get_or(key: account_key, default: 0);
+        AccountCollateral[account_key] = 0;
+        AccountExposure[account_key] = 0;
+        AccountHealthBps[account_key] = 10_000;
+        LiquidationCount[account_key] = LiquidationCount.get_or(key: account_key, default: 0) + 1;
+        let collateral_vault = MarketCollateralVault.get(key: market_id).unwrap_or(
+            default: context::authority(),
+        );
+        move_market_collateral(
+            market_id: market_id,
+            source: collateral_vault,
+            destination: market_owner(market_id: market_id),
+            amount: collateral,
+        );
+        return collateral;
+    }
+
+    view fn market_state(Name market_id) -> (int, decimal, decimal) {
+        var int registered = 0;
+        if MarketOwner.contains(key: market_id) {
+            registered = 1;
+        }
+        return (registered, MarketRiskWeightBps.get_or(key: market_id, default: 0), MarketLiquidationThresholdBps.get_or(
+            key: market_id,
+            default: 0,
+        ));
+    }
+
+    view fn account_health(Name account_key) -> (int, quantity, quantity, decimal, int) {
+        var int registered = 0;
+        if AccountOwner.contains(key: account_key) {
+            registered = 1;
+        }
+        return (registered, AccountCollateral.get_or(key: account_key, default: 0), AccountExposure.get_or(
+            key: account_key,
+            default: 0,
+        ), AccountHealthBps.get_or(key: account_key, default: 10_000), LiquidationCount.get_or(
+            key: account_key,
+            default: 0,
+        ));
+    }
 }

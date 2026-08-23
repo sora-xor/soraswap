@@ -1,0 +1,35 @@
+koto_test { target: "../../contracts/cover/policy_manager.ko" }
+
+fixture cover_manager_actors {
+  actor("owner", AccountId::parse("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+}
+
+fn seed_cover_manager(AccountId owner) {
+  CoverInitialized = 1;
+  CoverOwner = owner;
+  CoverOracleStaleSlots = 4;
+  CoverNextPolicyId = 2;
+}
+
+#[test(fixture="cover_manager_actors")]
+fn cover_oracle_stale_slots_are_owner_configured() {
+  let owner = actor_account("owner");
+  seed_cover_manager(owner);
+
+  invoke_entrypoint_as("owner", "configure_oracle_stale_slots", json("{\"oracle_stale_slots\":120}"));
+
+  assert(CoverOracleStaleSlots == 120, "cover stale slots");
+  expect_reject_as("owner", "configure_oracle_stale_slots", json("{\"oracle_stale_slots\":-1}"));
+}
+
+#[test(fixture="cover_manager_actors")]
+fn cover_next_policy_id_only_advances() {
+  let owner = actor_account("owner");
+  seed_cover_manager(owner);
+
+  invoke_entrypoint_as("owner", "configure_next_policy_id", json("{\"next_policy_id\":4}"));
+
+  assert(CoverNextPolicyId == 4, "cover next policy id");
+  expect_reject_as("owner", "configure_next_policy_id", json("{\"next_policy_id\":3}"));
+  expect_reject_as("owner", "configure_next_policy_id", json("{\"next_policy_id\":0}"));
+}

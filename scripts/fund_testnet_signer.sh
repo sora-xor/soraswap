@@ -3,6 +3,9 @@ set -euo pipefail
 
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
+export SORASWAP_PUBLIC_ENV=testnet
+require_public_mutation_consent testnet "testnet signer funding"
+
 config="$(client_config_or_default testnet)"
 ensure_client "$config"
 ensure_authority "$config"

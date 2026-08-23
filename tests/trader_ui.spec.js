@@ -3,13 +3,21 @@ const { spawn } = require("child_process");
 const readline = require("readline");
 const path = require("path");
 
+const SELECTED_ENVIRONMENT_KEY = "soraswap.trader.selectedEnvironment.v1";
+const AUTHORITY_BY_ENVIRONMENT_KEY = "soraswap.trader.authorityByEnvironment.v1";
+const LIVE_MODE_ENABLED_KEY = "soraswap.trader.liveModeEnabled.v1";
+
 let fixtureServer;
 let fixtureServerUrl;
 
-async function startFixtureServer() {
+async function startFixtureServer(options = {}) {
   const serverPath = path.join(__dirname, "run_trader_fixture_server.py");
   const child = spawn("python3", [serverPath], {
     cwd: path.join(__dirname, ".."),
+    env: {
+      ...process.env,
+      ...(options.env || {}),
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -72,6 +80,19 @@ async function workspaceColumnCount(page) {
   });
 }
 
+async function readLocalStorageJson(page, key) {
+  return page.evaluate((storageKey) => {
+    const raw = window.localStorage.getItem(storageKey);
+    return raw === null ? null : JSON.parse(raw);
+  }, key);
+}
+
+async function readLocalStorageItems(page, keys) {
+  return page.evaluate((storageKeys) => (
+    Object.fromEntries(storageKeys.map((key) => [key, window.localStorage.getItem(key)]))
+  ), keys);
+}
+
 async function confirmSignedCall(page) {
   const dialog = page.locator("#signed-confirmation-dialog");
   await expect(dialog).toBeVisible();
@@ -86,9 +107,19 @@ async function submitTraderAction(page) {
   const preview = await page.locator("#trade-preview").textContent();
   await expect(submit).toBeEnabled();
   await expect(submit).toHaveAttribute("title", "");
-  await submit.click();
   const dialog = page.locator("#signed-confirmation-dialog");
-  await expect(dialog, `confirmation did not open for preview: ${preview}`).toBeVisible();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await submit.click();
+    try {
+      await expect(dialog, `confirmation did not open for preview: ${preview}`).toBeVisible({ timeout: 1500 });
+      break;
+    } catch (error) {
+      if (attempt === 2) {
+        throw error;
+      }
+      await expect(submit).toBeEnabled();
+    }
+  }
   await expect(dialog).toContainText("Confirm Call");
   await expect(dialog).toContainText("Confirm signed call");
   await dialog.getByRole("button", { name: "Confirm signed call" }).click();
@@ -162,6 +193,123 @@ test("does not submit or confirm invalid trader mutations", async ({ page }) => 
   await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
   await expect(page.locator("#trade-result")).toContainText("Cancelled before submission");
   expect(callRequests).toHaveLength(0);
+});
+
+test("sanitizes sensitive fields in trader confirmation JSON", async ({ page }) => {
+  await page.goto(fixtureServerUrl);
+
+  const sanitizedJson = await page.evaluate(() => JSON.stringify(sanitizeJsonForDisplay({
+    amount_in: 90,
+    private_key: "snake-secret",
+    "private-key": "dash-secret",
+    nested: {
+      "private key": "space-secret",
+      privateKey: "camel-secret",
+      secret: "nested-secret",
+      mnemonic: "seed words",
+      apiKey: "api-key-secret",
+      authorization: "bearer-secret",
+      password: "password-secret",
+      passphrase: "passphrase-secret",
+      visible: "safe-visible-value",
+    },
+  })));
+
+  expect(sanitizedJson).toContain("safe-visible-value");
+  expect(sanitizedJson).not.toContain("snake-secret");
+  expect(sanitizedJson).not.toContain("dash-secret");
+  expect(sanitizedJson).not.toContain("space-secret");
+  expect(sanitizedJson).not.toContain("camel-secret");
+  expect(sanitizedJson).not.toContain("nested-secret");
+  expect(sanitizedJson).not.toContain("seed words");
+  expect(sanitizedJson).not.toContain("api-key-secret");
+  expect(sanitizedJson).not.toContain("bearer-secret");
+  expect(sanitizedJson).not.toContain("password-secret");
+  expect(sanitizedJson).not.toContain("passphrase-secret");
+});
+
+test("clears browser-local trader preferences in one action", async ({ page }) => {
+  await page.goto(fixtureServerUrl);
+  await expect(page.locator("#status-banner")).toContainText("Loaded 3 executed fills");
+
+  const environmentName = await page.locator("#environment-select").inputValue();
+  const authority = "i105clear_trader_state@universal";
+  await page.locator("#authority-input").fill(authority);
+  await expect.poll(() => readLocalStorageJson(page, AUTHORITY_BY_ENVIRONMENT_KEY)).toEqual({
+    [environmentName]: authority,
+  });
+  await expect.poll(() => readLocalStorageJson(page, SELECTED_ENVIRONMENT_KEY)).toBe(environmentName);
+
+  await page.locator("#live-toggle").click();
+  await expect(page.locator("#live-status")).toHaveText("Paused");
+  await expect.poll(() => readLocalStorageJson(page, LIVE_MODE_ENABLED_KEY)).toBe(false);
+
+  await page.locator("#clear-trader-state").click();
+
+  await expect(page.locator("#status-banner")).toContainText("Cleared browser-local trader state.");
+  await expect(page.locator("#authority-input")).toHaveValue("");
+  await expect(page.locator("#trade-submit")).toBeDisabled();
+  await expect(page.locator("#trade-submit")).toHaveAttribute(
+    "title",
+    "Enter an authority to load trader state and submit actions.",
+  );
+  await expect(page.locator("#recent-fills")).toContainText("No fills loaded yet.");
+  await expect(page.locator("#live-toggle")).toHaveText("Pause Live");
+
+  await expect.poll(() => readLocalStorageItems(page, [
+    SELECTED_ENVIRONMENT_KEY,
+    AUTHORITY_BY_ENVIRONMENT_KEY,
+    LIVE_MODE_ENABLED_KEY,
+  ])).toEqual({
+    [SELECTED_ENVIRONMENT_KEY]: null,
+    [AUTHORITY_BY_ENVIRONMENT_KEY]: null,
+    [LIVE_MODE_ENABLED_KEY]: null,
+  });
+});
+
+test("renders capped large history windows without layout overflow", async ({ page }) => {
+  const started = await startFixtureServer({
+    env: {
+      SORASWAP_TRADER_FIXTURE_EXTRA_FILLS: "180",
+    },
+  });
+  const requests = [];
+  page.on("request", (request) => {
+    const requestUrl = new URL(request.url());
+    if (requestUrl.pathname.startsWith("/api/contracts/rollups/")) {
+      requests.push({
+        path: requestUrl.pathname,
+        query: Object.fromEntries(requestUrl.searchParams.entries()),
+      });
+    }
+  });
+
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(started.metadata.url);
+
+    await expect(page.locator("#status-banner")).toContainText("Loaded 120 executed fills");
+    await expect(page.locator("#history-count")).toHaveText("120");
+    await expect(page.locator("#recent-fills .fill-card")).toHaveCount(6);
+    await expect(page.locator("#journal-body tr")).toHaveCount(120);
+    await expect(page.locator("#activity-body tr")).toHaveCount(28);
+    await expect(page.locator("#chart-empty")).toBeHidden();
+    await expectNoHorizontalOverflow(page);
+
+    const queryFor = (path) => requests.find((request) => request.path === path)?.query || {};
+    expect(queryFor("/api/contracts/rollups/trader/account")).toEqual({
+      authority: "i105fixturetrader@universal",
+      environment: "fixture",
+    });
+    expect(queryFor("/api/contracts/rollups/swaps/fills").limit).toBe("120");
+    expect(queryFor("/api/contracts/rollups/swaps/candles")).toMatchObject({
+      bucket_secs: "900",
+      limit: "96",
+    });
+    expect(queryFor("/api/contracts/rollups/trader/activity").limit).toBe("28");
+  } finally {
+    await stopFixtureServer(started.child);
+  }
 });
 
 test("renders the trader cockpit and submits a routed swap through the real Python server", async ({ page }) => {

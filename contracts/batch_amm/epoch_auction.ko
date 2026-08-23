@@ -1,10 +1,51 @@
-// Trigger-native bounded epoch auction for xor/n3x launch routing.
+// Trigger-native bounded batch auction for XOR/stable launch routing.
+// Each epoch admits at most 64 orders and 64 price ticks, matching Kotodama
+// V1's compiler-proven iteration bound. Asset amounts are `quantity`.
 
 seiyaku EpochAuction {
+  error enum EpochAuctionError {
+    IdenticalAssets = 1,
+    AuctionOwnerMismatch = 2,
+    AuctionGuardianMismatch = 3,
+    AuctionPaused = 4,
+    InvalidPaused = 5,
+    EpochActive = 6,
+    EpochNotActive = 7,
+    EpochNotClosed = 8,
+    EpochNotStarted = 9,
+    EpochClosed = 10,
+    StaleEpoch = 11,
+    InvalidStartSlot = 12,
+    InvalidEndSlot = 13,
+    InvalidLowerTick = 14,
+    InvalidUpperTick = 15,
+    InvalidTickStep = 16,
+    TooManyTicks = 17,
+    InvalidMaxOrders = 18,
+    EpochOrderCap = 19,
+    InvalidSide = 20,
+    InvalidAmount = 21,
+    InvalidLimitTick = 22,
+    OrderExists = 23,
+    OrderMissing = 24,
+    OrderOwnerMismatch = 25,
+    OrderNotActive = 26,
+    OrderSettled = 27,
+    OrderIndexCorrupt = 28,
+    EpochAccountingInvariant = 29,
+    CustodyAccountIsOwner = 30,
+    StaleStartSlot = 31,
+    MisalignedTickGrid = 32,
+    LimitTickOutsideGrid = 33,
+    LimitTickMisaligned = 34,
+  }
+
   state int AuctionInitialized;
   state AccountId AuctionOwner;
+  state AccountId AuctionGuardian;
   state AccountId AuctionContractId;
   state int AuctionContractBound;
+  state int AuctionPaused;
   state AssetDefinitionId AuctionBaseAsset;
   state AssetDefinitionId AuctionQuoteAsset;
 
@@ -17,68 +58,140 @@ seiyaku EpochAuction {
   state int EpochMaxOrders;
   state int EpochStatus;
   state int EpochOrderCount;
+  state quantity EpochClearingBase;
   state int EpochClearingTick;
-  state int EpochClearingBase;
-  state int EpochBidBaseAtClearing;
-  state int EpochAskBaseAtClearing;
+  state quantity EpochBidBaseAtClearing;
+  state quantity EpochAskBaseAtClearing;
   state int EpochLastCloseSlot;
-  state EpochStatusById: Map<int, int>;
-  state EpochClearingTickById: Map<int, int>;
-  state EpochClearingBaseById: Map<int, int>;
-  state EpochBidBaseAtClearingById: Map<int, int>;
-  state EpochAskBaseAtClearingById: Map<int, int>;
+
+  state StateMap<int, int> EpochStatusById;
+  state StateMap<int, int> EpochClearingTickById;
+  state StateMap<int, quantity> EpochClearingBaseById;
+  state StateMap<int, quantity> EpochBidBaseAtClearingById;
+  state StateMap<int, quantity> EpochAskBaseAtClearingById;
 
   state int NextOrderIndex;
-  state OrderByIndex: Map<int, Name>;
-  state OrderOwner: Map<Name, AccountId>;
-  state OrderEpoch: Map<Name, int>;
-  state OrderSide: Map<Name, int>;
-  state OrderAmount: Map<Name, int>;
-  state OrderLimitTick: Map<Name, int>;
-  state OrderStatus: Map<Name, int>;
-  state OrderBaseOut: Map<Name, int>;
-  state OrderQuoteOut: Map<Name, int>;
-  state OrderBaseRefund: Map<Name, int>;
-  state OrderQuoteRefund: Map<Name, int>;
+  state StateMap<int, Name> OrderByIndex;
+  state StateMap<Name, AccountId> OrderOwner;
+  state StateMap<Name, int> OrderEpoch;
+  state StateMap<Name, int> OrderSide;
+  state StateMap<Name, quantity> OrderAmount;
+  state StateMap<Name, int> OrderLimitTick;
+  state StateMap<Name, int> OrderStatus;
+  state StateMap<Name, quantity> OrderBaseOut;
+  state StateMap<Name, quantity> OrderQuoteOut;
+  state StateMap<Name, quantity> OrderBaseRefund;
+  state StateMap<Name, quantity> OrderQuoteRefund;
 
-  register_trigger soraswap_epoch_auction_close {
-    call native_epoch_auction_close;
+  trigger soraswap_epoch_auction_close -> native_epoch_auction_close {
     on time pre_commit;
     repeats indefinitely;
-    metadata { tag: "soraswap"; module: "batch_amm.epoch_auction"; __enabled: false; }
+    metadata { "tag": "soraswap"; "module": "batch_amm.epoch_auction"; "__enabled": false; }
   }
 
-  fn ppm_scale() -> int {
-    return 1_000_000;
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
   }
 
-  fn min_int(a: int, b: int) -> int {
-    if a <= b {
-      return a;
+  fn universal_dataspace() -> DataSpaceId {
+    let dataspace = DataSpaceId::parse("0");
+    return dataspace;
+  }
+
+  fn close_trigger_name() -> Name {
+    let trigger_name = Name::parse("soraswap_epoch_auction_close");
+    return trigger_name;
+  }
+
+  fn min_quantity(quantity left, quantity right) -> quantity {
+    if left <= right {
+      return left;
     }
-    return b;
+    return right;
   }
 
-  fn assert_initialized() {
-    assert(AuctionInitialized == 1, "auction not initialized");
+  fn quantity_distance(quantity left, quantity right) -> quantity {
+    if left >= right {
+      return left - right;
+    }
+    return right - left;
   }
 
   fn assert_owner() {
-    assert_initialized();
-    assert(AuctionOwner == authority(), "auction owner mismatch");
+    require(AuctionOwner == context::authority(), EpochAuctionError::AuctionOwnerMismatch);
   }
 
-  fn assert_contract_bound() {
-    assert(AuctionContractBound == 1, "auction contract unbound");
+  fn assert_owner_or_guardian() {
+    if AuctionOwner == context::authority() {
+      return;
+    }
+    require(
+      AuctionGuardian == context::authority(),
+      EpochAuctionError::AuctionGuardianMismatch
+    );
+  }
+
+  fn assert_not_paused() {
+    require(AuctionPaused == 0, EpochAuctionError::AuctionPaused);
   }
 
   fn assert_active_epoch() {
-    assert_initialized();
-    assert(EpochStatus == 1, "epoch not active");
+    require(EpochStatus == 1, EpochAuctionError::EpochNotActive);
   }
 
-  fn assert_order_exists(order_id: Name) {
-    assert(OrderOwner.contains(order_id), "order missing");
+  fn assert_order_exists(Name order_id) {
+    require(OrderOwner.contains(order_id), EpochAuctionError::OrderMissing);
+    require(OrderEpoch.contains(order_id), EpochAuctionError::OrderMissing);
+  }
+
+  fn order_owner_value(Name order_id) -> AccountId {
+    assert_order_exists(order_id);
+    return OrderOwner.get(order_id).unwrap_or(context::authority());
+  }
+
+  fn order_epoch_value(Name order_id) -> int {
+    assert_order_exists(order_id);
+    return OrderEpoch.get(order_id).unwrap_or(0);
+  }
+
+  fn order_amount_value(Name order_id) -> quantity {
+    return OrderAmount.get(order_id).unwrap_or(zero_quantity());
+  }
+
+  fn epoch_status_for(int order_epoch) -> int {
+    if order_epoch == EpochId {
+      return EpochStatus;
+    }
+    return EpochStatusById.get(order_epoch).unwrap_or(0);
+  }
+
+  fn epoch_clearing_tick_for(int order_epoch) -> int {
+    if order_epoch == EpochId && !EpochClearingTickById.contains(order_epoch) {
+      return EpochClearingTick;
+    }
+    return EpochClearingTickById.get(order_epoch).unwrap_or(0);
+  }
+
+  fn epoch_clearing_base_for(int order_epoch) -> quantity {
+    if order_epoch == EpochId && !EpochClearingBaseById.contains(order_epoch) {
+      return EpochClearingBase;
+    }
+    return EpochClearingBaseById.get(order_epoch).unwrap_or(zero_quantity());
+  }
+
+  fn epoch_bid_base_at_clearing_for(int order_epoch) -> quantity {
+    if order_epoch == EpochId && !EpochBidBaseAtClearingById.contains(order_epoch) {
+      return EpochBidBaseAtClearing;
+    }
+    return EpochBidBaseAtClearingById.get(order_epoch).unwrap_or(zero_quantity());
+  }
+
+  fn epoch_ask_base_at_clearing_for(int order_epoch) -> quantity {
+    if order_epoch == EpochId && !EpochAskBaseAtClearingById.contains(order_epoch) {
+      return EpochAskBaseAtClearing;
+    }
+    return EpochAskBaseAtClearingById.get(order_epoch).unwrap_or(zero_quantity());
   }
 
   fn persist_current_epoch_state() {
@@ -91,46 +204,13 @@ seiyaku EpochAuction {
     }
   }
 
-  fn epoch_status_for(order_epoch: int) -> int {
-    if order_epoch == EpochId {
-      return EpochStatus;
-    }
-    return EpochStatusById.get_or(order_epoch, 0);
-  }
-
-  fn epoch_clearing_tick_for(order_epoch: int) -> int {
-    if order_epoch == EpochId && !EpochClearingTickById.contains(order_epoch) {
-      return EpochClearingTick;
-    }
-    return EpochClearingTickById.get_or(order_epoch, 0);
-  }
-
-  fn epoch_clearing_base_for(order_epoch: int) -> int {
-    if order_epoch == EpochId && !EpochClearingBaseById.contains(order_epoch) {
-      return EpochClearingBase;
-    }
-    return EpochClearingBaseById.get_or(order_epoch, 0);
-  }
-
-  fn epoch_bid_base_at_clearing_for(order_epoch: int) -> int {
-    if order_epoch == EpochId && !EpochBidBaseAtClearingById.contains(order_epoch) {
-      return EpochBidBaseAtClearing;
-    }
-    return EpochBidBaseAtClearingById.get_or(order_epoch, 0);
-  }
-
-  fn epoch_ask_base_at_clearing_for(order_epoch: int) -> int {
-    if order_epoch == EpochId && !EpochAskBaseAtClearingById.contains(order_epoch) {
-      return EpochAskBaseAtClearing;
-    }
-    return EpochAskBaseAtClearingById.get_or(order_epoch, 0);
-  }
-
-  fn close_current_epoch(clearing_tick: int,
-                         clearing_base: int,
-                         bid_base_at_clearing: int,
-                         ask_base_at_clearing: int,
-                         close_slot: int) {
+  fn close_current_epoch(
+    int clearing_tick,
+    quantity clearing_base,
+    quantity bid_base_at_clearing,
+    quantity ask_base_at_clearing,
+    int close_slot
+  ) {
     EpochClearingTick = clearing_tick;
     EpochClearingBase = clearing_base;
     EpochBidBaseAtClearing = bid_base_at_clearing;
@@ -140,135 +220,223 @@ seiyaku EpochAuction {
     persist_current_epoch_state();
   }
 
-  fn base_capacity_for_bid(quote_amount: int, tick: int) -> int {
-    if quote_amount <= 0 || tick <= 0 {
-      return 0;
-    }
-    return (quote_amount * ppm_scale()) / tick;
+  fn tick_price(int tick) -> decimal {
+    let decimal scale = 1_000_000;
+    return decimal::from_int(value: tick) / scale;
   }
 
-  fn quote_for_base(base_amount: int, tick: int) -> int {
-    if base_amount <= 0 || tick <= 0 {
-      return 0;
+  fn base_capacity_for_bid(quantity quote_amount, int tick) -> quantity {
+    if quote_amount == zero_quantity() || tick <= 0 {
+      return zero_quantity();
     }
-    return (base_amount * tick) / ppm_scale();
+    return quote_amount.div_round(
+      divisor: tick_price(tick),
+      scale: 28,
+      mode: Rounding::floor
+    );
   }
 
-  fn order_crosses_tick(order_id: Name, tick: int) -> int {
-    let side = OrderSide.get_or(order_id, 0);
-    if side == 1 {
-      if OrderLimitTick.get_or(order_id, 0) >= tick {
-        return 1;
-      }
-      return 0;
+  fn quote_for_base(quantity base_amount, int tick) -> quantity {
+    if base_amount == zero_quantity() || tick <= 0 {
+      return zero_quantity();
     }
-    if side == 2 {
-      if OrderLimitTick.get_or(order_id, 0) <= tick {
-        return 1;
-      }
+    return base_amount * tick_price(tick);
+  }
+
+  fn order_crosses_tick(Name order_id, int tick) -> int {
+    let side = OrderSide.get(order_id).unwrap_or(0);
+    let limit = OrderLimitTick.get(order_id).unwrap_or(0);
+    if side == 1 && limit >= tick {
+      return 1;
+    }
+    if side == 2 && limit <= tick {
+      return 1;
     }
     return 0;
   }
 
-  fn totals_at_tick(tick: int) -> (int, int, int) {
-    let index = 1;
-    let bid_base = 0;
-    let ask_base = 0;
-    while index < NextOrderIndex {
-      if OrderByIndex.contains(index) {
-        let order_id = OrderByIndex[index];
-        if OrderStatus.get_or(order_id, 0) == 1 &&
-          OrderEpoch.get_or(order_id, 0) == EpochId &&
-          order_crosses_tick(order_id, tick) == 1 {
-          if OrderSide.get_or(order_id, 0) == 1 {
-            bid_base = bid_base + base_capacity_for_bid(OrderAmount.get_or(order_id, 0), tick);
-          } else {
-            ask_base = ask_base + OrderAmount.get_or(order_id, 0);
-          }
+  fn totals_at_tick(int tick) -> (quantity, quantity, quantity) {
+    var bid_base = zero_quantity();
+    var ask_base = zero_quantity();
+    for offset in range(64) {
+      let index = offset + 1;
+      if index >= NextOrderIndex {
+        break;
+      }
+      require(OrderByIndex.contains(index), EpochAuctionError::OrderIndexCorrupt);
+      let order_id = OrderByIndex.get(index).unwrap_or(Name::parse("missing"));
+      if OrderStatus.get(order_id).unwrap_or(0) == 1 &&
+        order_epoch_value(order_id) == EpochId &&
+        order_crosses_tick(order_id: order_id, tick: tick) == 1 {
+        if OrderSide.get(order_id).unwrap_or(0) == 1 {
+          bid_base = bid_base + base_capacity_for_bid(
+            quote_amount: order_amount_value(order_id),
+            tick: tick
+          );
+        } else {
+          ask_base = ask_base + order_amount_value(order_id);
         }
       }
-      index = index + 1;
     }
-    return (bid_base, ask_base, min_int(bid_base, ask_base));
+    return (bid_base, ask_base, min_quantity(left: bid_base, right: ask_base));
   }
 
-  fn compute_clearing() -> (int, int, int, int) {
-    let tick = EpochLowerTick;
-    let scanned = 0;
-    let best_tick = 0;
-    let best_base = 0;
-    let best_bid_base = 0;
-    let best_ask_base = 0;
-    while tick <= EpochUpperTick && scanned < 128 {
+  fn compute_clearing() -> (int, quantity, quantity, quantity) {
+    var tick = EpochLowerTick;
+    var first_best_tick = 0;
+    var last_best_tick = 0;
+    var best_base = zero_quantity();
+    var best_imbalance = zero_quantity();
+    var best_found = 0;
+    for _tick_index in range(64) {
+      if tick > EpochUpperTick {
+        break;
+      }
       let totals = totals_at_tick(tick);
-      let bid_base = totals.0;
-      let ask_base = totals.1;
-      let matched_base = totals.2;
-      if matched_base > best_base {
-        best_tick = tick;
-        best_base = matched_base;
-        best_bid_base = bid_base;
-        best_ask_base = ask_base;
+      let imbalance = quantity_distance(left: totals.0, right: totals.1);
+      if best_found == 0 || totals.2 > best_base ||
+        (totals.2 == best_base && imbalance < best_imbalance) {
+        first_best_tick = tick;
+        last_best_tick = tick;
+        best_base = totals.2;
+        best_imbalance = imbalance;
+        best_found = 1;
+      } else {
+        if totals.2 == best_base && imbalance == best_imbalance {
+          last_best_tick = tick;
+        }
       }
       tick = tick + EpochTickStep;
-      scanned = scanned + 1;
     }
-    return (best_tick, best_base, best_bid_base, best_ask_base);
+    if best_base == zero_quantity() {
+      return (0, zero_quantity(), zero_quantity(), zero_quantity());
+    }
+    let midpoint_steps = ((last_best_tick - first_best_tick) / EpochTickStep) / 2;
+    let best_tick = first_best_tick + midpoint_steps * EpochTickStep;
+    let best_totals = totals_at_tick(best_tick);
+    return (best_tick, best_totals.2, best_totals.0, best_totals.1);
   }
 
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
-      }
+  fn move_asset_if_needed(
+    AccountId source,
+    AccountId destination,
+    AssetDefinitionId asset,
+    quantity amount
+  ) {
+    if amount > zero_quantity() && source != destination {
+      ledger::asset::transfer(
+        source: source,
+        destination: destination,
+        asset_definition: asset,
+        amount: amount,
+        dataspace: universal_dataspace()
+      );
     }
   }
 
-  kotoage fn main() -> int {
-    return AuctionInitialized;
+  fn close_epoch_impl(int reject_before_deadline) {
+    assert_active_epoch();
+    let current_slot = context::block_height();
+    if current_slot < EpochEndSlot {
+      require(reject_before_deadline == 0, EpochAuctionError::EpochNotClosed);
+      return;
+    }
+    if EpochOrderCount == 0 {
+      close_current_epoch(
+        clearing_tick: 0,
+        clearing_base: zero_quantity(),
+        bid_base_at_clearing: zero_quantity(),
+        ask_base_at_clearing: zero_quantity(),
+        close_slot: current_slot
+      );
+      return;
+    }
+    let clearing = compute_clearing();
+    close_current_epoch(
+      clearing_tick: clearing.0,
+      clearing_base: clearing.1,
+      bid_base_at_clearing: clearing.2,
+      ask_base_at_clearing: clearing.3,
+      close_slot: current_slot
+    );
   }
 
-  kotoage fn init_auction(base_asset: AssetDefinitionId,
-                          quote_asset: AssetDefinitionId) {
-    assert(AuctionInitialized == 0, "auction initialized");
+  hajimari(
+    AssetDefinitionId base_asset,
+    AssetDefinitionId quote_asset,
+    AccountId custody_account,
+    AccountId guardian
+  ) {
+    require(base_asset != quote_asset, EpochAuctionError::IdenticalAssets);
+    require(
+      custody_account != context::authority(),
+      EpochAuctionError::CustodyAccountIsOwner
+    );
     AuctionInitialized = 1;
-    AuctionOwner = authority();
-    AuctionContractId = authority();
-    AuctionContractBound = 0;
+    AuctionOwner = context::authority();
+    AuctionGuardian = guardian;
+    AuctionContractId = custody_account;
+    AuctionContractBound = 1;
+    AuctionPaused = 1;
     AuctionBaseAsset = base_asset;
     AuctionQuoteAsset = quote_asset;
     EpochId = 0;
+    EpochStartSlot = 0;
+    EpochEndSlot = 0;
+    EpochLowerTick = 0;
+    EpochUpperTick = 0;
+    EpochTickStep = 1;
+    EpochMaxOrders = 0;
     EpochStatus = 0;
+    EpochOrderCount = 0;
+    EpochClearingTick = 0;
+    EpochClearingBase = zero_quantity();
+    EpochBidBaseAtClearing = zero_quantity();
+    EpochAskBaseAtClearing = zero_quantity();
+    EpochLastCloseSlot = 0;
     NextOrderIndex = 1;
   }
 
-  kotoage fn bind_contract(contract_id: AccountId) {
-    assert_owner();
-    AuctionContractId = contract_id;
-    AuctionContractBound = 1;
+  view fn main() -> int {
+    return AuctionInitialized;
   }
 
-  kotoage fn configure_epoch(epoch_id: int,
-                             start_slot: int,
-                             end_slot: int,
-                             lower_tick: int,
-                             upper_tick: int,
-                             tick_step: int,
-                             max_orders: int) permission(Admin) {
+  kotoage fn enter_paused() authorize("Admin") {
+    assert_owner_or_guardian();
+    AuctionPaused = 1;
+  }
+
+  kotoage fn exit_paused() authorize("Admin") {
     assert_owner();
-    assert(EpochStatus != 1, "epoch active");
+    AuctionPaused = 0;
+  }
+
+  kotoage fn configure_epoch(
+    int epoch_id,
+    int start_slot,
+    int end_slot,
+    int lower_tick,
+    int upper_tick,
+    int tick_step,
+    int max_orders
+  ) authorize("Admin") {
+    assert_owner();
+    assert_not_paused();
+    require(EpochStatus != 1, EpochAuctionError::EpochActive);
     persist_current_epoch_state();
-    assert(epoch_id > EpochId, "stale epoch");
-    assert(start_slot >= 0, "invalid start slot");
-    assert(end_slot > start_slot, "invalid end slot");
-    assert(lower_tick > 0, "invalid lower tick");
-    assert(upper_tick >= lower_tick, "invalid upper tick");
-    assert(tick_step > 0, "invalid tick step");
-    assert(max_orders > 0, "invalid max orders");
-    assert(max_orders <= 256, "max orders too high");
+    require(epoch_id > EpochId, EpochAuctionError::StaleEpoch);
+    require(start_slot >= 0, EpochAuctionError::InvalidStartSlot);
+    require(start_slot >= context::block_height(), EpochAuctionError::StaleStartSlot);
+    require(end_slot > start_slot, EpochAuctionError::InvalidEndSlot);
+    require(lower_tick > 0, EpochAuctionError::InvalidLowerTick);
+    require(upper_tick >= lower_tick, EpochAuctionError::InvalidUpperTick);
+    require(tick_step > 0, EpochAuctionError::InvalidTickStep);
+    require(
+      (upper_tick - lower_tick) % tick_step == 0,
+      EpochAuctionError::MisalignedTickGrid
+    );
+    require(((upper_tick - lower_tick) / tick_step) + 1 <= 64, EpochAuctionError::TooManyTicks);
+    require(max_orders > 0 && max_orders <= 64, EpochAuctionError::InvalidMaxOrders);
     EpochId = epoch_id;
     EpochStartSlot = start_slot;
     EpochEndSlot = end_slot;
@@ -279,123 +447,125 @@ seiyaku EpochAuction {
     EpochStatus = 1;
     EpochOrderCount = 0;
     EpochClearingTick = 0;
-    EpochClearingBase = 0;
-    EpochBidBaseAtClearing = 0;
-    EpochAskBaseAtClearing = 0;
+    EpochClearingBase = zero_quantity();
+    EpochBidBaseAtClearing = zero_quantity();
+    EpochAskBaseAtClearing = zero_quantity();
     EpochLastCloseSlot = 0;
+    NextOrderIndex = 1;
     persist_current_epoch_state();
-    set_trigger_enabled(name("soraswap_epoch_auction_close"), 1);
+    ledger::trigger::set_enabled(close_trigger_name(), 1);
   }
 
-  kotoage fn submit_order(order_id: Name,
-                          side: int,
-                          amount: int,
-                          limit_tick: int) permission(AssetOps) {
+  kotoage fn submit_order(
+    Name order_id,
+    int side,
+    quantity amount,
+    int limit_tick
+  ) authorize("AssetOps") {
     assert_active_epoch();
-    assert_contract_bound();
-    assert(side == 1 || side == 2, "invalid side");
-    assert(amount > 0, "invalid amount");
-    assert(limit_tick > 0, "invalid limit tick");
-    assert(!OrderOwner.contains(order_id), "order exists");
-    assert(EpochOrderCount < EpochMaxOrders, "epoch order cap");
-    let current_slot = block_height();
-    assert(current_slot >= EpochStartSlot, "epoch not started");
-    assert(current_slot < EpochEndSlot, "epoch closed");
-
-    if side == 1 {
-      move_asset_if_needed(authority(), AuctionContractId, AuctionQuoteAsset, amount);
-    } else {
-      move_asset_if_needed(authority(), AuctionContractId, AuctionBaseAsset, amount);
-    }
-
+    assert_not_paused();
+    require(side == 1 || side == 2, EpochAuctionError::InvalidSide);
+    require(amount > zero_quantity(), EpochAuctionError::InvalidAmount);
+    require(limit_tick > 0, EpochAuctionError::InvalidLimitTick);
+    require(
+      limit_tick >= EpochLowerTick && limit_tick <= EpochUpperTick,
+      EpochAuctionError::LimitTickOutsideGrid
+    );
+    require(
+      (limit_tick - EpochLowerTick) % EpochTickStep == 0,
+      EpochAuctionError::LimitTickMisaligned
+    );
+    require(!OrderOwner.contains(order_id), EpochAuctionError::OrderExists);
+    require(EpochOrderCount < EpochMaxOrders, EpochAuctionError::EpochOrderCap);
+    let current_slot = context::block_height();
+    require(current_slot >= EpochStartSlot, EpochAuctionError::EpochNotStarted);
+    require(current_slot < EpochEndSlot, EpochAuctionError::EpochClosed);
+    let asset = (side == 1) ? AuctionQuoteAsset : AuctionBaseAsset;
+    move_asset_if_needed(
+      source: context::authority(),
+      destination: AuctionContractId,
+      asset: asset,
+      amount: amount
+    );
     let index = NextOrderIndex;
     NextOrderIndex = index + 1;
     OrderByIndex[index] = order_id;
-    OrderOwner[order_id] = authority();
+    OrderOwner[order_id] = context::authority();
     OrderEpoch[order_id] = EpochId;
     OrderSide[order_id] = side;
     OrderAmount[order_id] = amount;
     OrderLimitTick[order_id] = limit_tick;
     OrderStatus[order_id] = 1;
-    OrderBaseOut[order_id] = 0;
-    OrderQuoteOut[order_id] = 0;
-    OrderBaseRefund[order_id] = 0;
-    OrderQuoteRefund[order_id] = 0;
+    OrderBaseOut[order_id] = zero_quantity();
+    OrderQuoteOut[order_id] = zero_quantity();
+    OrderBaseRefund[order_id] = zero_quantity();
+    OrderQuoteRefund[order_id] = zero_quantity();
     EpochOrderCount = EpochOrderCount + 1;
   }
 
-  kotoage fn cancel_order(order_id: Name) permission(AssetOps) {
-    assert_order_exists(order_id);
-    assert(OrderOwner[order_id] == authority(), "order owner mismatch");
-    assert(OrderStatus.get_or(order_id, 0) == 1, "order not active");
-    let order_epoch = OrderEpoch.get_or(order_id, 0);
-    assert(epoch_status_for(order_epoch) == 1, "epoch not active");
-    let side = OrderSide.get_or(order_id, 0);
-    let amount = OrderAmount.get_or(order_id, 0);
+  kotoage fn cancel_order(Name order_id) authorize("AssetOps") {
+    require(order_owner_value(order_id) == context::authority(), EpochAuctionError::OrderOwnerMismatch);
+    require(OrderStatus.get(order_id).unwrap_or(0) == 1, EpochAuctionError::OrderNotActive);
+    require(
+      epoch_status_for(order_epoch_value(order_id)) == 1,
+      EpochAuctionError::EpochNotActive
+    );
+    require(context::block_height() < EpochEndSlot, EpochAuctionError::EpochClosed);
+    let side = OrderSide.get(order_id).unwrap_or(0);
+    let amount = order_amount_value(order_id);
     OrderStatus[order_id] = 2;
     if side == 1 {
       OrderQuoteRefund[order_id] = amount;
-      move_asset_if_needed(AuctionContractId, authority(), AuctionQuoteAsset, amount);
+      move_asset_if_needed(
+        source: AuctionContractId,
+        destination: context::authority(),
+        asset: AuctionQuoteAsset,
+        amount: amount
+      );
     } else {
       OrderBaseRefund[order_id] = amount;
-      move_asset_if_needed(AuctionContractId, authority(), AuctionBaseAsset, amount);
+      move_asset_if_needed(
+        source: AuctionContractId,
+        destination: context::authority(),
+        asset: AuctionBaseAsset,
+        amount: amount
+      );
     }
   }
 
-  kotoage fn close_epoch() {
-    assert_active_epoch();
-    let current_slot = block_height();
-    if current_slot < EpochEndSlot {
-      return;
-    }
-    if EpochOrderCount == 0 {
-      close_current_epoch(0, 0, 0, 0, current_slot);
-      return;
-    }
-    let clearing = compute_clearing();
-    close_current_epoch(clearing.0, clearing.1, clearing.2, clearing.3, current_slot);
+  kotoage fn close_epoch() authorize("Entry") {
+    close_epoch_impl(1);
   }
 
-  kotoage fn native_epoch_auction_close() permission(Admin) {
-    if AuctionInitialized == 0 {
-      set_trigger_enabled(name("soraswap_epoch_auction_close"), 0);
-      return;
-    }
+  kotoage fn native_epoch_auction_close() authorize("Admin") {
     if EpochStatus != 1 {
-      set_trigger_enabled(name("soraswap_epoch_auction_close"), 0);
+      ledger::trigger::set_enabled(close_trigger_name(), 0);
       return;
     }
-    let current_slot = block_height();
-    if current_slot < EpochEndSlot {
-      return;
+    close_epoch_impl(0);
+    if EpochStatus != 1 {
+      ledger::trigger::set_enabled(close_trigger_name(), 0);
     }
-    if EpochOrderCount == 0 {
-      close_current_epoch(0, 0, 0, 0, current_slot);
-    } else {
-      let clearing = compute_clearing();
-      close_current_epoch(clearing.0, clearing.1, clearing.2, clearing.3, current_slot);
-    }
-    set_trigger_enabled(name("soraswap_epoch_auction_close"), 0);
   }
 
-  kotoage fn settle_order(order_id: Name) -> int permission(AssetOps) {
-    assert_order_exists(order_id);
-    let order_epoch = OrderEpoch.get_or(order_id, 0);
-    assert(epoch_status_for(order_epoch) == 2, "epoch not closed");
-    assert(OrderOwner[order_id] == authority(), "order owner mismatch");
-    assert(OrderStatus.get_or(order_id, 0) == 1, "order settled");
-    let side = OrderSide.get_or(order_id, 0);
-    let amount = OrderAmount.get_or(order_id, 0);
+  kotoage fn settle_order(Name order_id) -> quantity authorize("AssetOps") {
+    let order_epoch = order_epoch_value(order_id);
+    require(epoch_status_for(order_epoch) == 2, EpochAuctionError::EpochNotClosed);
+    require(order_owner_value(order_id) == context::authority(), EpochAuctionError::OrderOwnerMismatch);
+    require(OrderStatus.get(order_id).unwrap_or(0) == 1, EpochAuctionError::OrderSettled);
+    let side = OrderSide.get(order_id).unwrap_or(0);
+    let amount = order_amount_value(order_id);
     let tick = epoch_clearing_tick_for(order_epoch);
     let matched_base = epoch_clearing_base_for(order_epoch);
     let bid_base_at_clearing = epoch_bid_base_at_clearing_for(order_epoch);
     let ask_base_at_clearing = epoch_ask_base_at_clearing_for(order_epoch);
-    let base_out = 0;
-    let quote_out = 0;
-    let base_refund = 0;
-    let quote_refund = 0;
+    var base_out = zero_quantity();
+    var quote_out = zero_quantity();
+    var base_refund = zero_quantity();
+    var quote_refund = zero_quantity();
 
-    if tick <= 0 || matched_base <= 0 || order_crosses_tick(order_id, tick) == 0 {
+    if tick <= 0 || matched_base == zero_quantity() ||
+      order_crosses_tick(order_id: order_id, tick: tick) == 0 {
       if side == 1 {
         quote_refund = amount;
       } else {
@@ -403,21 +573,31 @@ seiyaku EpochAuction {
       }
     } else {
       if side == 1 {
-        let capacity = base_capacity_for_bid(amount, tick);
+        let capacity = base_capacity_for_bid(quote_amount: amount, tick: tick);
         if bid_base_at_clearing <= matched_base {
           base_out = capacity;
         } else {
-          base_out = (capacity * matched_base) / bid_base_at_clearing;
+          base_out = capacity * matched_base.ratio_round(
+            divisor: bid_base_at_clearing,
+            scale: 28,
+            mode: Rounding::floor
+          );
         }
-        let quote_spent = quote_for_base(base_out, tick);
+        let quote_spent = quote_for_base(base_amount: base_out, tick: tick);
+        require(amount >= quote_spent, EpochAuctionError::EpochAccountingInvariant);
         quote_refund = amount - quote_spent;
       } else {
         if ask_base_at_clearing <= matched_base {
           base_out = amount;
         } else {
-          base_out = (amount * matched_base) / ask_base_at_clearing;
+          base_out = amount * matched_base.ratio_round(
+            divisor: ask_base_at_clearing,
+            scale: 28,
+            mode: Rounding::floor
+          );
         }
-        quote_out = quote_for_base(base_out, tick);
+        quote_out = quote_for_base(base_amount: base_out, tick: tick);
+        require(amount >= base_out, EpochAuctionError::EpochAccountingInvariant);
         base_refund = amount - base_out;
       }
     }
@@ -427,19 +607,49 @@ seiyaku EpochAuction {
     OrderQuoteOut[order_id] = quote_out;
     OrderBaseRefund[order_id] = base_refund;
     OrderQuoteRefund[order_id] = quote_refund;
-
     if side == 1 {
-      move_asset_if_needed(AuctionContractId, authority(), AuctionBaseAsset, base_out);
-      move_asset_if_needed(AuctionContractId, authority(), AuctionQuoteAsset, quote_refund);
+      move_asset_if_needed(
+        source: AuctionContractId,
+        destination: context::authority(),
+        asset: AuctionBaseAsset,
+        amount: base_out
+      );
+      move_asset_if_needed(
+        source: AuctionContractId,
+        destination: context::authority(),
+        asset: AuctionQuoteAsset,
+        amount: quote_refund
+      );
       return base_out;
     }
-
-    move_asset_if_needed(AuctionContractId, authority(), AuctionQuoteAsset, quote_out);
-    move_asset_if_needed(AuctionContractId, authority(), AuctionBaseAsset, base_refund);
+    move_asset_if_needed(
+      source: AuctionContractId,
+      destination: context::authority(),
+      asset: AuctionQuoteAsset,
+      amount: quote_out
+    );
+    move_asset_if_needed(
+      source: AuctionContractId,
+      destination: context::authority(),
+      asset: AuctionBaseAsset,
+      amount: base_refund
+    );
     return quote_out;
   }
 
-  view fn epoch_state() -> (int, int, int, int, int, int, int, int, int, int, int) {
+  view fn epoch_state() -> (
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int,
+    quantity,
+    int
+  ) {
     return (
       EpochId,
       EpochStatus,
@@ -455,25 +665,33 @@ seiyaku EpochAuction {
     );
   }
 
-  view fn auction_config() -> (int, int) {
-    return (AuctionInitialized, AuctionContractBound);
+  view fn auction_config() -> (int, int, int) {
+    return (AuctionInitialized, AuctionContractBound, AuctionPaused);
   }
 
-  view fn order_state(order_id: Name) -> (int, int, int, int, int, int, int, int, int) {
-    let registered = 0;
-    if OrderOwner.contains(order_id) {
-      registered = 1;
-    }
+  view fn order_state(Name order_id) -> (
+    int,
+    int,
+    int,
+    quantity,
+    int,
+    int,
+    quantity,
+    quantity,
+    quantity
+  ) {
+    let registered = OrderOwner.contains(order_id) ? 1 : 0;
     return (
       registered,
-      OrderEpoch.get_or(order_id, 0),
-      OrderSide.get_or(order_id, 0),
-      OrderAmount.get_or(order_id, 0),
-      OrderLimitTick.get_or(order_id, 0),
-      OrderStatus.get_or(order_id, 0),
-      OrderBaseOut.get_or(order_id, 0),
-      OrderQuoteOut.get_or(order_id, 0),
-      OrderBaseRefund.get_or(order_id, 0) + OrderQuoteRefund.get_or(order_id, 0)
+      OrderEpoch.get(order_id).unwrap_or(0),
+      OrderSide.get(order_id).unwrap_or(0),
+      order_amount_value(order_id),
+      OrderLimitTick.get(order_id).unwrap_or(0),
+      OrderStatus.get(order_id).unwrap_or(0),
+      OrderBaseOut.get(order_id).unwrap_or(zero_quantity()),
+      OrderQuoteOut.get(order_id).unwrap_or(zero_quantity()),
+      OrderBaseRefund.get(order_id).unwrap_or(zero_quantity()) +
+        OrderQuoteRefund.get(order_id).unwrap_or(zero_quantity())
     );
   }
 }

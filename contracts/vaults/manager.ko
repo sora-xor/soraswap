@@ -1,216 +1,311 @@
 seiyaku VaultManager {
-  state VaultOwner: Map<Name, AccountId>;
-  state VaultUnderlyingAsset: Map<Name, AssetDefinitionId>;
-  state VaultShareAsset: Map<Name, AssetDefinitionId>;
-  state VaultStrategyCode: Map<Name, int>;
-  state VaultAsyncRedeem: Map<Name, int>;
-  state VaultTotalAssets: Map<Name, int>;
-  state VaultTotalShares: Map<Name, int>;
-  state PositionOwner: Map<Name, AccountId>;
-  state PositionVault: Map<Name, Name>;
-  state PositionShares: Map<Name, int>;
-  state RequestOwner: Map<Name, AccountId>;
-  state RequestVault: Map<Name, Name>;
-  state RequestShares: Map<Name, int>;
-  state RequestClaimSlot: Map<Name, int>;
-  state RequestStatus: Map<Name, int>;
-  state int NextRequestIndex;
-  state RequestByIndex: Map<int, Name>;
-
-  state int VaultLifecycleCadenceSlots;
-  state int VaultLifecycleMaxItems;
-  state int VaultLifecycleEnabled;
-  state int VaultLifecycleNextSlot;
-  state int VaultLifecycleCursor;
-  state int VaultLifecycleLastSlot;
-  state int VaultLifecycleLastProcessed;
-
-  register_trigger soraswap_vault_lifecycle_tick {
-    call native_lifecycle_tick;
-    on time pre_commit;
-    repeats indefinitely;
-    metadata { tag: "soraswap"; module: "vaults.manager"; __enabled: false; }
-  }
-
-  fn assert_vault_exists(vault_id: Name) {
-    assert(VaultOwner.contains(vault_id), "vault missing");
-  }
-
-  fn assert_request_owner(request_id: Name) {
-    assert(RequestOwner.contains(request_id), "request missing");
-    assert(RequestOwner[request_id] == authority(), "request owner mismatch");
-  }
-
-  fn assert_position_owner(vault_id: Name, position_id: Name) {
-    assert(PositionOwner.contains(position_id), "position missing");
-    assert(PositionOwner[position_id] == authority(), "position owner mismatch");
-    assert(PositionVault[position_id] == vault_id, "position vault mismatch");
-  }
-
-  kotoage fn main() -> int {
-    return 1;
-  }
-
-  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
-                                         max_items_per_tick: int,
-                                         enabled: int) permission(Admin) {
-    assert(cadence_slots >= 0, "invalid cadence");
-    assert(max_items_per_tick > 0, "invalid max items");
-    assert(max_items_per_tick <= 16, "max items too high");
-    assert(enabled == 0 || enabled == 1, "invalid enabled");
-    VaultLifecycleCadenceSlots = cadence_slots;
-    VaultLifecycleMaxItems = max_items_per_tick;
-    VaultLifecycleEnabled = enabled;
-    VaultLifecycleNextSlot = block_height() + cadence_slots;
-    if VaultLifecycleCursor <= 0 {
-      VaultLifecycleCursor = 1;
+    const string UNIVERSAL_DATASPACE_LITERAL = "0";
+    error enum VaultError {
+        InvalidCadence = 1, InvalidMaxItems = 2, InvalidEnabledFlag = 3, VaultMissing = 4, VaultAlreadyExists = 5, InvalidStrategy = 6, InvalidAsyncFlag = 7, InvalidDeposit = 8, PositionMissing = 9, PositionOwnerMismatch = 10, PositionVaultMismatch = 11, RequestAlreadyExists = 12, InvalidShares = 13, InvalidClaimSlot = 14, InsufficientShares = 15, RequestMissing = 16, RequestOwnerMismatch = 17, RequestNotOpen = 18, ClaimNotReady = 19, IncompleteVaultConfiguration = 20, InsufficientVaultAssets = 21,
     }
-    if NextRequestIndex <= 0 {
-      NextRequestIndex = 1;
-    }
-    set_trigger_enabled(name("soraswap_vault_lifecycle_tick"), enabled);
-  }
 
-  kotoage fn register_vault(vault_id: Name,
-                            underlying_asset: AssetDefinitionId,
-                            share_asset: AssetDefinitionId,
-                            strategy_code: int,
-                            async_redeem: int) {
-    assert(!VaultOwner.contains(vault_id), "vault exists");
-    assert(strategy_code >= 0, "invalid strategy");
-    assert(async_redeem == 0 || async_redeem == 1, "invalid async flag");
-    VaultOwner[vault_id] = authority();
-    VaultUnderlyingAsset[vault_id] = underlying_asset;
-    VaultShareAsset[vault_id] = share_asset;
-    VaultStrategyCode[vault_id] = strategy_code;
-    VaultAsyncRedeem[vault_id] = async_redeem;
-    VaultTotalAssets[vault_id] = 0;
-    VaultTotalShares[vault_id] = 0;
-  }
+    state StateMap<Name, AccountId> VaultOwner;
+    state StateMap<Name, AssetDefinitionId> VaultUnderlyingAsset;
+    state StateMap<Name, AssetDefinitionId> VaultShareAsset;
+    state StateMap<Name, AccountId> VaultCustodyAccount;
+    state StateMap<Name, int> VaultStrategyCode;
+    state StateMap<Name, int> VaultAsyncRedeem;
+    state StateMap<Name, quantity> VaultTotalAssets;
+    state StateMap<Name, quantity> VaultTotalShares;
+    state StateMap<Name, AccountId> PositionOwner;
+    state StateMap<Name, Name> PositionVault;
+    state StateMap<Name, quantity> PositionShares;
+    state StateMap<Name, AccountId> RequestOwner;
+    state StateMap<Name, Name> RequestVault;
+    state StateMap<Name, quantity> RequestShares;
+    state StateMap<Name, int> RequestClaimSlot;
+    state StateMap<Name, int> RequestStatus;
+    state int NextRequestIndex;
+    state StateMap<int, Name> RequestByIndex;
+    state int VaultLifecycleCadenceSlots;
+    state int VaultLifecycleMaxItems;
+    state int VaultLifecycleEnabled;
+    state int VaultLifecycleNextSlot;
+    state int VaultLifecycleCursor;
+    state int VaultLifecycleLastSlot;
+    state int VaultLifecycleLastProcessed;
+    fn assert_vault_exists(Name vault_id) {
+        require(VaultOwner.contains(key: vault_id), VaultError::VaultMissing);
+    }
 
-  kotoage fn deposit(vault_id: Name, position_id: Name, amount: int) permission(AssetOps) {
-    assert_vault_exists(vault_id);
-    assert(amount > 0, "invalid deposit");
-    if PositionOwner.contains(position_id) {
-      assert_position_owner(vault_id, position_id);
-    } else {
-      PositionOwner[position_id] = authority();
-      PositionVault[position_id] = vault_id;
+    fn assert_request_owner(Name request_id) {
+        require(RequestOwner.contains(key: request_id), VaultError::RequestMissing);
+        let owner = RequestOwner.get(key: request_id).unwrap_or(default: context::authority());
+        require(owner == context::authority(), VaultError::RequestOwnerMismatch);
     }
-    VaultTotalAssets[vault_id] = VaultTotalAssets.ensure(vault_id, 0) + amount;
-    VaultTotalShares[vault_id] = VaultTotalShares.ensure(vault_id, 0) + amount;
-    PositionShares[position_id] = PositionShares.ensure(position_id, 0) + amount;
-  }
 
-  kotoage fn request_redeem(vault_id: Name, request_id: Name, position_id: Name, shares: int, claim_slot: int) {
-    assert_vault_exists(vault_id);
-    assert(!RequestOwner.contains(request_id), "request exists");
-    assert(shares > 0, "invalid shares");
-    assert(claim_slot >= 0, "invalid claim slot");
-    assert_position_owner(vault_id, position_id);
-    assert(PositionShares.ensure(position_id, 0) >= shares, "insufficient shares");
-    PositionShares[position_id] = PositionShares.ensure(position_id, 0) - shares;
-    RequestOwner[request_id] = authority();
-    RequestVault[request_id] = vault_id;
-    RequestShares[request_id] = shares;
-    RequestClaimSlot[request_id] = claim_slot;
-    RequestStatus[request_id] = 1;
-    if NextRequestIndex <= 0 {
-      NextRequestIndex = 1;
+    fn assert_position_owner(Name vault_id, Name position_id) {
+        require(PositionOwner.contains(key: position_id), VaultError::PositionMissing);
+        require(PositionVault.contains(key: position_id), VaultError::PositionMissing);
+        let owner = PositionOwner.get(key: position_id).unwrap_or(default: context::authority());
+        let position_vault = PositionVault.get(key: position_id).unwrap_or(default: vault_id);
+        require(owner == context::authority(), VaultError::PositionOwnerMismatch);
+        require(position_vault == vault_id, VaultError::PositionVaultMismatch);
     }
-    let index = NextRequestIndex;
-    NextRequestIndex = index + 1;
-    RequestByIndex[index] = request_id;
-  }
 
-  kotoage fn claim_redeem(request_id: Name) permission(AssetOps) {
-    assert_request_owner(request_id);
-    let status = RequestStatus.ensure(request_id, 0);
-    assert(status == 1 || status == 3, "request not open");
-    let current_slot = block_height();
-    if status == 1 {
-      assert(current_slot >= RequestClaimSlot.ensure(request_id, 0), "claim not ready");
+    hajimari() {
+        NextRequestIndex = 1;
+        VaultLifecycleCadenceSlots = 0;
+        VaultLifecycleMaxItems = 16;
+        VaultLifecycleEnabled = 0;
+        VaultLifecycleNextSlot = 0;
+        VaultLifecycleCursor = 1;
+        VaultLifecycleLastSlot = 0;
+        VaultLifecycleLastProcessed = 0;
     }
-    let vault_id = RequestVault[request_id];
-    let shares = RequestShares.ensure(request_id, 0);
-    VaultTotalAssets[vault_id] = VaultTotalAssets.ensure(vault_id, 0) - shares;
-    VaultTotalShares[vault_id] = VaultTotalShares.ensure(vault_id, 0) - shares;
-    RequestStatus[request_id] = 2;
-  }
 
-  kotoage fn native_lifecycle_tick() {
-    if VaultLifecycleEnabled == 0 {
-      return;
+    trigger soraswap_vault_lifecycle_tick -> native_lifecycle_tick {
+        on time schedule(100000, 120000);
+        repeats indefinitely;
+        metadata {
+            tag: "soraswap";
+            "module": "vaults.manager";
+            __enabled: false;
+        }
     }
-    let current_slot = block_height();
-    if VaultLifecycleNextSlot > 0 && current_slot < VaultLifecycleNextSlot {
-      return;
-    }
-    if NextRequestIndex <= 0 {
-      NextRequestIndex = 1;
-    }
-    let processed = 0;
-    let index = VaultLifecycleCursor;
-    if index <= 0 || index >= NextRequestIndex {
-      index = 1;
-    }
-    while processed < VaultLifecycleMaxItems && index < NextRequestIndex {
-      let request_id = RequestByIndex.get_or(index, name!("missing"));
-      if RequestStatus.get_or(request_id, 0) == 1 &&
-        current_slot >= RequestClaimSlot.get_or(request_id, 0) {
-        RequestStatus[request_id] = 3;
-      }
-      processed = processed + 1;
-      index = index + 1;
-    }
-    if index >= NextRequestIndex {
-      index = 1;
-    }
-    VaultLifecycleCursor = index;
-    VaultLifecycleLastSlot = current_slot;
-    VaultLifecycleLastProcessed = processed;
-    VaultLifecycleNextSlot = current_slot + VaultLifecycleCadenceSlots;
-  }
 
-  view fn vault_state(vault_id: Name) -> (int, int, int, int, int) {
-    let registered = 0;
-    if VaultOwner.contains(vault_id) {
-      registered = 1;
+    view fn main() -> int {
+        return 1;
     }
-    return (
-      registered,
-      VaultStrategyCode.get_or(vault_id, 0),
-      VaultAsyncRedeem.get_or(vault_id, 0),
-      VaultTotalAssets.get_or(vault_id, 0),
-      VaultTotalShares.get_or(vault_id, 0)
-    );
-  }
 
-  view fn position_state(position_id: Name) -> int {
-    return PositionShares.get_or(position_id, 0);
-  }
-
-  view fn request_state(request_id: Name) -> (int, int, int) {
-    let registered = 0;
-    if RequestOwner.contains(request_id) {
-      registered = 1;
+    kotoage fn configure_trigger_lifecycle(int cadence_slots, int max_items_per_tick, int enabled, ) authorize(
+        "Admin"
+    ) {
+        require(cadence_slots >= 0, VaultError::InvalidCadence);
+        require(max_items_per_tick > 0 && max_items_per_tick <= 16, VaultError::InvalidMaxItems);
+        require(enabled == 0 || enabled == 1, VaultError::InvalidEnabledFlag);
+        if enabled == 1 {
+            require(cadence_slots > 0, VaultError::InvalidCadence);
+        }
+        VaultLifecycleCadenceSlots = cadence_slots;
+        VaultLifecycleMaxItems = max_items_per_tick;
+        VaultLifecycleEnabled = enabled;
+        VaultLifecycleNextSlot = context::block_height() + cadence_slots;
+        ledger::trigger::set_enabled(Name::parse("soraswap_vault_lifecycle_tick"), enabled);
     }
-    return (
-      registered,
-      RequestShares.get_or(request_id, 0),
-      RequestStatus.get_or(request_id, 0)
-    );
-  }
 
-  view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
-    return (
-      VaultLifecycleEnabled,
-      VaultLifecycleCadenceSlots,
-      VaultLifecycleMaxItems,
-      VaultLifecycleNextSlot,
-      VaultLifecycleCursor,
-      VaultLifecycleLastSlot,
-      VaultLifecycleLastProcessed
-    );
-  }
+    kotoage fn register_vault(
+        Name vault_id,
+        AssetDefinitionId underlying_asset,
+        AssetDefinitionId share_asset,
+        AccountId custody_account,
+        int strategy_code,
+        int async_redeem,
+    ) authorize("Admin") {
+        require(!VaultOwner.contains(key: vault_id), VaultError::VaultAlreadyExists);
+        require(strategy_code >= 0, VaultError::InvalidStrategy);
+        require(async_redeem == 0 || async_redeem == 1, VaultError::InvalidAsyncFlag);
+        VaultOwner[vault_id] = context::authority();
+        VaultUnderlyingAsset[vault_id] = underlying_asset;
+        VaultShareAsset[vault_id] = share_asset;
+        VaultCustodyAccount[vault_id] = custody_account;
+        VaultStrategyCode[vault_id] = strategy_code;
+        VaultAsyncRedeem[vault_id] = async_redeem;
+        VaultTotalAssets[vault_id] = 0;
+        VaultTotalShares[vault_id] = 0;
+    }
+
+    kotoage fn deposit(Name vault_id, Name position_id, quantity amount, ) authorize("AssetOps") {
+        assert_vault_exists(vault_id: vault_id);
+        require(amount > 0, VaultError::InvalidDeposit);
+        require(
+            VaultUnderlyingAsset.contains(key: vault_id) && VaultShareAsset.contains(key: vault_id) && VaultCustodyAccount.contains(
+                key: vault_id,
+            ),
+            VaultError::IncompleteVaultConfiguration,
+        );
+        if PositionOwner.contains(key: position_id) {
+            assert_position_owner(vault_id: vault_id, position_id: position_id);
+        } else {
+            PositionOwner[position_id] = context::authority();
+            PositionVault[position_id] = vault_id;
+            PositionShares[position_id] = 0;
+        }
+        if let Option::some(underlying_asset) = VaultUnderlyingAsset.get(key: vault_id) {
+            if let Option::some(share_asset) = VaultShareAsset.get(key: vault_id) {
+                if let Option::some(custody_account) = VaultCustodyAccount.get(key: vault_id) {
+                    ledger::asset::transfer(
+                        source: context::authority(),
+                        destination: custody_account,
+                        asset_definition: underlying_asset,
+                        amount: amount,
+                        dataspace: DataSpaceId::parse(UNIVERSAL_DATASPACE_LITERAL),
+                    );
+                    ledger::asset::mint(
+                        account: context::authority(),
+                        asset_definition: share_asset,
+                        amount: amount,
+                    );
+                } else {
+                    require(false, VaultError::IncompleteVaultConfiguration);
+                }
+            } else {
+                require(false, VaultError::IncompleteVaultConfiguration);
+            }
+        } else {
+            require(false, VaultError::IncompleteVaultConfiguration);
+        }
+        VaultTotalAssets[vault_id] = VaultTotalAssets.get_or(key: vault_id, default: 0) + amount;
+        VaultTotalShares[vault_id] = VaultTotalShares.get_or(key: vault_id, default: 0) + amount;
+        PositionShares[position_id] = PositionShares.get_or(key: position_id, default: 0) + amount;
+    }
+
+    kotoage fn request_redeem(
+        Name vault_id,
+        Name request_id,
+        Name position_id,
+        quantity shares,
+        int claim_slot,
+    ) authorize("AssetOps") {
+        assert_vault_exists(vault_id: vault_id);
+        require(!RequestOwner.contains(key: request_id), VaultError::RequestAlreadyExists);
+        require(shares > 0, VaultError::InvalidShares);
+        let current_slot = context::block_height();
+        require(claim_slot >= current_slot, VaultError::InvalidClaimSlot);
+        if VaultAsyncRedeem.get_or(key: vault_id, default: 0) == 0 {
+            require(claim_slot == current_slot, VaultError::InvalidClaimSlot);
+        }
+        assert_position_owner(vault_id: vault_id, position_id: position_id);
+        let position_shares = PositionShares.get_or(key: position_id, default: 0);
+        require(position_shares >= shares, VaultError::InsufficientShares);
+        require(VaultShareAsset.contains(key: vault_id), VaultError::IncompleteVaultConfiguration);
+        if let Option::some(share_asset) = VaultShareAsset.get(key: vault_id) {
+            ledger::asset::burn(
+                account: context::authority(),
+                asset_definition: share_asset,
+                amount: shares,
+            );
+        } else {
+            require(false, VaultError::IncompleteVaultConfiguration);
+        }
+        PositionShares[position_id] = position_shares - shares;
+        RequestOwner[request_id] = context::authority();
+        RequestVault[request_id] = vault_id;
+        RequestShares[request_id] = shares;
+        RequestClaimSlot[request_id] = claim_slot;
+        RequestStatus[request_id] = 1;
+        let index = NextRequestIndex;
+        NextRequestIndex = index + 1;
+        RequestByIndex[index] = request_id;
+    }
+
+    kotoage fn claim_redeem(Name request_id) authorize("AssetOps") {
+        assert_request_owner(request_id: request_id);
+        let status = RequestStatus.get_or(key: request_id, default: 0);
+        require(status == 1 || status == 3, VaultError::RequestNotOpen);
+        if status == 1 {
+            require(
+                context::block_height() >= RequestClaimSlot.get_or(key: request_id, default: 0),
+                VaultError::ClaimNotReady,
+            );
+        }
+        require(RequestVault.contains(key: request_id), VaultError::RequestMissing);
+        let vault_id = RequestVault.get(key: request_id).unwrap_or(default: request_id);
+        let shares = RequestShares.get_or(key: request_id, default: 0);
+        let total_assets = VaultTotalAssets.get_or(key: vault_id, default: 0);
+        let total_shares = VaultTotalShares.get_or(key: vault_id, default: 0);
+        require(
+            total_assets >= shares && total_shares >= shares,
+            VaultError::InsufficientVaultAssets,
+        );
+        require(
+            VaultUnderlyingAsset.contains(key: vault_id) && VaultCustodyAccount.contains(
+                key: vault_id,
+            ),
+            VaultError::IncompleteVaultConfiguration,
+        );
+        if let Option::some(underlying_asset) = VaultUnderlyingAsset.get(key: vault_id) {
+            if let Option::some(custody_account) = VaultCustodyAccount.get(key: vault_id) {
+                ledger::asset::transfer(
+                    source: custody_account,
+                    destination: context::authority(),
+                    asset_definition: underlying_asset,
+                    amount: shares,
+                    dataspace: DataSpaceId::parse(UNIVERSAL_DATASPACE_LITERAL),
+                );
+            } else {
+                require(false, VaultError::IncompleteVaultConfiguration);
+            }
+        } else {
+            require(false, VaultError::IncompleteVaultConfiguration);
+        }
+        VaultTotalAssets[vault_id] = total_assets - shares;
+        VaultTotalShares[vault_id] = total_shares - shares;
+        RequestStatus[request_id] = 2;
+    }
+
+    kotoage fn native_lifecycle_tick() authorize("Entry") {
+        if VaultLifecycleEnabled == 0 {
+            return;
+        }
+        let current_slot = context::block_height();
+        if VaultLifecycleNextSlot > 0 && current_slot < VaultLifecycleNextSlot {
+            return;
+        }
+        var int processed = 0;
+        var int index = VaultLifecycleCursor;
+        if index <= 0 || index >= NextRequestIndex {
+            index = 1;
+        }
+        for _step in range(16) {
+            if processed >= VaultLifecycleMaxItems || index >= NextRequestIndex {
+                break;
+            }
+            if let Option::some(request_id) = RequestByIndex.get(key: index) {
+                if RequestStatus.get_or(key: request_id, default: 0) == 1 && current_slot >= RequestClaimSlot.get_or(
+                    key: request_id,
+                    default: 0,
+                ) {
+                    RequestStatus[request_id] = 3;
+                }
+            }
+            processed = processed + 1;
+            index = index + 1;
+        }
+        if index >= NextRequestIndex {
+            index = 1;
+        }
+        VaultLifecycleCursor = index;
+        VaultLifecycleLastSlot = current_slot;
+        VaultLifecycleLastProcessed = processed;
+        VaultLifecycleNextSlot = current_slot + VaultLifecycleCadenceSlots;
+    }
+
+    view fn vault_state(Name vault_id) -> (int, int, int, quantity, quantity) {
+        var int registered = 0;
+        if VaultOwner.contains(key: vault_id) {
+            registered = 1;
+        }
+        return (registered, VaultStrategyCode.get_or(key: vault_id, default: 0), VaultAsyncRedeem.get_or(
+            key: vault_id,
+            default: 0,
+        ), VaultTotalAssets.get_or(key: vault_id, default: 0), VaultTotalShares.get_or(
+            key: vault_id,
+            default: 0,
+        ));
+    }
+
+    view fn position_state(Name position_id) -> quantity {
+        return PositionShares.get_or(key: position_id, default: 0);
+    }
+
+    view fn request_state(Name request_id) -> (int, quantity, int) {
+        var int registered = 0;
+        if RequestOwner.contains(key: request_id) {
+            registered = 1;
+        }
+        return (registered, RequestShares.get_or(key: request_id, default: 0), RequestStatus.get_or(
+            key: request_id,
+            default: 0,
+        ));
+    }
+
+    view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
+        return (VaultLifecycleEnabled, VaultLifecycleCadenceSlots, VaultLifecycleMaxItems, VaultLifecycleNextSlot, VaultLifecycleCursor, VaultLifecycleLastSlot, VaultLifecycleLastProcessed);
+    }
 }

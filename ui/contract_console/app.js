@@ -22,11 +22,10 @@ const state = {
   currentEntrypoint: null,
   bridgeSnapshot: null,
   sccpCapabilities: null,
-  sccpManifests: null,
+  sccpRegistry: null,
   proofLookup: {
     bundle: null,
-    artifact: null,
-    job: null,
+    proofRequest: null,
   },
   remoteTransactionHistory: null,
   pollTimers: new Map(),
@@ -68,6 +67,7 @@ const copyResponseButton = document.querySelector("#copy-response");
 const transactionSummary = document.querySelector("#transaction-summary");
 const refreshTransactionHistoryButton = document.querySelector("#refresh-transaction-history");
 const clearLocalHistoryButton = document.querySelector("#clear-local-history");
+const clearOperatorStateButton = document.querySelector("#clear-operator-state");
 const transactionHistoryList = document.querySelector("#transaction-history-list");
 const remoteTransactionHistoryPreview = document.querySelector("#remote-transaction-history-preview");
 
@@ -105,30 +105,19 @@ const proofStatusSummary = document.querySelector("#proof-status-summary");
 const refreshSccpDiscoveryButton = document.querySelector("#refresh-sccp-discovery");
 const sccpCounterpartyList = document.querySelector("#sccp-counterparty-list");
 const sccpCapabilitiesPreview = document.querySelector("#sccp-capabilities-preview");
-const sccpManifestsPreview = document.querySelector("#sccp-manifests-preview");
+const sccpRegistryPreview = document.querySelector("#sccp-registry-preview");
 const proofLookupMessageIdInput = document.querySelector("#proof-lookup-message-id-input");
 const recentProofLookupSelect = document.querySelector("#recent-proof-lookup-select");
 const lookupSccpAllButton = document.querySelector("#lookup-sccp-all");
 const lookupSccpBundleButton = document.querySelector("#lookup-sccp-bundle");
-const lookupSccpArtifactButton = document.querySelector("#lookup-sccp-artifact");
-const lookupSccpJobButton = document.querySelector("#lookup-sccp-job");
+const lookupSccpProofRequestButton = document.querySelector("#lookup-sccp-proof-request");
 const proofLookupSummary = document.querySelector("#proof-lookup-summary");
 const sccpBundlePreview = document.querySelector("#sccp-bundle-preview");
-const sccpArtifactPreview = document.querySelector("#sccp-artifact-preview");
-const sccpJobPreview = document.querySelector("#sccp-job-preview");
-const proofSubmissionPackagePreview = document.querySelector("#proof-submission-package-preview");
+const sccpProofRequestPreview = document.querySelector("#sccp-proof-request-preview");
 
 const submissionSummary = document.querySelector("#submission-summary");
-const sccpMessageKindSelect = document.querySelector("#sccp-message-kind-select");
-const sccpSourceDomainInput = document.querySelector("#sccp-source-domain-input");
-const sccpDestDomainInput = document.querySelector("#sccp-dest-domain-input");
-const sccpNonceInput = document.querySelector("#sccp-nonce-input");
-const sccpMessageSenderInput = document.querySelector("#sccp-message-sender-input");
-const sccpFinalityHeightInput = document.querySelector("#sccp-finality-height-input");
-const loadLookedUpBundleButton = document.querySelector("#load-looked-up-bundle");
 const buildProofSubmitTemplateButton = document.querySelector("#build-proof-submit-template");
 const buildBridgeMessageTemplateButton = document.querySelector("#build-bridge-message-template");
-const insertSettlementHelperButton = document.querySelector("#insert-settlement-helper");
 const proofSubmitInput = document.querySelector("#proof-submit-input");
 const bridgeMessageSubmitInput = document.querySelector("#bridge-message-submit-input");
 const submitBridgeProofButton = document.querySelector("#submit-bridge-proof");
@@ -202,6 +191,23 @@ function setBanner(element, text, kind = "muted") {
   element.className = `banner ${kind}`;
 }
 
+const SENSITIVE_JSON_KEYS = new Set([
+  "privatekey",
+  "secret",
+  "mnemonic",
+  "token",
+  "apitoken",
+  "apikey",
+  "authorization",
+  "bearertoken",
+  "password",
+  "passphrase",
+]);
+
+function isSensitiveJsonKey(key) {
+  return SENSITIVE_JSON_KEYS.has(String(key).toLowerCase().replace(/[^a-z0-9]/g, ""));
+}
+
 function sanitizeJsonForDisplay(value) {
   if (Array.isArray(value)) {
     return value.map((entry) => sanitizeJsonForDisplay(entry));
@@ -209,7 +215,7 @@ function sanitizeJsonForDisplay(value) {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
-        .filter(([key]) => !["private_key", "privateKey", "secret", "mnemonic"].includes(key))
+        .filter(([key]) => !isSensitiveJsonKey(key))
         .map(([key, entry]) => [key, sanitizeJsonForDisplay(entry)]),
     );
   }
@@ -387,10 +393,6 @@ function normalizeHexIdentifier(value) {
     .replace(/^0x/, "");
 }
 
-function zeroHex(bytes = 32) {
-  return "0".repeat(bytes * 2);
-}
-
 function truncateText(value, maxLength = 96) {
   const normalized = String(value ?? "");
   return normalized.length <= maxLength ? normalized : `${normalized.slice(0, maxLength - 3)}...`;
@@ -415,7 +417,7 @@ function summarizeJsonValue(value, depth = 0) {
     }
     return Object.fromEntries(
       Object.entries(value)
-        .filter(([key]) => key !== "private_key")
+        .filter(([key]) => !isSensitiveJsonKey(key))
         .slice(0, 8)
         .map(([key, entry]) => [key, summarizeJsonValue(entry, depth + 1)])
     );
@@ -447,17 +449,6 @@ function bridgeWorkspaceValues() {
     remoteDomain: Number(bridgeRemoteDomainInput.value || 0),
     decimals: Number(bridgeDecimalsInput.value || 0),
     amount: Number(bridgeAmountInput.value || 0),
-  };
-}
-
-function sccpBuilderValues() {
-  return {
-    kind: sccpMessageKindSelect.value,
-    sourceDomain: Number(sccpSourceDomainInput.value || 0),
-    destDomain: Number(sccpDestDomainInput.value || 0),
-    nonce: Number(sccpNonceInput.value || 0),
-    sender: sccpMessageSenderInput.value.trim(),
-    finalityHeight: Number(sccpFinalityHeightInput.value || 0),
   };
 }
 
@@ -529,31 +520,6 @@ function addUniqueValue(target, value) {
   }
 }
 
-function addBridgeIdentifiersFromBundle(bookmarkSnapshot, bundle) {
-  if (!bundle || typeof bundle !== "object") {
-    return;
-  }
-  addUniqueValue(bookmarkSnapshot.messageIds, bundle?.commitment?.message_id);
-  const payload = bundle.payload;
-  if (!payload || typeof payload !== "object") {
-    return;
-  }
-  const transfer = payload.Transfer;
-  if (transfer && typeof transfer === "object") {
-    addUniqueValue(bookmarkSnapshot.routes, transfer.route_id);
-    addUniqueValue(bookmarkSnapshot.assetKeys, transfer.asset_id);
-  }
-  const assetRegister = payload.AssetRegister;
-  if (assetRegister && typeof assetRegister === "object") {
-    addUniqueValue(bookmarkSnapshot.assetKeys, assetRegister.asset_id);
-  }
-  const routeActivate = payload.RouteActivate;
-  if (routeActivate && typeof routeActivate === "object") {
-    addUniqueValue(bookmarkSnapshot.routes, routeActivate.route_id);
-    addUniqueValue(bookmarkSnapshot.assetKeys, routeActivate.asset_id);
-  }
-}
-
 function extractBridgeBookmarkSnapshot(requestPayload) {
   const snapshot = {
     assetKeys: [],
@@ -573,11 +539,6 @@ function extractBridgeBookmarkSnapshot(requestPayload) {
     addUniqueValue(snapshot.messageIds, payload.message_id);
   }
 
-  addUniqueValue(snapshot.routes, requestPayload?.settlement?.route);
-  addBridgeIdentifiersFromBundle(snapshot, requestPayload.message_bundle);
-  addBridgeIdentifiersFromBundle(snapshot, requestPayload.burn_bundle);
-  addBridgeIdentifiersFromBundle(snapshot, requestPayload.governance_bundle);
-
   return snapshot;
 }
 
@@ -588,7 +549,7 @@ function buildRequestMetadataSnapshot(requestPayload) {
   return {
     authority: requestPayload.authority || null,
     gasLimit: Number.isFinite(Number(requestPayload.gas_limit)) ? Number(requestPayload.gas_limit) : null,
-    topLevelKeys: Object.keys(requestPayload).filter((key) => key !== "private_key").slice(0, 12),
+    topLevelKeys: Object.keys(requestPayload).filter((key) => !isSensitiveJsonKey(key)).slice(0, 12),
     bridgeIds: extractBridgeBookmarkSnapshot(requestPayload),
     preview: summarizeJsonValue(requestPayload),
   };
@@ -867,7 +828,29 @@ function renderProofLookupHistory() {
 }
 
 function counterpartyCapabilities() {
-  return state.sccpCapabilities?.response_json?.counterparties || [];
+  const lanes = state.sccpRegistry?.response_json?.lanes || [];
+  const domainByNetwork = {
+    ethereum_mainnet: 1,
+    ethereum_sepolia: 1,
+    bsc_mainnet: 2,
+    bsc_testnet: 2,
+    tron_mainnet: 5,
+    tron_nile: 5,
+    tron_shasta: 5,
+  };
+  return lanes.map((lane) => {
+    const source = lane?.lane_id?.source;
+    const target = lane?.lane_id?.target;
+    const network = source === "sora_taira" ? target : source;
+    return {
+      chain: network,
+      domain: domainByNetwork[network],
+      counterparty_account_codec_key: String(network || "").startsWith("tron_")
+        ? "tron_base58check"
+        : "evm_hex",
+      routes: Array.isArray(lane?.routes) ? lane.routes : [],
+    };
+  }).filter((entry) => Number.isInteger(entry.domain));
 }
 
 function sccpCounterpartyForDomain(domain) {
@@ -1372,21 +1355,11 @@ function statusKindFromResponse(result) {
     return result.status_kind;
   }
   const direct = result?.response_json?.status;
-  if (typeof direct === "string" && direct) {
-    return direct;
-  }
   if (direct && typeof direct === "object" && typeof direct.kind === "string") {
     return direct.kind;
   }
-  const nested = result?.response_json?.content?.status;
-  if (typeof nested === "string" && nested) {
-    return nested;
-  }
-  if (nested && typeof nested === "object" && typeof nested.kind === "string") {
-    return nested.kind;
-  }
   if (result?.upstream_status === 404) {
-    return "Pending";
+    return "NotFound";
   }
   return null;
 }
@@ -1401,7 +1374,7 @@ function statusPillKind(statusKind) {
   if (statusKind === TRANSACTION_TIMEOUT_STATUS) {
     return "warning";
   }
-  return statusKind === "Pending" || statusKind === "NotFound" ? "warning" : "muted";
+  return statusKind === "Queued" || statusKind === "NotFound" ? "warning" : "muted";
 }
 
 function findRecentRequestByTxHash(txHashHex) {
@@ -1470,7 +1443,7 @@ async function pollTransactionStatus(txHashHex, { immediate = false } = {}) {
         scope: current.scope || "auto",
       });
       const { result } = await requestJson(`/api/pipeline/transactions/status?${query.toString()}`);
-      const statusKind = statusKindFromResponse(result) || current.statusKind || "Pending";
+      const statusKind = statusKindFromResponse(result) || current.statusKind || "Queued";
       const terminal = SUCCESS_STATUSES.has(statusKind) || FAILURE_STATUSES.has(statusKind);
       updateTrackedStatus(txHashHex, {
         statusKind,
@@ -1533,7 +1506,7 @@ function enqueueTransactionTracking(record, result) {
     actionType: record.actionType,
     bridgeRelated: record.bridgeRelated,
     scope: "auto",
-    statusKind: statusKindFromResponse(result) || "Pending",
+    statusKind: statusKindFromResponse(result) || "Queued",
     statusPayload: result,
     trackingStartedAtMs: startedAtMs,
     timeoutAtMs: startedAtMs + transactionPollTimeoutMs(),
@@ -1585,7 +1558,7 @@ function renderTransactionTracker() {
       const title = document.createElement("h4");
       title.textContent = `${record.actionType.replaceAll("_", " ")} · ${record.environment}`;
       const pill = document.createElement("span");
-      const statusKind = statusKindFromTracker(tracker) || (record.txHashHex ? "Pending" : record.submitted ? "Prepared" : "Draft");
+      const statusKind = statusKindFromTracker(tracker) || (record.txHashHex ? "Queued" : record.submitted ? "Prepared" : "Draft");
       pill.className = `status-pill ${statusPillKind(statusKind)}`;
       pill.textContent = statusKind;
       heading.append(title, pill);
@@ -1613,7 +1586,22 @@ function renderTransactionTracker() {
       if (tracker?.rejectionReason) {
         const line = document.createElement("div");
         line.className = "record-line";
-        line.textContent = `Rejection: ${tracker.rejectionReason}`;
+        const rejectionText = typeof tracker.rejectionReason === "string"
+          ? tracker.rejectionReason
+          : JSON.stringify(tracker.rejectionReason);
+        line.textContent = `Rejection: ${rejectionText}`;
+        meta.append(line);
+      }
+      if (tracker?.statusPayload?.status_summary) {
+        const line = document.createElement("div");
+        line.className = "record-line";
+        line.textContent = `Status: ${tracker.statusPayload.status_summary}`;
+        meta.append(line);
+      }
+      if (Array.isArray(tracker?.statusPayload?.status_diagnostics) && tracker.statusPayload.status_diagnostics.length) {
+        const line = document.createElement("div");
+        line.className = "record-line";
+        line.textContent = `Diagnostics: ${JSON.stringify(tracker.statusPayload.status_diagnostics)}`;
         meta.append(line);
       }
       if (tracker?.statusKind === TRANSACTION_TIMEOUT_STATUS) {
@@ -1834,9 +1822,7 @@ async function refreshBridgeSnapshot({ silent = false } = {}) {
 
 function renderCounterpartyInsights() {
   sccpCounterpartyList.innerHTML = "";
-  const capabilities = state.sccpCapabilities?.response_json;
-  const manifests = state.sccpManifests?.response_json;
-  const counterparties = capabilities?.counterparties || [];
+  const counterparties = counterpartyCapabilities();
 
   if (!counterparties.length) {
     const card = document.createElement("div");
@@ -1853,14 +1839,10 @@ function renderCounterpartyInsights() {
     heading.textContent = `${counterparty.chain} · domain ${counterparty.domain}`;
     card.append(heading);
 
-    const manifest = (manifests?.manifests || []).find((entry) => Number(entry.counterparty_domain) === Number(counterparty.domain));
     const lines = [
       `Codec: ${counterparty.counterparty_account_codec_key}`,
-      `Message backend: ${counterparty.message_backend}`,
-      `Registry backend: ${counterparty.registry_backend}`,
-      manifest ? `Verifier target: ${manifest.verifier_target}` : null,
-      manifest ? `Finality model: ${manifest.finality_model}` : null,
-      manifest ? `Submission encoding: ${manifest.submission_template?.encoding || "-"}` : null,
+      `Governed routes: ${counterparty.routes.length}`,
+      `Active revisions: ${counterparty.routes.filter((route) => route.activation === "bidirectional").length}`,
     ].filter(Boolean);
     for (const lineText of lines) {
       const line = document.createElement("p");
@@ -1873,23 +1855,24 @@ function renderCounterpartyInsights() {
 
 function renderSccpDiscovery() {
   sccpCapabilitiesPreview.textContent = prettyJson(state.sccpCapabilities || {});
-  sccpManifestsPreview.textContent = prettyJson(state.sccpManifests || {});
+  sccpRegistryPreview.textContent = prettyJson(state.sccpRegistry || {});
   renderCounterpartyInsights();
 
   const capabilitiesOk = Boolean(state.sccpCapabilities?.ok);
-  const manifestsOk = Boolean(state.sccpManifests?.ok);
-  if (capabilitiesOk && manifestsOk) {
-    const counterparties = state.sccpCapabilities.response_json?.counterparties?.length || 0;
-    const manifests = state.sccpManifests.response_json?.manifests?.length || 0;
+  const registryOk = Boolean(state.sccpRegistry?.ok);
+  if (capabilitiesOk && registryOk) {
+    const lanes = state.sccpRegistry.response_json?.lanes?.length || 0;
+    const routes = (state.sccpRegistry.response_json?.lanes || [])
+      .reduce((count, lane) => count + (lane.routes?.length || 0), 0);
     setBanner(
       proofStatusSummary,
-      `Loaded SCCP discovery for ${requestEnvironmentName()}: ${counterparties} counterparties, ${manifests} manifests.`,
+      `Loaded SCCP V1 discovery for ${requestEnvironmentName()}: ${lanes} governed lanes, ${routes} retained route revisions.`,
       "success"
     );
   } else if (state.currentEnvironment) {
     setBanner(
       proofStatusSummary,
-      `SCCP discovery is incomplete for ${requestEnvironmentName()}. Capabilities status: ${state.sccpCapabilities?.upstream_status || "-"} | manifests status: ${state.sccpManifests?.upstream_status || "-"}`,
+      `SCCP discovery is incomplete for ${requestEnvironmentName()}. Capabilities status: ${state.sccpCapabilities?.upstream_status || "-"} | registry status: ${state.sccpRegistry?.upstream_status || "-"}`,
       "warning"
     );
   } else {
@@ -1901,7 +1884,7 @@ async function refreshSccpDiscovery({ silent = false } = {}) {
   const environment = requestEnvironmentName();
   if (!environment) {
     state.sccpCapabilities = null;
-    state.sccpManifests = null;
+    state.sccpRegistry = null;
     renderSccpDiscovery();
     return;
   }
@@ -1910,17 +1893,17 @@ async function refreshSccpDiscovery({ silent = false } = {}) {
   }
   const query = new URLSearchParams({ environment });
   try {
-    const [capabilitiesResponse, manifestsResponse] = await Promise.all([
+    const [capabilitiesResponse, registryResponse] = await Promise.all([
       requestJson(`/api/sccp/capabilities?${query.toString()}`),
-      requestJson(`/api/sccp/manifests?${query.toString()}`),
+      requestJson(`/api/sccp/registry?${query.toString()}`),
     ]);
     state.sccpCapabilities = capabilitiesResponse.result;
-    state.sccpManifests = manifestsResponse.result;
+    state.sccpRegistry = registryResponse.result;
     renderSccpDiscovery();
     renderBridgeWorkspace();
   } catch (error) {
     state.sccpCapabilities = { ok: false, error: String(error) };
-    state.sccpManifests = { ok: false, error: String(error) };
+    state.sccpRegistry = { ok: false, error: String(error) };
     renderSccpDiscovery();
   }
 }
@@ -1928,240 +1911,39 @@ async function refreshSccpDiscovery({ silent = false } = {}) {
 function normalizeProofLookupMessageId() {
   const explicit = proofLookupMessageIdInput.value.trim();
   const bridgeValue = bridgeMessageIdInput.value.trim();
-  return normalizeHexIdentifier(explicit || bridgeValue);
-}
-
-function activeLookedUpBundle() {
-  const bundle = state.proofLookup.bundle?.response_json;
-  const requestedMessageId = normalizeProofLookupMessageId();
-  const bundleMessageId = normalizeHexIdentifier(bundle?.commitment?.message_id);
-  if (bundle && (!requestedMessageId || requestedMessageId === bundleMessageId)) {
-    return cloneJson(bundle);
-  }
-  return null;
-}
-
-function placeholderRecipientForCodec(codecKey) {
-  switch (codecKey) {
-    case "evm_hex":
-      return "0x1111111111111111111111111111111111111111";
-    case "solana_base58":
-      return "11111111111111111111111111111111";
-    case "ton_raw":
-      return "0:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    case "tron_base58check":
-      return "TQ9e5rL5aXoaZySUdkGFUTkqJCJSy9FHn5";
-    default:
-      return "logical-recipient";
-  }
-}
-
-function codecIdForCodecKey(codecKey) {
-  switch (codecKey) {
-    case "text_utf8":
-      return 1;
-    case "evm_hex":
-      return 2;
-    case "solana_base58":
-      return 3;
-    case "ton_raw":
-      return 4;
-    case "tron_base58check":
-      return 5;
-    default:
-      return 1;
-  }
-}
-
-function buildMessageBundleTemplate() {
-  const authority = currentAuthority();
-  const builder = sccpBuilderValues();
-  const values = bridgeWorkspaceValues();
-  const liveCounterparty = sccpCounterpartyForDomain(builder.destDomain) || sccpCounterpartyForDomain(values.remoteDomain);
-  const codecKey = liveCounterparty?.counterparty_account_codec_key || "text_utf8";
-  const recipient = values.recipient || placeholderRecipientForCodec(codecKey);
-  const route = values.route || "bridge_route";
-  const assetId = values.assetDefinition || values.assetKey || "xor#universal";
-  const sender = builder.sender || authority || "nexus:soraswap";
-  const messageId = normalizeProofLookupMessageId() || zeroHex(32);
-
-  const payloadMap = {
-    asset_register: {
-      AssetRegister: {
-        version: 1,
-        home_domain: values.homeDomain,
-        target_domain: builder.destDomain,
-        asset_id_codec: 1,
-        asset_id: assetId,
-        local_asset_definition: values.localAsset || assetId,
-        decimals: values.decimals,
-      },
-    },
-    route_activate: {
-      RouteActivate: {
-        version: 1,
-        source_domain: builder.sourceDomain,
-        target_domain: builder.destDomain,
-        route_id_codec: 1,
-        route_id: route,
-        asset_id_codec: 1,
-        asset_id: assetId,
-        local_asset_definition: values.localAsset || assetId,
-        vault_account: values.vaultAccount || authority || "i105...",
-      },
-    },
-    transfer: {
-      Transfer: {
-        version: 1,
-        source_domain: builder.sourceDomain,
-        dest_domain: builder.destDomain,
-        nonce: builder.nonce,
-        asset_home_domain: values.homeDomain,
-        asset_id_codec: 1,
-        asset_id: assetId,
-        amount: values.amount || 1,
-        sender_codec: 1,
-        sender,
-        recipient_codec: codecIdForCodecKey(codecKey),
-        recipient,
-        route_id_codec: 1,
-        route_id: route,
-      },
-    },
-  };
-
-  return {
-    version: 1,
-    commitment_root: zeroHex(32),
-    commitment: {
-      version: 1,
-      kind: builder.kind === "asset_register" ? "AssetRegister" : builder.kind === "route_activate" ? "RouteActivate" : "Transfer",
-      target_domain: builder.destDomain,
-      message_id: messageId,
-      payload_hash: zeroHex(32),
-      parliament_certificate_hash: null,
-    },
-    merkle_proof: {
-      steps: [],
-    },
-    payload: payloadMap[builder.kind],
-    finality_proof: "",
-  };
-}
-
-function currentBundleForSubmissionBuilders() {
-  return activeLookedUpBundle() || buildMessageBundleTemplate();
+  const normalized = normalizeHexIdentifier(explicit || bridgeValue);
+  return /^[0-9a-f]{64}$/.test(normalized) && !/^0{64}$/.test(normalized) ? normalized : "";
 }
 
 function buildProofSubmitTemplate() {
   return {
     authority: currentAuthority() || "i105...",
-    message_bundle: currentBundleForSubmissionBuilders(),
+    destination_proof_b64: "REPLACE_WITH_CANONICAL_PADDED_BASE64_DESTINATION_PROOF",
   };
 }
 
 function buildBridgeMessageSubmitTemplate() {
-  const payload = {
+  return {
     authority: currentAuthority() || "i105...",
-    message_bundle: currentBundleForSubmissionBuilders(),
+    native_proof_b64: "REPLACE_WITH_CANONICAL_PADDED_BASE64_NATIVE_PROOF",
   };
-  const route = bridgeRouteInput.value.trim();
-  const bridgeContract = bridgeContractForEnvironment(state.currentEnvironment);
-  if (bridgeContract && route) {
-    payload.settlement = {
-      contract_address: bridgeContract.contract_address,
-      entrypoint: "finalize_inbound",
-      route,
-    };
-  }
-  return payload;
-}
-
-function loadLookedUpBundleIntoEditors() {
-  const bundle = activeLookedUpBundle();
-  if (!bundle) {
-    setBanner(submissionSummary, "Look up a live SCCP message bundle first, then load it into the submission builders.", "warning");
-    return;
-  }
-  proofSubmitInput.value = prettyJson({
-    authority: currentAuthority() || "i105...",
-    message_bundle: bundle,
-  });
-  bridgeMessageSubmitInput.value = prettyJson({
-    authority: currentAuthority() || "i105...",
-    message_bundle: bundle,
-  });
-  setBanner(submissionSummary, "Loaded the looked-up SCCP message bundle into both advanced JSON editors.", "success");
-}
-
-function insertSettlementHelper() {
-  const bridgeContract = bridgeContractForEnvironment(state.currentEnvironment);
-  if (!bridgeContract) {
-    setBanner(submissionSummary, "No bridge contract is deployed in the selected environment.", "error");
-    return;
-  }
-  const route = bridgeRouteInput.value.trim();
-  if (!route) {
-    setBanner(submissionSummary, "Set Route before inserting the settlement helper.", "error");
-    return;
-  }
-
-  let payload;
-  try {
-    payload = parseJsonInput(bridgeMessageSubmitInput, "Bridge Message Submit JSON") || buildBridgeMessageSubmitTemplate();
-  } catch (error) {
-    setBanner(submissionSummary, String(error), "error");
-    return;
-  }
-  payload.authority = payload.authority || currentAuthority() || "i105...";
-  payload.message_bundle = payload.message_bundle || currentBundleForSubmissionBuilders();
-  payload.settlement = {
-    contract_address: bridgeContract.contract_address,
-    entrypoint: "finalize_inbound",
-    route,
-  };
-  bridgeMessageSubmitInput.value = prettyJson(payload);
-  setBanner(
-    submissionSummary,
-    "Inserted a finalize_inbound settlement helper. Leave payload empty to let Torii auto-build the settlement object for transfer messages.",
-    "success"
-  );
 }
 
 function renderProofLookupResults() {
   sccpBundlePreview.textContent = prettyJson(state.proofLookup.bundle || {});
-  sccpArtifactPreview.textContent = prettyJson(state.proofLookup.artifact || {});
-  sccpJobPreview.textContent = prettyJson(state.proofLookup.job || {});
+  sccpProofRequestPreview.textContent = prettyJson(state.proofLookup.proofRequest || {});
 
-  const submissionPackage = state.proofLookup.job?.response_json?.submission_package
-    || state.proofLookup.artifact?.response_json?.submission_package
-    || {};
-  const submissionTemplate = state.proofLookup.job?.response_json?.submission_template
-    || state.sccpManifests?.response_json?.manifests?.find((entry) => {
-      const domain = state.proofLookup.job?.response_json?.counterparty_domain || state.proofLookup.artifact?.response_json?.counterparty_domain;
-      return Number(entry.counterparty_domain) === Number(domain);
-    })?.submission_template;
-  proofSubmissionPackagePreview.textContent = prettyJson({
-    submission_template: submissionTemplate || null,
-    submission_package: submissionPackage || null,
-  });
-
-  const bundlePayloadKind = state.proofLookup.job?.response_json?.payload_kind
-    || Object.keys(state.proofLookup.bundle?.response_json?.payload || {})[0]
-    || null;
-  const chain = state.proofLookup.job?.response_json?.chain
-    || state.proofLookup.artifact?.response_json?.bundle?.payload?.chain
-    || state.proofLookup.artifact?.response_json?.counterparty_domain
-    || null;
+  const payloadKind = state.proofLookup.bundle?.response_json?.payload_kind || "transfer";
+  const targetNetwork = state.proofLookup.proofRequest?.response_json?.target_network || null;
   const messageId = normalizeProofLookupMessageId();
-  if (messageId && (state.proofLookup.bundle || state.proofLookup.artifact || state.proofLookup.job)) {
+  if (messageId && (state.proofLookup.bundle || state.proofLookup.proofRequest)) {
     setBanner(
       proofLookupSummary,
-      `Loaded proof surfaces for ${messageId}${bundlePayloadKind ? ` | payload=${bundlePayloadKind}` : ""}${chain ? ` | chain=${chain}` : ""}`,
+      `Loaded closed SCCP V1 proof surfaces for ${messageId} | payload=${payloadKind}${targetNetwork ? ` | target=${targetNetwork}` : ""}`,
       "success"
     );
   } else {
-    setBanner(proofLookupSummary, "Enter a message id to load the raw bundle, artifact, and normalized proof job.", "muted");
+    setBanner(proofLookupSummary, "Enter a 64-character lowercase nonzero message id to load the canonical bundle and state-derived proof request.", "muted");
   }
 }
 
@@ -2179,8 +1961,7 @@ async function lookupSccpResource(kind) {
 
   const pathMap = {
     bundle: `/api/sccp/proofs/message/${messageId}`,
-    artifact: `/api/sccp/artifacts/message/${messageId}`,
-    job: `/api/sccp/jobs/message/${messageId}`,
+    proofRequest: `/api/sccp/proof-requests/${messageId}`,
   };
   const query = new URLSearchParams({ environment });
   setBanner(proofLookupSummary, `Loading ${kind}...`, "muted");
@@ -2201,19 +1982,17 @@ async function lookupAllSccpResources() {
     setBanner(proofLookupSummary, "Select an environment and message id before running a full proof lookup.", "error");
     return;
   }
-  setBanner(proofLookupSummary, "Loading bundle, artifact, and job...", "muted");
+  setBanner(proofLookupSummary, "Loading canonical bundle and proof request...", "muted");
   const query = new URLSearchParams({ environment });
-  const [bundle, artifact, job] = await Promise.all([
+  const [bundle, proofRequest] = await Promise.all([
     requestJson(`/api/sccp/proofs/message/${messageId}?${query.toString()}`),
-    requestJson(`/api/sccp/artifacts/message/${messageId}?${query.toString()}`),
-    requestJson(`/api/sccp/jobs/message/${messageId}?${query.toString()}`),
+    requestJson(`/api/sccp/proof-requests/${messageId}?${query.toString()}`),
   ]);
   state.proofLookup.bundle = bundle.result;
-  state.proofLookup.artifact = artifact.result;
-  state.proofLookup.job = job.result;
-  if (bundle.result.ok || artifact.result.ok || job.result.ok) {
+  state.proofLookup.proofRequest = proofRequest.result;
+  if (bundle.result.ok || proofRequest.result.ok) {
     upsertBookmark("messageIds", messageId);
-    rememberProofLookup(messageId, ["bundle", "artifact", "job"]);
+    rememberProofLookup(messageId, ["bundle", "proofRequest"]);
     renderBridgeBookmarks();
   }
   renderProofLookupResults();
@@ -2223,19 +2002,22 @@ function validateSubmitPayload(payload, type) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error(`${type} payload must be a JSON object.`);
   }
-  if (type === "bridge proof submit") {
-    const bundleKeys = ["burn_bundle", "governance_bundle", "message_bundle"].filter((key) => payload[key] && typeof payload[key] === "object");
-    if (bundleKeys.length !== 1) {
-      throw new Error("Bridge proof submit JSON must include exactly one of burn_bundle, governance_bundle, or message_bundle.");
-    }
+  const proofField = type === "bridge proof submit" ? "destination_proof_b64" : "native_proof_b64";
+  const allowedFields = new Set(["authority", proofField]);
+  const unsupportedFields = Object.keys(payload).filter((key) => !allowedFields.has(key));
+  if (unsupportedFields.length) {
+    throw new Error(`${type} contains retired or unsupported fields: ${unsupportedFields.sort().join(", ")}.`);
   }
-  if (type === "bridge message submit") {
-    if (!payload.message_bundle || typeof payload.message_bundle !== "object") {
-      throw new Error("Bridge message submit JSON must include a message_bundle object.");
+  const encodedProof = payload[proofField];
+  if (typeof encodedProof !== "string" || !/^[A-Za-z0-9+/]+={0,2}$/.test(encodedProof) || encodedProof.length % 4 !== 0) {
+    throw new Error(`${proofField} must be non-empty canonical padded base64.`);
+  }
+  try {
+    if (btoa(atob(encodedProof)) !== encodedProof) {
+      throw new Error("non-canonical base64");
     }
-    if (payload.settlement !== undefined && payload.settlement !== null && typeof payload.settlement !== "object") {
-      throw new Error("settlement must be an object when provided.");
-    }
+  } catch (_error) {
+    throw new Error(`${proofField} must be non-empty canonical padded base64.`);
   }
 }
 
@@ -2313,9 +2095,10 @@ async function fetchCatalog() {
     refreshRemoteTransactionHistory({ silent: true }),
     refreshSccpDiscovery({ silent: true }),
   ]);
+  const repoLabel = result.repo_name || result.repo_root || "repository";
   setBanner(
     requestStatus,
-    `Loaded ${state.environments.length} environment(s) from ${result.repo_root}.`,
+    `Loaded ${state.environments.length} environment(s) from ${repoLabel}.`,
     "success"
   );
 }
@@ -2337,6 +2120,27 @@ function clearBridgeBookmarks() {
   }
   persistLocalState();
   renderBridgeBookmarks();
+}
+
+function clearOperatorState() {
+  Object.keys(state.local.transactionStatuses).forEach((txHashHex) => {
+    stopTransactionPolling(txHashHex);
+  });
+  state.local.recentRequests = [];
+  state.local.transactionStatuses = {};
+  state.local.bridgeBookmarks = defaultBridgeBookmarks();
+  state.local.proofLookups = [];
+  state.proofLookup = {
+    bundle: null,
+    artifact: null,
+    job: null,
+  };
+  persistLocalState();
+  renderTransactionTracker();
+  renderBridgeBookmarks();
+  renderProofLookupHistory();
+  renderProofLookupResults();
+  setBanner(requestStatus, "Cleared browser-local operator state.", "success");
 }
 
 function applyBookmarkValue(inputElement, value) {
@@ -2419,12 +2223,6 @@ bridgeActionSelect.addEventListener("change", renderBridgeWorkspace);
   bridgeRemoteDomainInput,
   bridgeDecimalsInput,
   bridgeAmountInput,
-  sccpMessageKindSelect,
-  sccpSourceDomainInput,
-  sccpDestDomainInput,
-  sccpNonceInput,
-  sccpMessageSenderInput,
-  sccpFinalityHeightInput,
 ].forEach((element) => {
   element.addEventListener("input", () => {
     renderBridgeWorkspace();
@@ -2451,6 +2249,7 @@ refreshTransactionHistoryButton.addEventListener("click", () => {
 });
 
 clearLocalHistoryButton.addEventListener("click", clearLocalHistory);
+clearOperatorStateButton.addEventListener("click", clearOperatorState);
 bookmarkCurrentBridgeButton.addEventListener("click", bookmarkCurrentBridgeValues);
 clearBridgeBookmarksButton.addEventListener("click", clearBridgeBookmarks);
 
@@ -2504,27 +2303,20 @@ lookupSccpBundleButton.addEventListener("click", () => {
     setBanner(proofLookupSummary, `Bundle lookup failed: ${error}`, "error");
   });
 });
-lookupSccpArtifactButton.addEventListener("click", () => {
-  lookupSccpResource("artifact").catch((error) => {
-    setBanner(proofLookupSummary, `Artifact lookup failed: ${error}`, "error");
-  });
-});
-lookupSccpJobButton.addEventListener("click", () => {
-  lookupSccpResource("job").catch((error) => {
-    setBanner(proofLookupSummary, `Job lookup failed: ${error}`, "error");
+lookupSccpProofRequestButton.addEventListener("click", () => {
+  lookupSccpResource("proofRequest").catch((error) => {
+    setBanner(proofLookupSummary, `Proof request lookup failed: ${error}`, "error");
   });
 });
 
-loadLookedUpBundleButton.addEventListener("click", loadLookedUpBundleIntoEditors);
 buildProofSubmitTemplateButton.addEventListener("click", () => {
   proofSubmitInput.value = prettyJson(buildProofSubmitTemplate());
-  setBanner(submissionSummary, "Built a bridge proof submit template from the current bridge fields and live proof lookup state.", "success");
+  setBanner(submissionSummary, "Built the closed destination-proof DTO. Replace the placeholder with the canonical prover artifact base64 before submitting.", "success");
 });
 buildBridgeMessageTemplateButton.addEventListener("click", () => {
   bridgeMessageSubmitInput.value = prettyJson(buildBridgeMessageSubmitTemplate());
-  setBanner(submissionSummary, "Built a bridge message submit template from the current bridge fields and live proof lookup state.", "success");
+  setBanner(submissionSummary, "Built the closed native-proof DTO. Replace the placeholder with canonical native-proof base64 before submitting.", "success");
 });
-insertSettlementHelperButton.addEventListener("click", insertSettlementHelper);
 submitBridgeProofButton.addEventListener("click", () => {
   submitAdvancedPayload("/api/bridge/proofs/submit", proofSubmitInput, "bridge proof submit", () => ({
     actionType: "bridge_proof_submit",

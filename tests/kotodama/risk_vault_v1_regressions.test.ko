@@ -1,0 +1,243 @@
+module RiskVaultV1Regressions {
+  koto_test { target: "../../contracts/risk/risk_vault.ko" }
+
+  fixture vault_actors {
+    actor(
+      "owner",
+      AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX"),
+      "0x0909090909090909090909090909090909090909090909090909090909090909"
+    );
+    actor(
+      "guardian",
+      AccountId::parse("sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6")
+    );
+    grant_permission("owner", "Admin");
+    grant_permission("owner", "Entry");
+    grant_permission("owner", "AssetOps");
+    grant_permission("guardian", "Admin");
+  }
+
+  fn initialize_risk_vault_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "hajimari",
+      arguments: Json::parse("{\"collateral_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"guardian\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
+    );
+  }
+
+  fn configure_bucket_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "configure_bucket",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"controller\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"payout_cap_bps\":\"5000\",\"utilisation_cap_bps\":\"10000\",\"collateral_multiplier_bps\":\"10000\"}")
+    );
+  }
+
+  fn deposit_1000_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "deposit",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"amount\":\"1000\"}")
+    );
+  }
+
+  fn deposit_100_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "deposit",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"amount\":\"100\"}")
+    );
+  }
+
+  fn enable_risk_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "exit_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+  }
+
+  fn lock_standard_liability_for_test() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "lock_liability",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"notional\":\"1000\",\"collateral_locked\":\"1000\",\"backlog\":\"0\"}")
+    );
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn lifecycle_starts_paused_with_central_custody() {
+    initialize_risk_vault_for_test();
+    test::assert(RiskVaultInitialized == 1);
+    test::assert(RiskVaultWithdrawalOnly == 1);
+    test::assert(RiskVaultAccount == test::actor_account("owner"));
+    test::assert(RiskVaultGuardian == test::actor_account("guardian"));
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn collateral_deposit_is_allowed_while_new_risk_is_paused() {
+    initialize_risk_vault_for_test();
+    configure_bucket_for_test();
+    deposit_1000_for_test();
+    test::assert(bucket_deposits_value(1) == 1000);
+    test::assert(RiskVaultWithdrawalOnly == 1);
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn withdrawal_only_blocks_liability_without_rolling_back_deposit() {
+    initialize_risk_vault_for_test();
+    configure_bucket_for_test();
+    deposit_1000_for_test();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "lock_liability",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"notional\":\"1000\",\"collateral_locked\":\"1000\",\"backlog\":\"0\"}")
+    );
+    test::assert(bucket_deposits_value(1) == 1000);
+    test::assert(liability_status_value(1_000_000_007) == 0);
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn undercollateralized_lock_rejects_atomically() {
+    initialize_risk_vault_for_test();
+    configure_bucket_for_test();
+    deposit_100_for_test();
+    enable_risk_for_test();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "lock_liability",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"notional\":\"101\",\"collateral_locked\":\"101\",\"backlog\":\"0\"}")
+    );
+    test::assert(bucket_outstanding_notional_value(1) == zero_quantity());
+    test::assert(bucket_reserved_collateral_value(1) == zero_quantity());
+    test::assert(liability_status_value(1_000_000_007) == 0);
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn automation_safe_mode_blocks_new_risk_but_not_existing_collateral() {
+    initialize_risk_vault_for_test();
+    configure_bucket_for_test();
+    deposit_1000_for_test();
+    enable_risk_for_test();
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "sync_automation",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"executor\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"job_id\":\"1\",\"cadence_slots\":\"1\",\"backlog_cap\":\"2\",\"safe_mode\":\"1\"}")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "lock_liability",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"notional\":\"1000\",\"collateral_locked\":\"1000\",\"backlog\":\"0\"}")
+    );
+    test::assert(bucket_deposits_value(1) == 1000);
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn backlog_above_cap_is_rejected_without_state_change() {
+    initialize_risk_vault_for_test();
+    configure_bucket_for_test();
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "sync_automation",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"executor\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"job_id\":\"1\",\"cadence_slots\":\"1\",\"backlog_cap\":\"2\",\"safe_mode\":\"0\"}")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "report_bucket",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"backlog\":\"3\",\"safe_mode\":\"0\"}")
+    );
+    test::assert(RiskVaultBucketAutomationBacklog.get(1).unwrap_or(0) == 0);
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn cumulative_payout_never_exceeds_liability_cap() {
+    initialize_risk_vault_for_test();
+    configure_bucket_for_test();
+    deposit_1000_for_test();
+    enable_risk_for_test();
+    lock_standard_liability_for_test();
+    let first = test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "settle_payout",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"recipient\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"amount\":\"400\"}")
+    );
+    let second = test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "settle_payout",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"recipient\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"amount\":\"400\"}")
+    );
+    let third = test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "settle_payout",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"recipient\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"amount\":\"1\"}")
+    );
+    test::assert(first == 400);
+    test::assert(second == 100);
+    test::assert(third == zero_quantity());
+    test::assert(liability_settled_payout_value(1_000_000_007) == 500);
+    test::assert(bucket_deposits_value(1) == 500);
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn paid_liability_cannot_be_rewritten_below_its_paid_cap() {
+    initialize_risk_vault_for_test();
+    configure_bucket_for_test();
+    deposit_1000_for_test();
+    enable_risk_for_test();
+    lock_standard_liability_for_test();
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "settle_payout",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"recipient\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"amount\":\"500\"}")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "lock_liability",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"notional\":\"500\",\"collateral_locked\":\"500\",\"backlog\":\"0\"}")
+    );
+    test::assert(liability_notional_value(1_000_000_007) == 1000);
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn missing_and_duplicate_release_are_explicit_errors() {
+    initialize_risk_vault_for_test();
+    configure_bucket_for_test();
+    deposit_1000_for_test();
+    enable_risk_for_test();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "release_liability",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"404\",\"backlog\":\"0\"}")
+    );
+    lock_standard_liability_for_test();
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "release_liability",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"backlog\":\"0\"}")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "release_liability",
+      arguments: Json::parse("{\"bucket_id\":\"1\",\"exposure_id\":\"7\",\"backlog\":\"0\"}")
+    );
+    test::assert(liability_status_value(1_000_000_007) == 2);
+  }
+
+  #[test(fixture = "vault_actors")]
+  fn guardian_can_pause_but_cannot_resume_risk() {
+    initialize_risk_vault_for_test();
+    enable_risk_for_test();
+    test::invoke_entrypoint_as(
+      actor: "guardian",
+      entrypoint: "enter_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+    test::assert(RiskVaultWithdrawalOnly == 1);
+    test::expect_reject_as(
+      actor: "guardian",
+      entrypoint: "exit_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+    test::assert(RiskVaultWithdrawalOnly == 1);
+  }
+}

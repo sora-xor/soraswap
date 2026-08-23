@@ -18,4 +18,4 @@ Notes:
 - The first launch vault is expected to use the `n3x` basket as underlying strategy input.
 - Position ids are bound to the depositing caller and vault on first use.
 - Async redemption requests are explicit and claim-gated by contract `block_height()`.
-- `soraswap_vault_lifecycle_tick` is a bounded pre-commit trigger. It marks async redemption requests ready once their claim slot has elapsed; the owner still calls `claim_redeem`.
+- `soraswap_vault_lifecycle_tick` is a bounded time trigger registered on a `schedule(100000, 120000)` native schedule. It still enforces the configured slot cadence inside the contract and marks async redemption requests ready once their claim slot has elapsed; the owner still calls `claim_redeem`.

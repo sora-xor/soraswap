@@ -1,0 +1,50 @@
+module ValidationFeeAutonomousPayoutRegressions {
+    koto_test {
+        target: "../../artifacts/rendered/validation_fee/autonomous_payout.ko"
+    }
+
+    fixture direct_caller {
+        actor(
+            "direct_caller",
+            AccountId::parse("testuﾛ1NｱｻｸYSafﾇｷヰc5ﾇﾄVxﾏ9jLZヱﾋzsKqurﾊﾘ9ｸ3eｴAｶD54TDT"),
+        );
+        grant_seiyaku_kotoage_permission("direct_caller", "autonomous_validation_fee_tick");
+    }
+
+    #[test]
+    fn release_values_are_exact_and_source_pinned() {
+        test::assert(
+            pool_contract() == b"tairac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9ggff82m7",
+        );
+        test::assert(sbd_asset() == AssetDefinitionId::parse("7ZepsJTHCVLKsrFFNZGSRGZgvBhv"));
+        test::assert(xor_asset() == AssetDefinitionId::parse("6TEAJqbb8oEPmLncoNiMRbLEK6tw"));
+        test::assert(batch_sbd() == 10);
+        test::assert(min_xor_out() == 4);
+        test::assert(max_xor_out() == 100);
+        test::assert(pool_vault() != payout_vault());
+        test::assert(recipient_one() != recipient_two());
+        test::assert(recipient_one() != recipient_three());
+        test::assert(recipient_one() != recipient_four());
+        test::assert(recipient_two() != recipient_three());
+        test::assert(recipient_two() != recipient_four());
+        test::assert(recipient_three() != recipient_four());
+    }
+
+    #[test(fixture = "direct_caller")]
+    fn signed_caller_cannot_masquerade_as_the_contract_subject_trigger() {
+        test::expect_reject_as(
+            actor: "direct_caller",
+            kotoage: "autonomous_validation_fee_tick",
+            arguments: Json::parse("{}"),
+        );
+    }
+
+    #[test(fixture = "direct_caller")]
+    fn signed_call_cannot_inject_trigger_event_fields_into_zero_argument_schema() {
+        test::expect_reject_as(
+            actor: "direct_caller",
+            kotoage: "autonomous_validation_fee_tick",
+            arguments: Json::parse("{\"interval\":{\"since_ms\":\"1\",\"length_ms\":\"1\"}}"),
+        );
+    }
+}

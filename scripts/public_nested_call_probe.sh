@@ -13,10 +13,13 @@ case "$public_env" in
     ;;
 esac
 
+require_public_mutation_consent "$public_env" "$public_env nested-call probe"
+
 config="$(client_config_or_default "$public_env")"
 ensure_client "$config"
 ensure_authority "$config"
 prepare_env_chain_state "$public_env" "$config"
 ensure_public_signer_ready "$config" "$SORASWAP_AUTHORITY" readonly
+require_production_operator_permissions "$config" "$SORASWAP_AUTHORITY"
 
 ensure_nested_call_runtime_supported "$public_env" "$config"

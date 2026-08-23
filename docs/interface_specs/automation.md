@@ -24,5 +24,6 @@ Notes:
 - `assign_executor` plus `dispatch_job` add an executor-bound path for off-chain workers while still allowing the owner to run the job when no explicit executor is stored.
 - `configure_cron` plus `complete_run` model recurring jobs by re-queueing work at `block_height() + interval_slots` instead of forcing every successful run into a terminal done state.
 - `mark_running` and `dispatch_job` share the same runner checks and state transition semantics.
+- `mark_done` and `complete_run` require a running job. A queued job cannot be completed without a runner dispatch first.
 - `retry()` reschedules from the current block height and no longer accepts caller-supplied slot input.
 - `mirror_job` is a `view fn` consumed through `/v1/contracts/view`.

@@ -1,4 +1,76 @@
 seiyaku PerpsEngine {
+  error enum PerpsEngineError {
+    AutomationExecutorMismatch = 2249224927,
+    AutomationSafeMode = 3655001485,
+    ConfidenceTooWide = 3697031875,
+    EngineBacklog = 3157909582,
+    EngineContractUnbound = 2728006612,
+    EngineInitialized = 3508010550,
+    EngineNotInitialized = 282689467,
+    EngineOwnerMismatch = 1878439106,
+    InitialMargin = 3870223813,
+    InsufficientInitialMargin = 4154998114,
+    InsufficientMargin = 2634697019,
+    InvalidAmount = 1627965731,
+    InvalidBacklog = 913417955,
+    InvalidBacklogCap = 2164435547,
+    InvalidBacklogLimit = 2808899432,
+    InvalidCadence = 758396948,
+    InvalidConfidence = 1229599866,
+    InvalidEnabled = 1148015049,
+    InvalidEntryPrice = 2830783532,
+    InvalidFundingCadence = 2089521963,
+    InvalidFundingJobId = 2480220062,
+    InvalidGuardFlags = 1025817365,
+    InvalidIndexPrice = 731695455,
+    InvalidLeverage = 1671522821,
+    InvalidLeverageCap = 3511199014,
+    InvalidLiquidationFee = 709666791,
+    InvalidLiquidationJobId = 2701499375,
+    InvalidLiquidationStressLimit = 2667576312,
+    InvalidMaintenanceMargin = 2598440921,
+    InvalidMargin = 2911289187,
+    InvalidMarkPrice = 310264421,
+    InvalidMarketActiveFlag = 4090115736,
+    InvalidMaxItems = 2693425913,
+    InvalidOpenInterestCap = 1997052084,
+    InvalidOracleScheme = 1474311732,
+    InvalidOracleSlot = 3565780252,
+    InvalidOracleStaleSlots = 3102299734,
+    InvalidResultingMargin = 247918534,
+    InvalidScanSize = 3644206669,
+    InvalidSize = 850041996,
+    InvalidUtilisationClamp = 312379237,
+    LeverageExceedsMarketCap = 4220345,
+    LiquidationStress = 2101613080,
+    MaintenanceMargin = 3859931018,
+    MarketBacklog = 2235432138,
+    MarketGuarded = 3170517613,
+    MarketMissing = 3043703974,
+    MarketPaused = 2560373413,
+    MarketUtilisationClamp = 3701990448,
+    MaxItemsTooHigh = 3302846095,
+    MissingAttestation = 2337340976,
+    OpenInterestCap = 676701842,
+    OracleDegraded = 1708865256,
+    OracleDomainMismatch = 178003288,
+    OracleMarketMismatch = 1115355839,
+    OracleSchemeMissing = 110947573,
+    OracleSignature = 1546989046,
+    OracleSlotReplay = 127690675,
+    OracleStale = 3761902256,
+    PositionMissing = 3917543018,
+    PositionNotManageable = 453095927,
+    PositionNotOpen = 2478644168,
+    PositionOwnerMismatch = 2715695366,
+    PositionQueued = 3198987422,
+    RiskBucketReportFailed = 3275534661,
+    RiskVaultMarginSettle = 4104314977,
+    ScanSizeExceedsCap = 3250361834,
+    UseClosePosition = 52528652,
+    WithdrawalOnly = 2082914943,
+  }
+
   state int PerpsInitialized;
   state AccountId PerpsOwner;
   state AssetDefinitionId PerpsCollateralAsset;
@@ -28,110 +100,109 @@ seiyaku PerpsEngine {
   state int PerpsNextMarketId;
   state int PerpsNextPositionId;
 
-  state PerpsMarketAsset: Map<int, AssetDefinitionId>;
-  state PerpsMarketActive: Map<int, int>;
-  state PerpsMarketOpenInterest: Map<int, int>;
-  state PerpsMarketOpenInterestCap: Map<int, int>;
-  state PerpsMarketMaxLeverageBps: Map<int, int>;
-  state PerpsMarketMaintenanceMarginBps: Map<int, int>;
-  state PerpsMarketLiquidationFeeBps: Map<int, int>;
-  state PerpsMarketFundingBps: Map<int, int>;
-  state PerpsMarketFundingIntervalSlots: Map<int, int>;
-  state PerpsMarketOracleStaleSlots: Map<int, int>;
-  state PerpsMarketBacklogLimit: Map<int, int>;
-  state PerpsMarketUtilisationClampBps: Map<int, int>;
-  state PerpsMarketLiquidationStressLimit: Map<int, int>;
-  state PerpsMarketLastMarkPrice: Map<int, int>;
-  state PerpsMarketLastIndexPrice: Map<int, int>;
-  state PerpsMarketLastOracleSlot: Map<int, int>;
-  state PerpsMarketLastOracleAttestationHash: Map<int, int>;
-  state PerpsMarketGuardFlags: Map<int, int>;
-  state PerpsMarketQueuedLiquidations: Map<int, int>;
-  state PerpsMarketActivePositionCount: Map<int, int>;
-  state PerpsMarketScanCursor: Map<int, int>;
-  state PerpsMarketLastPassScanned: Map<int, int>;
-  state PerpsMarketLastPassQueued: Map<int, int>;
-  state PerpsMarketLastPassRecovered: Map<int, int>;
-  state PerpsMarketLastPassLiquidated: Map<int, int>;
-  state PerpsMarketLastNativeFundingDelta: Map<int, int>;
-  state PerpsMarketLastNativePassSlot: Map<int, int>;
+  state StateMap<int, AssetDefinitionId> PerpsMarketAsset;
+  state StateMap<int, int> PerpsMarketActive;
+  state StateMap<int, int> PerpsMarketOpenInterest;
+  state StateMap<int, int> PerpsMarketOpenInterestCap;
+  state StateMap<int, int> PerpsMarketMaxLeverageBps;
+  state StateMap<int, int> PerpsMarketMaintenanceMarginBps;
+  state StateMap<int, int> PerpsMarketLiquidationFeeBps;
+  state StateMap<int, int> PerpsMarketFundingBps;
+  state StateMap<int, int> PerpsMarketFundingIntervalSlots;
+  state StateMap<int, int> PerpsMarketOracleStaleSlots;
+  state StateMap<int, int> PerpsMarketBacklogLimit;
+  state StateMap<int, int> PerpsMarketUtilisationClampBps;
+  state StateMap<int, int> PerpsMarketLiquidationStressLimit;
+  state StateMap<int, int> PerpsMarketLastMarkPrice;
+  state StateMap<int, int> PerpsMarketLastIndexPrice;
+  state StateMap<int, int> PerpsMarketLastOracleSlot;
+  state StateMap<int, int> PerpsMarketLastOracleAttestationHash;
+  state StateMap<int, int> PerpsMarketGuardFlags;
+  state StateMap<int, int> PerpsMarketQueuedLiquidations;
+  state StateMap<int, int> PerpsMarketActivePositionCount;
+  state StateMap<int, int> PerpsMarketScanCursor;
+  state StateMap<int, int> PerpsMarketLastPassScanned;
+  state StateMap<int, int> PerpsMarketLastPassQueued;
+  state StateMap<int, int> PerpsMarketLastPassRecovered;
+  state StateMap<int, int> PerpsMarketLastPassLiquidated;
+  state StateMap<int, int> PerpsMarketLastNativeFundingDelta;
+  state StateMap<int, int> PerpsMarketLastNativePassSlot;
 
-  state PerpsPositionOwner: Map<int, AccountId>;
-  state PerpsPositionMarketId: Map<int, int>;
-  state PerpsPositionSize: Map<int, int>;
-  state PerpsPositionMargin: Map<int, int>;
-  state PerpsPositionEntryPrice: Map<int, int>;
-  state PerpsPositionMarkPrice: Map<int, int>;
-  state PerpsPositionIndexPrice: Map<int, int>;
-  state PerpsPositionFundingAccrued: Map<int, int>;
-  state PerpsPositionRealizedPnl: Map<int, int>;
-  state PerpsPositionStatus: Map<int, int>;
-  state PerpsPositionActiveSlot: Map<int, int>;
-  state PerpsPositionQueuedSlot: Map<int, int>;
-  state PerpsPositionLastKeeperReward: Map<int, int>;
-  state PerpsPositionLastOwnerResidual: Map<int, int>;
+  state StateMap<int, AccountId> PerpsPositionOwner;
+  state StateMap<int, int> PerpsPositionMarketId;
+  state StateMap<int, int> PerpsPositionSize;
+  state StateMap<int, int> PerpsPositionMargin;
+  state StateMap<int, int> PerpsPositionEntryPrice;
+  state StateMap<int, int> PerpsPositionMarkPrice;
+  state StateMap<int, int> PerpsPositionIndexPrice;
+  state StateMap<int, int> PerpsPositionFundingAccrued;
+  state StateMap<int, int> PerpsPositionRealizedPnl;
+  state StateMap<int, int> PerpsPositionStatus;
+  state StateMap<int, int> PerpsPositionActiveSlot;
+  state StateMap<int, int> PerpsPositionQueuedSlot;
+  state StateMap<int, int> PerpsPositionLastKeeperReward;
+  state StateMap<int, int> PerpsPositionLastOwnerResidual;
 
-  state PerpsActivePositionBySlot: Map<int, int>;
+  state StateMap<int, int> PerpsActivePositionBySlot;
 
-  register_trigger soraswap_perps_lifecycle_tick {
-    call native_lifecycle_tick;
-    on time pre_commit;
+  trigger soraswap_perps_lifecycle_tick -> native_lifecycle_tick {
+    on time schedule(80000, 120000);
     repeats indefinitely;
-    metadata { tag: "soraswap"; module: "perps.perps_engine"; __enabled: false; }
+    metadata { "tag": "soraswap"; "module": "perps.perps_engine"; "__enabled": false; }
   }
 
   fn assert_initialized() {
-    assert(PerpsInitialized == 1, "engine not initialized");
+    require(PerpsInitialized == 1, PerpsEngineError::EngineNotInitialized);
   }
 
   fn assert_owner() {
     assert_initialized();
-    assert(PerpsOwner == authority(), "engine owner mismatch");
+    require(PerpsOwner == context::authority(), PerpsEngineError::EngineOwnerMismatch);
   }
 
   fn assert_automation_runner() {
     assert_initialized();
-    if PerpsOwner == authority() {
+    if PerpsOwner == context::authority() {
       return;
     }
-    assert(PerpsAutomationExecutor == authority(), "automation executor mismatch");
+    require(PerpsAutomationExecutor == context::authority(), PerpsEngineError::AutomationExecutorMismatch);
   }
 
   fn assert_risk_on() {
-    assert(PerpsWithdrawalOnly == 0, "withdrawal only");
-    assert(PerpsAutomationSafeMode == 0, "automation safe mode");
+    require(PerpsWithdrawalOnly == 0, PerpsEngineError::WithdrawalOnly);
+    require(PerpsAutomationSafeMode == 0, PerpsEngineError::AutomationSafeMode);
   }
 
   fn assert_contract_bound() {
-    assert(PerpsContractBound == 1, "engine contract unbound");
+    require(PerpsContractBound == 1, PerpsEngineError::EngineContractUnbound);
   }
 
-  fn abs_int(value: int) -> int {
+  fn abs_int(int value) -> int {
     if value < 0 {
       return 0 - value;
     }
     return value;
   }
 
-  fn max_int(a: int, b: int) -> int {
+  fn max_int(int a, int b) -> int {
     if a >= b {
       return a;
     }
     return b;
   }
 
-  fn min_int(a: int, b: int) -> int {
+  fn min_int(int a, int b) -> int {
     if a <= b {
       return a;
     }
     return b;
   }
 
-  fn market_slot_key(market_id: int, slot: int) -> int {
+  fn market_slot_key(int market_id, int slot) -> int {
     return market_id * 1_000_000_000 + slot;
   }
 
-  fn normalized_scan_cursor(cursor: int, active_count: int) -> int {
+  fn normalized_scan_cursor(int cursor, int active_count) -> int {
     if active_count <= 0 {
       return 0;
     }
@@ -141,7 +212,7 @@ seiyaku PerpsEngine {
     return cursor;
   }
 
-  fn wrapped_market_slot(cursor: int, offset: int, active_count: int) -> int {
+  fn wrapped_market_slot(int cursor, int offset, int active_count) -> int {
     if active_count <= 0 {
       return 0;
     }
@@ -152,13 +223,13 @@ seiyaku PerpsEngine {
     return slot;
   }
 
-  fn liquidation_action_for_offset(market_id: int,
-                                   cursor: int,
-                                   active_count: int,
-                                   offset: int,
-                                   mark_price_bps: int,
-                                   index_price_bps: int,
-                                   current_slot: int) -> int {
+  fn liquidation_action_for_offset(int market_id,
+                                   int cursor,
+                                   int active_count,
+                                   int offset,
+                                   int mark_price_bps,
+                                   int index_price_bps,
+                                   int current_slot) -> int {
     let slot = wrapped_market_slot(cursor, offset, active_count);
     let position_id = PerpsActivePositionBySlot.get_or(market_slot_key(market_id, slot), 0);
     return process_liquidation_candidate(
@@ -170,13 +241,13 @@ seiyaku PerpsEngine {
     );
   }
 
-  fn liquidation_action_for_offset_native(market_id: int,
-                                          cursor: int,
-                                          active_count: int,
-                                          offset: int,
-                                          mark_price_bps: int,
-                                          index_price_bps: int,
-                                          current_slot: int) -> int {
+  fn liquidation_action_for_offset_native(int market_id,
+                                          int cursor,
+                                          int active_count,
+                                          int offset,
+                                          int mark_price_bps,
+                                          int index_price_bps,
+                                          int current_slot) -> int {
     let slot = wrapped_market_slot(cursor, offset, active_count);
     let position_id = PerpsActivePositionBySlot.get_or(market_slot_key(market_id, slot), 0);
     return process_liquidation_candidate_native(
@@ -188,99 +259,99 @@ seiyaku PerpsEngine {
     );
   }
 
-  fn position_registered(position_id: int) -> int {
+  fn position_registered(int position_id) -> int {
     if PerpsPositionOwner.contains(position_id) {
       return 1;
     }
     return 0;
   }
 
-  fn assert_market_registered(market_id: int) {
-    assert(PerpsMarketAsset.contains(market_id), "market missing");
+  fn assert_market_registered(int market_id) {
+    require(PerpsMarketAsset.contains(market_id), PerpsEngineError::MarketMissing);
   }
 
-  fn assert_position_open(position_id: int) {
-    assert(PerpsPositionOwner.contains(position_id), "position missing");
-    assert(PerpsPositionStatus.get_or(position_id, 0) == 1, "position not open");
+  fn assert_position_open(int position_id) {
+    require(PerpsPositionOwner.contains(position_id), PerpsEngineError::PositionMissing);
+    require(PerpsPositionStatus.get_or(position_id, 0) == 1, PerpsEngineError::PositionNotOpen);
   }
 
-  fn assert_position_manageable(position_id: int) {
-    assert(PerpsPositionOwner.contains(position_id), "position missing");
+  fn assert_position_manageable(int position_id) {
+    require(PerpsPositionOwner.contains(position_id), PerpsEngineError::PositionMissing);
     let status = PerpsPositionStatus.get_or(position_id, 0);
-    assert(status == 1 || status == 3, "position not manageable");
+    require(status == 1 || status == 3, PerpsEngineError::PositionNotManageable);
   }
 
-  fn assert_position_owner(position_id: int) {
+  fn assert_position_owner(int position_id) {
     assert_position_open(position_id);
-    assert(PerpsPositionOwner[position_id] == authority(), "position owner mismatch");
+    require(PerpsPositionOwner[position_id] == context::authority(), PerpsEngineError::PositionOwnerMismatch);
   }
 
-  fn assert_position_owner_manageable(position_id: int) {
+  fn assert_position_owner_manageable(int position_id) {
     assert_position_manageable(position_id);
-    assert(PerpsPositionOwner[position_id] == authority(), "position owner mismatch");
+    require(PerpsPositionOwner[position_id] == context::authority(), PerpsEngineError::PositionOwnerMismatch);
   }
 
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
+  fn move_asset_if_needed(AccountId from,
+                          AccountId to,
+                          AssetDefinitionId asset,
+                          int amount) {
     if amount > 0 {
       if from != to {
-        transfer_asset(from, to, asset, amount);
+        ledger::asset::transfer(source: from, destination: to, asset_definition: asset, amount: amount, dataspace: DataSpaceId::parse("0"));
       }
     }
   }
 
-  fn risk_vault_lock_liability(exposure_id: int,
-                               notional: int,
-                               collateral_locked: int) -> int {
+  fn risk_vault_lock_liability(int exposure_id,
+                               int notional,
+                               int collateral_locked) -> int {
     let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 1);
-    let payload = json_set_int(payload, name("exposure_id"), exposure_id);
-    let payload = json_set_int(payload, name("notional"), notional);
-    let payload = json_set_int(payload, name("collateral_locked"), collateral_locked);
-    let payload = json_set_int(payload, name("backlog"), PerpsAutomationBacklog);
+    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
+    let payload = json_set_int(payload, Name::parse("exposure_id"), exposure_id);
+    let payload = json_set_int(payload, Name::parse("notional"), notional);
+    let payload = json_set_int(payload, Name::parse("collateral_locked"), collateral_locked);
+    let payload = json_set_int(payload, Name::parse("backlog"), PerpsAutomationBacklog);
     let result = call_contract(PerpsRiskVaultContract, "lock_liability", payload);
     return decode_int(result);
   }
 
-  fn risk_vault_deposit(amount: int) -> int {
+  fn risk_vault_deposit(int amount) -> int {
     let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 1);
-    let payload = json_set_int(payload, name("amount"), amount);
+    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
+    let payload = json_set_int(payload, Name::parse("amount"), amount);
     let result = call_contract(PerpsRiskVaultContract, "deposit", payload);
     return decode_int(result);
   }
 
-  fn risk_vault_release_liability(exposure_id: int) -> int {
+  fn risk_vault_release_liability(int exposure_id) -> int {
     let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 1);
-    let payload = json_set_int(payload, name("exposure_id"), exposure_id);
-    let payload = json_set_int(payload, name("backlog"), PerpsAutomationBacklog);
+    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
+    let payload = json_set_int(payload, Name::parse("exposure_id"), exposure_id);
+    let payload = json_set_int(payload, Name::parse("backlog"), PerpsAutomationBacklog);
     let result = call_contract(PerpsRiskVaultContract, "release_liability", payload);
     return decode_int(result);
   }
 
-  fn risk_vault_settle_payout(exposure_id: int, recipient: AccountId, amount: int) -> int {
+  fn risk_vault_settle_payout(int exposure_id, AccountId recipient, int amount) -> int {
     let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 1);
-    let payload = json_set_int(payload, name("exposure_id"), exposure_id);
-    let payload = json_set_account_id(payload, name("recipient"), recipient);
-    let payload = json_set_int(payload, name("amount"), amount);
+    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
+    let payload = json_set_int(payload, Name::parse("exposure_id"), exposure_id);
+    let payload = json_set_account_id(payload, Name::parse("recipient"), recipient);
+    let payload = json_set_int(payload, Name::parse("amount"), amount);
     let result = call_contract(PerpsRiskVaultContract, "settle_payout", payload);
     return decode_int(result);
   }
 
   fn risk_vault_report_bucket() {
     let payload = json_object();
-    let payload = json_set_int(payload, name("bucket_id"), 1);
-    let payload = json_set_int(payload, name("backlog"), PerpsAutomationBacklog);
-    let payload = json_set_int(payload, name("safe_mode"), PerpsAutomationSafeMode);
+    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
+    let payload = json_set_int(payload, Name::parse("backlog"), PerpsAutomationBacklog);
+    let payload = json_set_int(payload, Name::parse("safe_mode"), PerpsAutomationSafeMode);
     let result = call_contract(PerpsRiskVaultContract, "report_bucket_c2c", payload);
-    assert(decode_int(result) == 1, "risk bucket report failed");
+    require(decode_int(result) == 1, PerpsEngineError::RiskBucketReportFailed);
   }
 
-  fn market_utilisation_bps(market_id: int, projected_open_interest: int) -> int {
+  fn market_utilisation_bps(int market_id, int projected_open_interest) -> int {
     let open_interest_cap = PerpsMarketOpenInterestCap.get_or(market_id, 0);
     if open_interest_cap <= 0 {
       return 0;
@@ -288,22 +359,22 @@ seiyaku PerpsEngine {
     return (projected_open_interest * 10_000 + open_interest_cap - 1) / open_interest_cap;
   }
 
-  fn required_initial_margin(size: int, leverage_bps: int) -> int {
-    assert(leverage_bps > 0, "invalid leverage");
+  fn required_initial_margin(int size, int leverage_bps) -> int {
+    require(leverage_bps > 0, PerpsEngineError::InvalidLeverage);
     return (abs_int(size) * 10_000 + leverage_bps - 1) / leverage_bps;
   }
 
-  fn required_maintenance_margin(size: int, maintenance_margin_bps: int) -> int {
+  fn required_maintenance_margin(int size, int maintenance_margin_bps) -> int {
     return (abs_int(size) * maintenance_margin_bps + 10_000 - 1) / 10_000;
   }
 
-  fn unrealized_pnl(size: int, entry_price_bps: int, mark_price_bps: int) -> int {
-    assert(entry_price_bps > 0, "invalid entry price");
-    assert(mark_price_bps > 0, "invalid mark price");
+  fn unrealized_pnl(int size, int entry_price_bps, int mark_price_bps) -> int {
+    require(entry_price_bps > 0, PerpsEngineError::InvalidEntryPrice);
+    require(mark_price_bps > 0, PerpsEngineError::InvalidMarkPrice);
     return (size * (mark_price_bps - entry_price_bps)) / 10_000;
   }
 
-  fn position_equity(position_id: int, mark_price_bps: int) -> int {
+  fn position_equity(int position_id, int mark_price_bps) -> int {
     return PerpsPositionMargin.get_or(position_id, 0) +
       unrealized_pnl(
         PerpsPositionSize.get_or(position_id, 0),
@@ -316,87 +387,108 @@ seiyaku PerpsEngine {
     return 1;
   }
 
-  fn assert_verified_oracle_payload(market_id: int,
-                                    oracle_payload: bytes,
-                                    oracle_signature: bytes) -> (int, int, int, int, int, int) {
+  fn assert_verified_oracle_payload(int market_id,
+                                    bytes oracle_payload,
+                                    bytes oracle_signature) -> (int, int, int, int, int, int) {
     assert_market_registered(market_id);
-    assert(PerpsOracleScheme > 0, "oracle scheme missing");
-    assert(verify_signature(oracle_payload, oracle_signature, PerpsOraclePublicKey, PerpsOracleScheme), "oracle signature");
-    let payload = decode_json(oracle_payload);
-    assert(payload.get_int(name("domain")) == perps_oracle_domain(), "oracle domain mismatch");
-    assert(payload.get_int(name("market_id")) == market_id, "oracle market mismatch");
-    let mark_price_bps = payload.get_int(name("mark_price_bps"));
-    let index_price_bps = payload.get_int(name("index_price_bps"));
-    let confidence_bps = payload.get_int(name("confidence_bps"));
-    let oracle_slot = payload.get_int(name("oracle_slot"));
-    let status_flags = payload.get_int(name("status_flags"));
-    let attestation_hash = payload.get_int(name("attestation_hash"));
-    let current_slot = block_height();
-    assert(mark_price_bps > 0, "invalid mark price");
-    assert(index_price_bps > 0, "invalid index price");
-    assert(confidence_bps >= 0, "invalid confidence");
-    assert(confidence_bps <= 2_500, "confidence too wide");
-    assert(attestation_hash > 0, "missing attestation");
-    assert(current_slot >= oracle_slot, "invalid oracle slot");
+    require(PerpsOracleScheme > 0, PerpsEngineError::OracleSchemeMissing);
+    require(crypto::verify_signature(message: oracle_payload, signature: oracle_signature, public_key: PerpsOraclePublicKey, scheme: PerpsOracleScheme), PerpsEngineError::OracleSignature);
+    let payload = codec::decode_json(oracle_payload);
+    require(payload.get_int(Name::parse("domain")) == perps_oracle_domain(), PerpsEngineError::OracleDomainMismatch);
+    require(payload.get_int(Name::parse("market_id")) == market_id, PerpsEngineError::OracleMarketMismatch);
+    let mark_price_bps = payload.get_int(Name::parse("mark_price_bps"));
+    let index_price_bps = payload.get_int(Name::parse("index_price_bps"));
+    let confidence_bps = payload.get_int(Name::parse("confidence_bps"));
+    let oracle_slot = payload.get_int(Name::parse("oracle_slot"));
+    let status_flags = payload.get_int(Name::parse("status_flags"));
+    let attestation_hash = payload.get_int(Name::parse("attestation_hash"));
+    let current_slot = context::block_height();
+    require(mark_price_bps > 0, PerpsEngineError::InvalidMarkPrice);
+    require(index_price_bps > 0, PerpsEngineError::InvalidIndexPrice);
+    require(confidence_bps >= 0, PerpsEngineError::InvalidConfidence);
+    require(confidence_bps <= 2_500, PerpsEngineError::ConfidenceTooWide);
+    require(attestation_hash > 0, PerpsEngineError::MissingAttestation);
+    require(current_slot >= oracle_slot, PerpsEngineError::InvalidOracleSlot);
     let prior_oracle_slot = PerpsMarketLastOracleSlot.get_or(market_id, 0);
     if prior_oracle_slot > 0 {
-      assert(oracle_slot > prior_oracle_slot, "oracle slot replay");
+      require(oracle_slot > prior_oracle_slot, PerpsEngineError::OracleSlotReplay);
     }
-    assert(status_flags == 0, "oracle degraded");
-    assert(current_slot - oracle_slot <= PerpsMarketOracleStaleSlots.get_or(market_id, 0), "oracle stale");
+    require(status_flags == 0, PerpsEngineError::OracleDegraded);
+    require(current_slot - oracle_slot <= PerpsMarketOracleStaleSlots.get_or(market_id, 0), PerpsEngineError::OracleStale);
     return (mark_price_bps, index_price_bps, confidence_bps, oracle_slot, current_slot, attestation_hash);
   }
 
-  fn assert_market_accepts_risk(market_id: int, projected_open_interest: int) {
+  fn assert_market_accepts_risk(int market_id, int projected_open_interest) {
     assert_market_registered(market_id);
-    assert(PerpsMarketActive.get_or(market_id, 0) == 1, "market paused");
+    require(PerpsMarketActive.get_or(market_id, 0) == 1, PerpsEngineError::MarketPaused);
     if PerpsAutomationBacklogCap > 0 {
-      assert(PerpsAutomationBacklog <= PerpsAutomationBacklogCap, "engine backlog");
+      require(PerpsAutomationBacklog <= PerpsAutomationBacklogCap, PerpsEngineError::EngineBacklog);
     }
     let backlog_limit = PerpsMarketBacklogLimit.get_or(market_id, 0);
     if backlog_limit > 0 {
-      assert(PerpsMarketQueuedLiquidations.get_or(market_id, 0) <= backlog_limit, "market backlog");
+      require(PerpsMarketQueuedLiquidations.get_or(market_id, 0) <= backlog_limit, PerpsEngineError::MarketBacklog);
     }
-    assert(PerpsMarketGuardFlags.get_or(market_id, 0) == 0, "market guarded");
+    require(PerpsMarketGuardFlags.get_or(market_id, 0) == 0, PerpsEngineError::MarketGuarded);
     let utilisation_clamp = PerpsMarketUtilisationClampBps.get_or(market_id, 0);
     if utilisation_clamp > 0 {
-      assert(
-        market_utilisation_bps(market_id, projected_open_interest) <= utilisation_clamp,
-        "market utilisation clamp"
-      );
+      require(market_utilisation_bps(market_id, projected_open_interest) <= utilisation_clamp, PerpsEngineError::MarketUtilisationClamp);
     }
     let liquidation_stress_limit = PerpsMarketLiquidationStressLimit.get_or(market_id, 0);
     if liquidation_stress_limit > 0 {
-      assert(
-        PerpsMarketQueuedLiquidations.get_or(market_id, 0) <= liquidation_stress_limit,
-        "liquidation stress"
-      );
+      require(PerpsMarketQueuedLiquidations.get_or(market_id, 0) <= liquidation_stress_limit, PerpsEngineError::LiquidationStress);
     }
     let open_interest_cap = PerpsMarketOpenInterestCap.get_or(market_id, 0);
     if open_interest_cap > 0 {
-      assert(projected_open_interest <= open_interest_cap, "open interest cap");
+      require(projected_open_interest <= open_interest_cap, PerpsEngineError::OpenInterestCap);
     }
   }
 
-  fn record_market_oracle(market_id: int,
-                          mark_price_bps: int,
-                          index_price_bps: int,
-                          oracle_slot: int,
-                          attestation_hash: int) {
+  fn assert_market_risk_params(int max_leverage_bps,
+                               int maintenance_margin_bps,
+                               int liquidation_fee_bps,
+                               int open_interest_cap,
+                               int funding_interval_slots,
+                               int oracle_stale_slots,
+                               int backlog_limit,
+                               int utilisation_clamp_bps,
+                               int liquidation_stress_limit,
+                               int guard_flags,
+                               int active) {
+    require(max_leverage_bps > 10_000, PerpsEngineError::InvalidLeverageCap);
+    require(maintenance_margin_bps > 0, PerpsEngineError::InvalidMaintenanceMargin);
+    require(maintenance_margin_bps <= 10_000, PerpsEngineError::InvalidMaintenanceMargin);
+    require(liquidation_fee_bps >= 0, PerpsEngineError::InvalidLiquidationFee);
+    require(liquidation_fee_bps <= 10_000, PerpsEngineError::InvalidLiquidationFee);
+    require(open_interest_cap > 0, PerpsEngineError::InvalidOpenInterestCap);
+    require(funding_interval_slots >= 0, PerpsEngineError::InvalidFundingCadence);
+    require(oracle_stale_slots >= 0, PerpsEngineError::InvalidOracleStaleSlots);
+    require(backlog_limit >= 0, PerpsEngineError::InvalidBacklogLimit);
+    require(utilisation_clamp_bps >= 0, PerpsEngineError::InvalidUtilisationClamp);
+    require(utilisation_clamp_bps <= 10_000, PerpsEngineError::InvalidUtilisationClamp);
+    require(liquidation_stress_limit >= 0, PerpsEngineError::InvalidLiquidationStressLimit);
+    require(guard_flags >= 0, PerpsEngineError::InvalidGuardFlags);
+    require(active == 0 || active == 1, PerpsEngineError::InvalidMarketActiveFlag);
+  }
+
+  fn record_market_oracle(int market_id,
+                          int mark_price_bps,
+                          int index_price_bps,
+                          int oracle_slot,
+                          int attestation_hash) {
     PerpsMarketLastMarkPrice[market_id] = mark_price_bps;
     PerpsMarketLastIndexPrice[market_id] = index_price_bps;
     PerpsMarketLastOracleSlot[market_id] = oracle_slot;
     PerpsMarketLastOracleAttestationHash[market_id] = attestation_hash;
   }
 
-  fn append_active_position(market_id: int, position_id: int) {
+  fn append_active_position(int market_id, int position_id) {
     let slot = PerpsMarketActivePositionCount.get_or(market_id, 0);
     PerpsActivePositionBySlot[market_slot_key(market_id, slot)] = position_id;
     PerpsPositionActiveSlot[position_id] = slot;
     PerpsMarketActivePositionCount[market_id] = slot + 1;
   }
 
-  fn remove_active_position(market_id: int, position_id: int) {
+  fn remove_active_position(int market_id, int position_id) {
     let count = PerpsMarketActivePositionCount.get_or(market_id, 0);
     if count <= 0 {
       PerpsPositionActiveSlot[position_id] = -1;
@@ -434,11 +526,11 @@ seiyaku PerpsEngine {
     }
   }
 
-  fn queue_position(position_id: int,
-                    market_id: int,
-                    current_slot: int,
-                    mark_price_bps: int,
-                    index_price_bps: int) {
+  fn queue_position(int position_id,
+                    int market_id,
+                    int current_slot,
+                    int mark_price_bps,
+                    int index_price_bps) {
     PerpsPositionStatus[position_id] = 3;
     PerpsPositionQueuedSlot[position_id] = current_slot;
     PerpsPositionMarkPrice[position_id] = mark_price_bps;
@@ -446,10 +538,10 @@ seiyaku PerpsEngine {
     PerpsMarketQueuedLiquidations[market_id] = PerpsMarketQueuedLiquidations.get_or(market_id, 0) + 1;
   }
 
-  fn recover_position(position_id: int,
-                      market_id: int,
-                      mark_price_bps: int,
-                      index_price_bps: int) {
+  fn recover_position(int position_id,
+                      int market_id,
+                      int mark_price_bps,
+                      int index_price_bps) {
     PerpsPositionStatus[position_id] = 1;
     PerpsPositionQueuedSlot[position_id] = 0;
     PerpsPositionMarkPrice[position_id] = mark_price_bps;
@@ -458,14 +550,14 @@ seiyaku PerpsEngine {
       max_int(PerpsMarketQueuedLiquidations.get_or(market_id, 0) - 1, 0);
   }
 
-  fn liquidate_position(position_id: int,
-                        market_id: int,
-                        mark_price_bps: int,
-                        index_price_bps: int) {
+  fn liquidate_position(int position_id,
+                        int market_id,
+                        int mark_price_bps,
+                        int index_price_bps) {
     let margin = PerpsPositionMargin.get_or(position_id, 0);
     let equity = position_equity(position_id, mark_price_bps);
     let reward_request = (margin * PerpsMarketLiquidationFeeBps.get_or(market_id, 0)) / 10_000;
-    let settled_keeper_reward = risk_vault_settle_payout(position_id, authority(), min_int(reward_request, margin));
+    let settled_keeper_reward = risk_vault_settle_payout(position_id, context::authority(), min_int(reward_request, margin));
     let owner_residual_request = max_int(equity - settled_keeper_reward, 0);
     let settled_owner_residual = risk_vault_settle_payout(
       position_id,
@@ -493,10 +585,10 @@ seiyaku PerpsEngine {
     remove_active_position(market_id, position_id);
   }
 
-  fn liquidate_position_native(position_id: int,
-                               market_id: int,
-                               mark_price_bps: int,
-                               index_price_bps: int) {
+  fn liquidate_position_native(int position_id,
+                               int market_id,
+                               int mark_price_bps,
+                               int index_price_bps) {
     let margin = PerpsPositionMargin.get_or(position_id, 0);
     let equity = position_equity(position_id, mark_price_bps);
     let owner_residual_request = max_int(equity, 0);
@@ -525,11 +617,11 @@ seiyaku PerpsEngine {
     remove_active_position(market_id, position_id);
   }
 
-  fn process_liquidation_candidate(position_id: int,
-                                   market_id: int,
-                                   mark_price_bps: int,
-                                   index_price_bps: int,
-                                   current_slot: int) -> int {
+  fn process_liquidation_candidate(int position_id,
+                                   int market_id,
+                                   int mark_price_bps,
+                                   int index_price_bps,
+                                   int current_slot) -> int {
     let status = PerpsPositionStatus.get_or(position_id, 0);
     if status != 1 && status != 3 {
       return 0;
@@ -565,11 +657,11 @@ seiyaku PerpsEngine {
     return 0;
   }
 
-  fn process_liquidation_candidate_native(position_id: int,
-                                          market_id: int,
-                                          mark_price_bps: int,
-                                          index_price_bps: int,
-                                          current_slot: int) -> int {
+  fn process_liquidation_candidate_native(int position_id,
+                                          int market_id,
+                                          int mark_price_bps,
+                                          int index_price_bps,
+                                          int current_slot) -> int {
     let status = PerpsPositionStatus.get_or(position_id, 0);
     if status != 1 && status != 3 {
       return 0;
@@ -605,27 +697,27 @@ seiyaku PerpsEngine {
     return 0;
   }
 
-  kotoage fn main() -> int {
+  kotoage fn main() -> int authorize("AssetOps") {
     if PerpsInitialized == 1 {
       return 1;
     }
     return 0;
   }
 
-  kotoage fn init_engine(collateral_asset: AssetDefinitionId,
-                         risk_vault_contract: bytes,
-                         oracle_public_key: bytes,
-                         oracle_scheme: int) {
-    assert(PerpsInitialized == 0, "engine initialized");
-    assert(oracle_scheme > 0, "invalid oracle scheme");
+  kotoage fn init_engine(AssetDefinitionId collateral_asset,
+                         bytes risk_vault_contract,
+                         bytes oracle_public_key,
+                         int oracle_scheme) authorize("AssetOps") {
+    require(PerpsInitialized == 0, PerpsEngineError::EngineInitialized);
+    require(oracle_scheme > 0, PerpsEngineError::InvalidOracleScheme);
     PerpsInitialized = 1;
-    PerpsOwner = authority();
+    PerpsOwner = context::authority();
     PerpsCollateralAsset = collateral_asset;
     PerpsRiskVaultContract = risk_vault_contract;
     PerpsOraclePublicKey = oracle_public_key;
     PerpsOracleScheme = oracle_scheme;
     PerpsContractBound = 0;
-    PerpsContractId = authority();
+    PerpsContractId = context::authority();
     PerpsWithdrawalOnly = 1;
     PerpsFundingJobId = 0;
     PerpsLiquidationJobId = 0;
@@ -644,17 +736,17 @@ seiyaku PerpsEngine {
     PerpsNextPositionId = 1;
   }
 
-  kotoage fn sync_automation(executor: AccountId,
-                             funding_job_id: int,
-                             liquidation_job_id: int,
-                             cadence_slots: int,
-                             backlog_cap: int,
-                             safe_mode: int) {
+  kotoage fn sync_automation(AccountId executor,
+                             int funding_job_id,
+                             int liquidation_job_id,
+                             int cadence_slots,
+                             int backlog_cap,
+                             int safe_mode) authorize("AssetOps") {
     assert_owner();
-    assert(funding_job_id >= 0, "invalid funding job id");
-    assert(liquidation_job_id >= 0, "invalid liquidation job id");
-    assert(cadence_slots >= 0, "invalid cadence");
-    assert(backlog_cap >= 0, "invalid backlog cap");
+    require(funding_job_id >= 0, PerpsEngineError::InvalidFundingJobId);
+    require(liquidation_job_id >= 0, PerpsEngineError::InvalidLiquidationJobId);
+    require(cadence_slots >= 0, PerpsEngineError::InvalidCadence);
+    require(backlog_cap >= 0, PerpsEngineError::InvalidBacklogCap);
     PerpsAutomationExecutor = executor;
     PerpsFundingJobId = funding_job_id;
     PerpsLiquidationJobId = liquidation_job_id;
@@ -663,32 +755,32 @@ seiyaku PerpsEngine {
     PerpsAutomationSafeMode = safe_mode;
   }
 
-  kotoage fn configure_trigger_lifecycle(cadence_slots: int,
-                                         max_items_per_tick: int,
-                                         enabled: int) permission(Admin) {
+  kotoage fn configure_trigger_lifecycle(int cadence_slots,
+                                         int max_items_per_tick,
+                                         int enabled) authorize("Admin") {
     assert_owner();
-    assert(cadence_slots >= 0, "invalid cadence");
-    assert(max_items_per_tick > 0, "invalid max items");
-    assert(max_items_per_tick <= 4, "max items too high");
-    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    require(cadence_slots >= 0, PerpsEngineError::InvalidCadence);
+    require(max_items_per_tick > 0, PerpsEngineError::InvalidMaxItems);
+    require(max_items_per_tick <= 4, PerpsEngineError::MaxItemsTooHigh);
+    require(enabled == 0 || enabled == 1, PerpsEngineError::InvalidEnabled);
     PerpsLifecycleCadenceSlots = cadence_slots;
     PerpsLifecycleMaxItems = max_items_per_tick;
     PerpsLifecycleEnabled = enabled;
-    PerpsLifecycleNextSlot = block_height() + cadence_slots;
+    PerpsLifecycleNextSlot = context::block_height() + cadence_slots;
     if PerpsLifecycleMarketCursor <= 0 {
       PerpsLifecycleMarketCursor = 1;
     }
-    set_trigger_enabled(name("soraswap_perps_lifecycle_tick"), enabled);
+    ledger::trigger::set_enabled(Name::parse("soraswap_perps_lifecycle_tick"), enabled);
   }
 
-  kotoage fn native_lifecycle_tick() permission(AssetOps) {
+  kotoage fn native_lifecycle_tick() authorize("AssetOps") {
     if PerpsInitialized == 0 {
       return;
     }
     if PerpsLifecycleEnabled == 0 || PerpsAutomationSafeMode != 0 {
       return;
     }
-    let current_slot = block_height();
+    let current_slot = context::block_height();
     if PerpsLifecycleNextSlot > 0 && current_slot < PerpsLifecycleNextSlot {
       return;
     }
@@ -779,7 +871,7 @@ seiyaku PerpsEngine {
     );
   }
 
-  view fn market_state(market_id: int) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
+  view fn market_state(int market_id) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
     let registered = 0;
     if PerpsMarketAsset.contains(market_id) {
       registered = 1;
@@ -801,7 +893,7 @@ seiyaku PerpsEngine {
     );
   }
 
-  view fn market_oracle_state(market_id: int) -> (int, int, int, int) {
+  view fn market_oracle_state(int market_id) -> (int, int, int, int) {
     assert_market_registered(market_id);
     return (
       PerpsMarketLastMarkPrice.get_or(market_id, 0),
@@ -811,7 +903,7 @@ seiyaku PerpsEngine {
     );
   }
 
-  view fn position_state(position_id: int) -> (int, int, int, int, int, int, int, int, int, int, int) {
+  view fn position_state(int position_id) -> (int, int, int, int, int, int, int, int, int, int, int) {
     return (
       position_registered(position_id),
       PerpsPositionStatus.get_or(position_id, 0),
@@ -827,7 +919,7 @@ seiyaku PerpsEngine {
     );
   }
 
-  view fn liquidation_state(market_id: int) -> (int, int, int, int, int, int, int) {
+  view fn liquidation_state(int market_id) -> (int, int, int, int, int, int, int) {
     assert_market_registered(market_id);
     return (
       PerpsMarketActivePositionCount.get_or(market_id, 0),
@@ -852,7 +944,7 @@ seiyaku PerpsEngine {
     );
   }
 
-  view fn position_liquidation_state(position_id: int) -> (int, int, int) {
+  view fn position_liquidation_state(int position_id) -> (int, int, int) {
     return (
       PerpsPositionQueuedSlot.get_or(position_id, 0),
       PerpsPositionLastKeeperReward.get_or(position_id, 0),
@@ -860,7 +952,7 @@ seiyaku PerpsEngine {
     );
   }
 
-  view fn risk_state(market_id: int) -> (int, int, int, int, int, int, int, int) {
+  view fn risk_state(int market_id) -> (int, int, int, int, int, int, int, int) {
     assert_market_registered(market_id);
     let projected_open_interest = PerpsMarketOpenInterest.get_or(market_id, 0);
     return (
@@ -897,37 +989,37 @@ seiyaku PerpsEngine {
     );
   }
 
-  kotoage fn bind_contract(contract_id: AccountId) {
+  kotoage fn bind_contract(AccountId contract_id) authorize("AssetOps") {
     assert_owner();
     PerpsContractId = contract_id;
     PerpsContractBound = 1;
   }
 
-  kotoage fn bind_risk_vault(risk_vault_contract: bytes) {
+  kotoage fn bind_risk_vault(bytes risk_vault_contract) authorize("AssetOps") {
     assert_owner();
     PerpsRiskVaultContract = risk_vault_contract;
   }
 
-  kotoage fn enter_withdrawal_only() {
+  kotoage fn enter_withdrawal_only() authorize("AssetOps") {
     assert_owner();
     PerpsWithdrawalOnly = 1;
   }
 
-  kotoage fn exit_withdrawal_only() {
+  kotoage fn exit_withdrawal_only() authorize("AssetOps") {
     assert_owner();
     PerpsWithdrawalOnly = 0;
   }
 
-  kotoage fn open_position(market_id: int,
-                           size: int,
-                           margin: int,
-                           requested_leverage_bps: int,
-                           oracle_payload: bytes,
-                           oracle_signature: bytes) -> int permission(AssetOps) {
+  kotoage fn open_position(int market_id,
+                           int size,
+                           int margin,
+                           int requested_leverage_bps,
+                           bytes oracle_payload,
+                           bytes oracle_signature) -> int authorize("AssetOps") {
     assert_initialized();
     assert_risk_on();
-    assert(size != 0, "invalid size");
-    assert(margin > 0, "invalid margin");
+    require(size != 0, PerpsEngineError::InvalidSize);
+    require(margin > 0, PerpsEngineError::InvalidMargin);
     let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
     let mark_price_bps = oracle.0;
     let index_price_bps = oracle.1;
@@ -937,17 +1029,17 @@ seiyaku PerpsEngine {
     if effective_leverage <= 0 {
       effective_leverage = PerpsMarketMaxLeverageBps[market_id];
     }
-    assert(effective_leverage <= PerpsMarketMaxLeverageBps[market_id], "leverage exceeds market cap");
-    assert(margin >= required_initial_margin(size, effective_leverage), "insufficient initial margin");
+    require(effective_leverage <= PerpsMarketMaxLeverageBps[market_id], PerpsEngineError::LeverageExceedsMarketCap);
+    require(margin >= required_initial_margin(size, effective_leverage), PerpsEngineError::InsufficientInitialMargin);
     let projected_open_interest = PerpsMarketOpenInterest.get_or(market_id, 0) + abs_int(size);
     assert_market_accepts_risk(market_id, projected_open_interest);
     let position_id = PerpsNextPositionId;
     PerpsNextPositionId = position_id + 1;
     assert_contract_bound();
-    move_asset_if_needed(authority(), PerpsContractId, PerpsCollateralAsset, margin);
+    move_asset_if_needed(context::authority(), PerpsContractId, PerpsCollateralAsset, margin);
     risk_vault_deposit(margin);
     risk_vault_lock_liability(position_id, abs_int(size), margin);
-    PerpsPositionOwner[position_id] = authority();
+    PerpsPositionOwner[position_id] = context::authority();
     PerpsPositionMarketId[position_id] = market_id;
     PerpsPositionSize[position_id] = size;
     PerpsPositionMargin[position_id] = margin;
@@ -967,14 +1059,14 @@ seiyaku PerpsEngine {
     return position_id;
   }
 
-  kotoage fn add_margin(position_id: int, amount: int) -> int permission(AssetOps) {
+  kotoage fn add_margin(int position_id, int amount) -> int authorize("AssetOps") {
     assert_initialized();
     assert_risk_on();
     assert_position_owner_manageable(position_id);
-    assert(amount > 0, "invalid amount");
+    require(amount > 0, PerpsEngineError::InvalidAmount);
     let market_id = PerpsPositionMarketId[position_id];
     assert_contract_bound();
-    move_asset_if_needed(authority(), PerpsContractId, PerpsCollateralAsset, amount);
+    move_asset_if_needed(context::authority(), PerpsContractId, PerpsCollateralAsset, amount);
     risk_vault_deposit(amount);
     PerpsPositionMargin[position_id] = PerpsPositionMargin[position_id] + amount;
     risk_vault_lock_liability(
@@ -985,14 +1077,14 @@ seiyaku PerpsEngine {
     return market_utilisation_bps(market_id, PerpsMarketOpenInterest.get_or(market_id, 0));
   }
 
-  kotoage fn remove_margin(position_id: int,
-                           amount: int,
-                           oracle_payload: bytes,
-                           oracle_signature: bytes) -> int permission(AssetOps) {
+  kotoage fn remove_margin(int position_id,
+                           int amount,
+                           bytes oracle_payload,
+                           bytes oracle_signature) -> int authorize("AssetOps") {
     assert_initialized();
     assert_risk_on();
     assert_position_owner(position_id);
-    assert(amount > 0, "invalid amount");
+    require(amount > 0, PerpsEngineError::InvalidAmount);
     let market_id = PerpsPositionMarketId[position_id];
     let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
     let mark_price_bps = oracle.0;
@@ -1000,16 +1092,16 @@ seiyaku PerpsEngine {
     let oracle_slot = oracle.3;
     let attestation_hash = oracle.5;
     let next_margin = PerpsPositionMargin[position_id] - amount;
-    assert(next_margin >= 0, "insufficient margin");
+    require(next_margin >= 0, PerpsEngineError::InsufficientMargin);
     let next_equity = next_margin +
       unrealized_pnl(PerpsPositionSize[position_id], PerpsPositionEntryPrice[position_id], mark_price_bps);
     let maintenance = required_maintenance_margin(
       PerpsPositionSize[position_id],
       PerpsMarketMaintenanceMarginBps[market_id]
     );
-    assert(next_equity >= maintenance, "maintenance margin");
-    let settled = risk_vault_settle_payout(position_id, authority(), amount);
-    assert(settled == amount, "risk vault margin settle");
+    require(next_equity >= maintenance, PerpsEngineError::MaintenanceMargin);
+    let settled = risk_vault_settle_payout(position_id, context::authority(), amount);
+    require(settled == amount, PerpsEngineError::RiskVaultMarginSettle);
     PerpsPositionMargin[position_id] = next_margin;
     risk_vault_lock_liability(position_id, abs_int(PerpsPositionSize[position_id]), next_margin);
     PerpsPositionMarkPrice[position_id] = mark_price_bps;
@@ -1018,9 +1110,9 @@ seiyaku PerpsEngine {
     return next_margin;
   }
 
-  kotoage fn sync_funding(market_id: int,
-                          oracle_payload: bytes,
-                          oracle_signature: bytes) -> int {
+  kotoage fn sync_funding(int market_id,
+                          bytes oracle_payload,
+                          bytes oracle_signature) -> int authorize("AssetOps") {
     assert_initialized();
     assert_market_registered(market_id);
     let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
@@ -1035,14 +1127,14 @@ seiyaku PerpsEngine {
     return funding_delta_bps;
   }
 
-  kotoage fn run_liquidation_pass(market_id: int,
-                                  max_positions: int,
-                                  oracle_payload: bytes,
-                                  oracle_signature: bytes) -> int permission(AssetOps) {
+  kotoage fn run_liquidation_pass(int market_id,
+                                  int max_positions,
+                                  bytes oracle_payload,
+                                  bytes oracle_signature) -> int authorize("AssetOps") {
     assert_initialized();
     assert_automation_runner();
-    assert(max_positions > 0, "invalid scan size");
-    assert(max_positions <= 4, "scan size exceeds cap");
+    require(max_positions > 0, PerpsEngineError::InvalidScanSize);
+    require(max_positions <= 4, PerpsEngineError::ScanSizeExceedsCap);
     let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
     let mark_price_bps = oracle.0;
     let index_price_bps = oracle.1;
@@ -1103,9 +1195,9 @@ seiyaku PerpsEngine {
     return liquidated;
   }
 
-  kotoage fn close_position(position_id: int,
-                            oracle_payload: bytes,
-                            oracle_signature: bytes) -> int permission(AssetOps) {
+  kotoage fn close_position(int position_id,
+                            bytes oracle_payload,
+                            bytes oracle_signature) -> int authorize("AssetOps") {
     assert_initialized();
     assert_risk_on();
     assert_position_owner_manageable(position_id);
@@ -1123,13 +1215,13 @@ seiyaku PerpsEngine {
         PerpsPositionSize[position_id],
         PerpsMarketMaintenanceMarginBps.get_or(market_id, 0)
       );
-      assert(position_equity(position_id, mark_price_bps) >= maintenance, "position queued");
+      require(position_equity(position_id, mark_price_bps) >= maintenance, PerpsEngineError::PositionQueued);
       PerpsMarketQueuedLiquidations[market_id] =
         max_int(PerpsMarketQueuedLiquidations.get_or(market_id, 0) - 1, 0);
       PerpsPositionQueuedSlot[position_id] = 0;
     }
 
-    let settled_payout = risk_vault_settle_payout(position_id, authority(), payout);
+    let settled_payout = risk_vault_settle_payout(position_id, context::authority(), payout);
     risk_vault_release_liability(position_id);
     PerpsPositionRealizedPnl[position_id] =
       PerpsPositionRealizedPnl.get_or(position_id, 0) +
@@ -1147,24 +1239,31 @@ seiyaku PerpsEngine {
     return settled_payout;
   }
 
-  kotoage fn register_market(asset: AssetDefinitionId,
-                             max_leverage_bps: int,
-                             maintenance_margin_bps: int,
-                             liquidation_fee_bps: int,
-                             open_interest_cap: int,
-                             funding_bps: int,
-                             funding_interval_slots: int,
-                             oracle_stale_slots: int,
-                             backlog_limit: int,
-                             utilisation_clamp_bps: int,
-                             liquidation_stress_limit: int) -> int {
+  kotoage fn register_market(AssetDefinitionId asset,
+                             int max_leverage_bps,
+                             int maintenance_margin_bps,
+                             int liquidation_fee_bps,
+                             int open_interest_cap,
+                             int funding_bps,
+                             int funding_interval_slots,
+                             int oracle_stale_slots,
+                             int backlog_limit,
+                             int utilisation_clamp_bps,
+                             int liquidation_stress_limit) -> int authorize("AssetOps") {
     assert_owner();
-    assert(max_leverage_bps > 10_000, "invalid leverage cap");
-    assert(maintenance_margin_bps > 0, "invalid maintenance margin");
-    assert(liquidation_fee_bps >= 0, "invalid liquidation fee");
-    assert(open_interest_cap > 0, "invalid open interest cap");
-    assert(funding_interval_slots >= 0, "invalid funding cadence");
-    assert(oracle_stale_slots >= 0, "invalid oracle stale slots");
+    assert_market_risk_params(
+      max_leverage_bps,
+      maintenance_margin_bps,
+      liquidation_fee_bps,
+      open_interest_cap,
+      funding_interval_slots,
+      oracle_stale_slots,
+      backlog_limit,
+      utilisation_clamp_bps,
+      liquidation_stress_limit,
+      0,
+      1
+    );
     let market_id = PerpsNextMarketId;
     PerpsNextMarketId = market_id + 1;
     PerpsMarketAsset[market_id] = asset;
@@ -1197,21 +1296,34 @@ seiyaku PerpsEngine {
     return market_id;
   }
 
-  kotoage fn update_market(market_id: int,
-                           max_leverage_bps: int,
-                           maintenance_margin_bps: int,
-                           liquidation_fee_bps: int,
-                           open_interest_cap: int,
-                           funding_bps: int,
-                           funding_interval_slots: int,
-                           oracle_stale_slots: int,
-                           backlog_limit: int,
-                           utilisation_clamp_bps: int,
-                           liquidation_stress_limit: int,
-                           guard_flags: int,
-                           active: int) {
+  kotoage fn update_market(int market_id,
+                           int max_leverage_bps,
+                           int maintenance_margin_bps,
+                           int liquidation_fee_bps,
+                           int open_interest_cap,
+                           int funding_bps,
+                           int funding_interval_slots,
+                           int oracle_stale_slots,
+                           int backlog_limit,
+                           int utilisation_clamp_bps,
+                           int liquidation_stress_limit,
+                           int guard_flags,
+                           int active) authorize("AssetOps") {
     assert_owner();
     assert_market_registered(market_id);
+    assert_market_risk_params(
+      max_leverage_bps,
+      maintenance_margin_bps,
+      liquidation_fee_bps,
+      open_interest_cap,
+      funding_interval_slots,
+      oracle_stale_slots,
+      backlog_limit,
+      utilisation_clamp_bps,
+      liquidation_stress_limit,
+      guard_flags,
+      active
+    );
     PerpsMarketMaxLeverageBps[market_id] = max_leverage_bps;
     PerpsMarketMaintenanceMarginBps[market_id] = maintenance_margin_bps;
     PerpsMarketLiquidationFeeBps[market_id] = liquidation_fee_bps;
@@ -1226,53 +1338,23 @@ seiyaku PerpsEngine {
     PerpsMarketActive[market_id] = active;
   }
 
-  kotoage fn admin_repair_orphan_position(position_id: int,
-                                          mark_price_bps: int,
-                                          index_price_bps: int) {
-    assert_owner();
-    assert(PerpsPositionOwner.contains(position_id), "position missing");
-    let status = PerpsPositionStatus.get_or(position_id, 0);
-    assert(status == 1 || status == 3, "position not repairable");
-    let market_id = PerpsPositionMarketId.get_or(position_id, 0);
-    let current_size = PerpsPositionSize.get_or(position_id, 0);
-
-    if status == 3 {
-      PerpsMarketQueuedLiquidations[market_id] =
-        max_int(PerpsMarketQueuedLiquidations.get_or(market_id, 0) - 1, 0);
-    }
-
-    PerpsMarketOpenInterest[market_id] =
-      max_int(PerpsMarketOpenInterest.get_or(market_id, 0) - abs_int(current_size), 0);
-    PerpsPositionSize[position_id] = 0;
-    PerpsPositionMargin[position_id] = 0;
-    if mark_price_bps > 0 {
-      PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    }
-    if index_price_bps > 0 {
-      PerpsPositionIndexPrice[position_id] = index_price_bps;
-    }
-    PerpsPositionStatus[position_id] = 2;
-    PerpsPositionQueuedSlot[position_id] = 0;
-    remove_active_position(market_id, position_id);
-  }
-
-  kotoage fn heartbeat(market_id: int,
-                       current_backlog: int,
-                       safe_mode: int) permission(Admin) {
+  kotoage fn heartbeat(int market_id,
+                       int current_backlog,
+                       int safe_mode) authorize("Admin") {
     assert_owner();
     assert_market_registered(market_id);
-    assert(current_backlog >= 0, "invalid backlog");
+    require(current_backlog >= 0, PerpsEngineError::InvalidBacklog);
     PerpsAutomationBacklog = current_backlog;
     PerpsAutomationSafeMode = safe_mode;
     risk_vault_report_bucket();
   }
 
-  kotoage fn modify_position(position_id: int,
-                             size_delta: int,
-                             margin_delta: int,
-                             requested_leverage_bps: int,
-                             oracle_payload: bytes,
-                             oracle_signature: bytes) -> int permission(AssetOps) {
+  kotoage fn modify_position(int position_id,
+                             int size_delta,
+                             int margin_delta,
+                             int requested_leverage_bps,
+                             bytes oracle_payload,
+                             bytes oracle_signature) -> int authorize("AssetOps") {
     assert_initialized();
     assert_risk_on();
     assert_position_owner(position_id);
@@ -1285,9 +1367,9 @@ seiyaku PerpsEngine {
     let current_size = PerpsPositionSize[position_id];
     let current_margin = PerpsPositionMargin[position_id];
     let next_size = current_size + size_delta;
-    assert(next_size != 0, "use close position");
+    require(next_size != 0, PerpsEngineError::UseClosePosition);
     let next_margin = current_margin + margin_delta;
-    assert(next_margin > 0, "invalid resulting margin");
+    require(next_margin > 0, PerpsEngineError::InvalidResultingMargin);
 
     let current_open_interest = PerpsMarketOpenInterest.get_or(market_id, 0);
     let projected_open_interest = current_open_interest - abs_int(current_size) + abs_int(next_size);
@@ -1297,22 +1379,19 @@ seiyaku PerpsEngine {
     if effective_leverage <= 0 {
       effective_leverage = PerpsMarketMaxLeverageBps[market_id];
     }
-    assert(
-      next_margin >= required_initial_margin(next_size, min_int(effective_leverage, PerpsMarketMaxLeverageBps[market_id])),
-      "initial margin"
-    );
+    require(next_margin >= required_initial_margin(next_size, min_int(effective_leverage, PerpsMarketMaxLeverageBps[market_id])), PerpsEngineError::InitialMargin);
     let next_equity = next_margin + unrealized_pnl(next_size, PerpsPositionEntryPrice[position_id], mark_price_bps);
     let maintenance = required_maintenance_margin(next_size, PerpsMarketMaintenanceMarginBps[market_id]);
-    assert(next_equity >= maintenance, "maintenance margin");
+    require(next_equity >= maintenance, PerpsEngineError::MaintenanceMargin);
 
     if margin_delta > 0 {
       assert_contract_bound();
-      move_asset_if_needed(authority(), PerpsContractId, PerpsCollateralAsset, margin_delta);
+      move_asset_if_needed(context::authority(), PerpsContractId, PerpsCollateralAsset, margin_delta);
       risk_vault_deposit(margin_delta);
     }
     if margin_delta < 0 {
-      let settled = risk_vault_settle_payout(position_id, authority(), 0 - margin_delta);
-      assert(settled == 0 - margin_delta, "risk vault margin settle");
+      let settled = risk_vault_settle_payout(position_id, context::authority(), 0 - margin_delta);
+      require(settled == 0 - margin_delta, PerpsEngineError::RiskVaultMarginSettle);
     }
     risk_vault_lock_liability(position_id, abs_int(next_size), next_margin);
 

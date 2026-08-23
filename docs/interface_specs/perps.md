@@ -14,7 +14,6 @@ Lifecycle and control entrypoints:
 Market admin entrypoints:
 - `register_market(asset, max_leverage_bps, maintenance_margin_bps, liquidation_fee_bps, open_interest_cap, funding_bps, funding_interval_slots, oracle_stale_slots, backlog_limit, utilisation_clamp_bps, liquidation_stress_limit) -> int`
 - `update_market(market_id, max_leverage_bps, maintenance_margin_bps, liquidation_fee_bps, open_interest_cap, funding_bps, funding_interval_slots, oracle_stale_slots, backlog_limit, utilisation_clamp_bps, liquidation_stress_limit, guard_flags, active)`
-- `admin_repair_orphan_position(position_id, mark_price_bps, index_price_bps)`
 - `heartbeat(market_id, current_backlog, safe_mode)`
 - `configure_trigger_lifecycle(cadence_slots, max_items_per_tick, enabled)`
 - `native_lifecycle_tick()`
@@ -48,10 +47,11 @@ Notes:
 - `run_liquidation_pass(...)` is the canonical liquidation path. The first unhealthy pass queues the position, a later healthy pass auto-recovers it, and a later unhealthy pass liquidates it once the queued slot is older than the current oracle slot.
 - `close_position` and liquidation payouts settle through bucket `1`, then release the liability in the same flow.
 - Automatic liquidations pay the keeper fee to `authority()` and return any remaining positive residual equity to the original position owner.
-- `admin_repair_orphan_position(...)` is owner-only recovery tooling for long-lived environments such as Taira where a historical position can remain open after the bound `risk_vault` liability is gone; it closes the stale position without attempting payout settlement.
+- Bootstrap treats an open or queued position without a matching bucket `1` `risk_vault` liability as an accounting invariant failure and does not close it through an administrative repair entrypoint.
 - Signed oracle payloads are raw UTF-8 JSON bytes passed as hex blobs, and signatures cover the exact bytes supplied. Scheme `1` is Ed25519. Required fields are `domain=1`, `market_id`, `mark_price_bps`, `index_price_bps`, `confidence_bps`, `oracle_slot`, `status_flags`, and `attestation_hash`.
 - All risk-bearing perps mutations except `add_margin` verify the configured oracle key, decode the signed JSON privately, reject degraded/stale/replayed oracle slots, and use `block_height()` as the current slot. The raw `settle_funding(position, mark_price, index_price)` and naked payout helpers were removed.
 - Engine-side risk guards clamp openings and modifications on market pause, backlog, utilisation, liquidation stress, withdrawal-only mode, and automation safe mode.
+- Market registration and updates use the same risk-parameter validation: leverage must exceed `10_000`, maintenance and liquidation fees are capped to `10_000`, open-interest caps must be positive, stale/backlog/stress/guard values must be non-negative, utilisation clamps are bounded to `0..10_000`, and `active` is binary.
 - The stored `risk_vault_contract` is the deployed `risk_vault` contract address literal carried as a UTF-8 `bytes` field for ABI v1 `call_contract(...)` routing. View surfaces expose that field as hex-encoded bytes.
 - `main()` is a write entrypoint, not a `view fn`; bootstrap and smoke should use the typed views above.
-- `soraswap_perps_lifecycle_tick` is a bounded pre-commit trigger. It consumes the latest valid cached oracle state, can apply funding and liquidation passes without keeper rewards, and does not invent prices.
+- `soraswap_perps_lifecycle_tick` is a bounded time trigger registered on a `schedule(80000, 120000)` native schedule. It still enforces the configured slot cadence inside the contract, consumes the latest valid cached oracle state, can apply funding and liquidation passes without keeper rewards, and does not invent prices.

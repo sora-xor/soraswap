@@ -1,0 +1,33 @@
+koto_test { target: "../../contracts/options/factory.ko" }
+
+fixture options_factory_actors {
+  actor("owner", AccountId::parse("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+}
+
+fn seed_options_factory(AccountId owner) {
+  OptFactoryInitialized = 1;
+  OptFactoryOwner = owner;
+  OptFactoryOracleStaleSlots = 4;
+  OptFactorySeriesKind[1] = 1;
+}
+
+#[test(fixture="options_factory_actors")]
+fn factory_oracle_stale_slots_are_owner_configured() {
+  let owner = actor_account("owner");
+  seed_options_factory(owner);
+
+  invoke_entrypoint_as("owner", "configure_oracle_stale_slots", json("{\"oracle_stale_slots\":8}"));
+
+  assert(OptFactoryOracleStaleSlots == 8, "factory stale slots");
+  expect_reject_as("owner", "configure_oracle_stale_slots", json("{\"oracle_stale_slots\":-1}"));
+}
+
+#[test(fixture="options_factory_actors")]
+fn utilisation_guard_rejects_impossible_bps_thresholds() {
+  let owner = actor_account("owner");
+  seed_options_factory(owner);
+
+  expect_reject_as("owner", "configure_utilisation_guard", json("{\"series_id\":1,\"bump_activate_bps\":10001,\"bump_deactivate_bps\":6000,\"pause_threshold_bps\":9500,\"bump_percent_bps\":1500}"));
+  expect_reject_as("owner", "configure_utilisation_guard", json("{\"series_id\":1,\"bump_activate_bps\":8000,\"bump_deactivate_bps\":10001,\"pause_threshold_bps\":9500,\"bump_percent_bps\":1500}"));
+  expect_reject_as("owner", "configure_utilisation_guard", json("{\"series_id\":1,\"bump_activate_bps\":8000,\"bump_deactivate_bps\":6000,\"pause_threshold_bps\":10001,\"bump_percent_bps\":1500}"));
+}

@@ -22,6 +22,160 @@ import serve_contract_console as contract_console
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_GAS_LIMIT = 100000
 DEFAULT_ROUTER_CONTRACT_KEY = "dlmm.dlmm_router"
+DEFAULT_READ_PROXY_LIMIT_CAP = 500
+DEFAULT_READ_PROXY_OFFSET_CAP = 10000
+DEFAULT_SSE_QUERY_TEXT_CAP = 256
+MAX_SSE_LINE_BYTES = 1_048_576
+READ_PROXY_TEXT_QUERY_KEYS = {"authority", "contract_address", "cursor", "module"}
+SSE_TEXT_QUERY_KEYS = {"authority", "contract_address", "cursor", "module"}
+READ_PROXY_LIMITS = {
+    "/v1/contracts/activity": {"default": 200, "cap": DEFAULT_READ_PROXY_LIMIT_CAP},
+    "/v1/contracts/events": {"default": 200, "cap": DEFAULT_READ_PROXY_LIMIT_CAP},
+    "/v1/contracts/rollups/swaps/fills": {"default": 120, "cap": DEFAULT_READ_PROXY_LIMIT_CAP},
+    "/v1/contracts/rollups/swaps/candles": {"default": 120, "cap": DEFAULT_READ_PROXY_LIMIT_CAP},
+    "/v1/contracts/rollups/trader/activity": {"default": 64, "cap": DEFAULT_READ_PROXY_LIMIT_CAP},
+    "/v1/contracts/rollups/intents": {"default": 64, "cap": 250},
+    "/v1/contracts/rollups/vaults/positions": {"default": 64, "cap": 250},
+    "/v1/contracts/rollups/operators/status": {"default": 64, "cap": 250},
+    "/v1/contracts/rollups/margin/health": {"default": 64, "cap": 250},
+    "/v1/contracts/rollups/rwa/lots": {"default": 64, "cap": 250},
+    "/v1/contracts/rollups/dlmm/hooks": {"default": 64, "cap": 250},
+}
+READ_PROXY_ALLOWLIST_PATHS = set(READ_PROXY_LIMITS) | {
+    "/v1/contracts/rollups/trader/account",
+}
+READ_PROXY_TEXT_QUERY_KEYS_BY_PATH = {
+    "/v1/contracts/rollups/trader/account": {"authority"},
+}
+READ_PROXY_INT_QUERY_LIMITS_BY_PATH = {
+    "/v1/contracts/rollups/swaps/candles": {
+        "bucket_secs": {"default": 3600, "minimum": 1, "maximum": 86400},
+    },
+}
+
+
+def _first_query_value(value: str | list[str] | tuple[str, ...] | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list | tuple):
+        return str(value[0]) if value else None
+    return str(value)
+
+
+def _bounded_int_query_value(
+    value: str | list[str] | tuple[str, ...] | None,
+    *,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> str:
+    raw = _first_query_value(value)
+    try:
+        parsed = int(raw) if raw not in (None, "") else default
+    except (TypeError, ValueError):
+        parsed = default
+    parsed = max(minimum, min(maximum, parsed))
+    return str(parsed)
+
+
+def bounded_read_proxy_query(
+    upstream_path: str,
+    query_params: dict[str, list[str]],
+) -> dict[str, str | list[str]]:
+    if upstream_path not in READ_PROXY_ALLOWLIST_PATHS:
+        return contract_console.query_dict_from_pairs(query_params)
+
+    query: dict[str, str | list[str]] = {}
+    text_query_keys = READ_PROXY_TEXT_QUERY_KEYS_BY_PATH.get(upstream_path, READ_PROXY_TEXT_QUERY_KEYS)
+    for key in sorted(text_query_keys):
+        value = _bounded_text_query_value(
+            query_params.get(key),
+            maximum_length=DEFAULT_SSE_QUERY_TEXT_CAP,
+        )
+        if value:
+            query[key] = value
+
+    int_query_limits = READ_PROXY_INT_QUERY_LIMITS_BY_PATH.get(upstream_path, {})
+    for key, config in int_query_limits.items():
+        if key in query_params:
+            query[key] = _bounded_int_query_value(
+                query_params.get(key),
+                default=config["default"],
+                minimum=config["minimum"],
+                maximum=config["maximum"],
+            )
+
+    limit_config = READ_PROXY_LIMITS.get(upstream_path)
+    if limit_config is None:
+        return query
+
+    query["limit"] = _bounded_int_query_value(
+        query_params.get("limit"),
+        default=limit_config["default"],
+        minimum=1,
+        maximum=limit_config["cap"],
+    )
+    for offset_key in ("from", "offset"):
+        if offset_key in query_params:
+            query[offset_key] = _bounded_int_query_value(
+                query_params.get(offset_key),
+                default=0,
+                minimum=0,
+                maximum=DEFAULT_READ_PROXY_OFFSET_CAP,
+            )
+    return query
+
+
+def _bounded_text_query_value(
+    value: str | list[str] | tuple[str, ...] | None,
+    *,
+    maximum_length: int,
+) -> str | None:
+    raw = _first_query_value(value)
+    if raw in (None, ""):
+        return None
+    return str(raw)[:maximum_length]
+
+
+def bounded_sse_proxy_query(query_params: dict[str, list[str]]) -> dict[str, str]:
+    query: dict[str, str] = {}
+    for key in sorted(SSE_TEXT_QUERY_KEYS):
+        value = _bounded_text_query_value(
+            query_params.get(key),
+            maximum_length=DEFAULT_SSE_QUERY_TEXT_CAP,
+        )
+        if value:
+            query[key] = value
+
+    if "limit" in query_params:
+        query["limit"] = _bounded_int_query_value(
+            query_params.get("limit"),
+            default=DEFAULT_READ_PROXY_LIMIT_CAP,
+            minimum=1,
+            maximum=DEFAULT_READ_PROXY_LIMIT_CAP,
+        )
+    if "from" in query_params:
+        query["from"] = _bounded_int_query_value(
+            query_params.get("from"),
+            default=0,
+            minimum=0,
+            maximum=DEFAULT_READ_PROXY_OFFSET_CAP,
+        )
+    if "offset" in query_params:
+        query["offset"] = _bounded_int_query_value(
+            query_params.get("offset"),
+            default=0,
+            minimum=0,
+            maximum=DEFAULT_READ_PROXY_OFFSET_CAP,
+        )
+    return query
+
+
+def read_bounded_sse_line(upstream: Any) -> bytes:
+    line = upstream.readline(MAX_SSE_LINE_BYTES + 1)
+    if len(line) > MAX_SSE_LINE_BYTES:
+        raise OSError(f"SSE upstream line exceeds {MAX_SSE_LINE_BYTES} byte limit")
+    return line
 
 
 class FastThreadingHTTPServer(ThreadingHTTPServer):
@@ -58,7 +212,8 @@ class TraderUiState:
     def load_catalog(self) -> dict[str, Any]:
         return {
             "generated_at": contract_console.utc_timestamp(),
-            "repo_root": str(self.repo_root),
+            "repo_name": self.repo_root.name,
+            "repo_root": self.repo_root.name,
             "preferred_contract_key": DEFAULT_ROUTER_CONTRACT_KEY,
             "environments": [self.load_environment(name) for name in self.list_environments()],
         }
@@ -89,7 +244,7 @@ class TraderUiHandler(BaseHTTPRequestHandler):
         return self.server.state  # type: ignore[attr-defined]
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        sys.stderr.write(f"[trader-ui] {self.address_string()} - {fmt % args}\n")
+        sys.stderr.write(f"[trader-ui] {self.address_string()} - {contract_console.redact_access_log_message(fmt % args)}\n")
 
     def resolve_proxy_environment(
         self, environment: str
@@ -152,7 +307,11 @@ class TraderUiHandler(BaseHTTPRequestHandler):
         )
 
     def handle_torii_read_proxy(self, parsed: urllib.parse.ParseResult, upstream_path: str) -> None:
-        query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+        try:
+            query_params = contract_console.parse_bounded_query(parsed.query)
+        except ValueError as exc:
+            contract_console.json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
         environment = str((query_params.pop("environment", [""])[0]) or "").strip()
 
         try:
@@ -164,7 +323,7 @@ class TraderUiHandler(BaseHTTPRequestHandler):
             contract_console.json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
 
-        request_query = contract_console.query_dict_from_pairs(query_params)
+        request_query = bounded_read_proxy_query(upstream_path, query_params)
         try:
             payload = self.execute_upstream_request(
                 environment=environment,
@@ -184,7 +343,11 @@ class TraderUiHandler(BaseHTTPRequestHandler):
     def handle_torii_events_sse(
         self, parsed: urllib.parse.ParseResult, upstream_path: str = "/v1/events/sse"
     ) -> None:
-        query_params = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+        try:
+            query_params = contract_console.parse_bounded_query(parsed.query)
+        except ValueError as exc:
+            contract_console.json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
         environment = str((query_params.pop("environment", [""])[0]) or "").strip()
 
         try:
@@ -196,10 +359,8 @@ class TraderUiHandler(BaseHTTPRequestHandler):
             contract_console.json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
 
-        upstream_query = urllib.parse.urlencode(
-            [(key, value) for key, values in query_params.items() for value in values],
-            doseq=True,
-        )
+        request_query = bounded_sse_proxy_query(query_params)
+        upstream_query = urllib.parse.urlencode(request_query, doseq=True)
         upstream_url = f"{torii_url}{upstream_path}"
         if upstream_query:
             upstream_url = f"{upstream_url}?{upstream_query}"
@@ -215,7 +376,10 @@ class TraderUiHandler(BaseHTTPRequestHandler):
         try:
             upstream = urllib.request.urlopen(request, timeout=300)
         except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
+            try:
+                body = contract_console.read_limited_text(exc)
+            except OSError as read_error:
+                body = str(read_error)
             contract_console.json_response(
                 self,
                 HTTPStatus.BAD_GATEWAY,
@@ -235,18 +399,80 @@ class TraderUiHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "keep-alive")
+            contract_console.send_browser_security_headers(self)
             self.end_headers()
 
             while True:
-                line = upstream.readline()
+                line = read_bounded_sse_line(upstream)
                 if not line:
                     break
                 self.wfile.write(line)
                 self.wfile.flush()
+        except OSError:
+            return
         except (BrokenPipeError, ConnectionResetError):
             return
         finally:
             upstream.close()
+
+    def handle_pipeline_transaction_status(self, parsed: urllib.parse.ParseResult) -> None:
+        try:
+            query_params = contract_console.parse_bounded_query(parsed.query)
+        except ValueError as exc:
+            contract_console.json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        environment = str((query_params.pop("environment", [""])[0]) or "").strip()
+        request_query, query_error = contract_console.bounded_status_proxy_query(query_params)
+        if query_error:
+            contract_console.json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": query_error})
+            return
+
+        try:
+            _, signer, torii_url = self.resolve_proxy_environment(environment)
+        except KeyError as exc:
+            contract_console.json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": str(exc)})
+            return
+        except ValueError as exc:
+            contract_console.json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        try:
+            payload = self.execute_upstream_request(
+                environment=environment,
+                signer=signer,
+                torii_url=torii_url,
+                mode="status",
+                path="/v1/pipeline/transactions/status",
+                query=request_query,
+                request_payload=None,
+            )
+        except ConnectionError as exc:
+            contract_console.json_response(self, HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)})
+            return
+
+        if payload["upstream_status"] == 404 and "status_kind" not in payload:
+            payload["status_kind"] = "NotFound"
+            payload["status_scope"] = request_query["scope"]
+        elif payload["upstream_status"] == 200:
+            try:
+                typed_status = contract_console.validate_pipeline_status_response(
+                    payload.get("response_json"),
+                    expected_hash=request_query["hash"],
+                    expected_scope=request_query["scope"],
+                )
+            except ValueError as exc:
+                payload["ok"] = False
+                payload["error_code"] = "invalid_upstream_status_payload"
+                payload["error"] = str(exc)
+                contract_console.json_response(self, HTTPStatus.BAD_GATEWAY, payload)
+                return
+            payload["status_kind"] = typed_status["kind"]
+            payload["status_scope"] = typed_status["scope"]
+            payload["status_summary"] = typed_status["summary"]
+            payload["status_diagnostics"] = typed_status["diagnostics"]
+            if typed_status["rejection_reason"] is not None:
+                payload["rejection_reason"] = typed_status["rejection_reason"]
+        contract_console.json_response(self, HTTPStatus.OK, payload)
 
     def serve_static(self, request_path: str) -> None:
         candidate = request_path or "/"
@@ -271,6 +497,7 @@ class TraderUiHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", f"{content_type or 'application/octet-stream'}")
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
+        contract_console.send_browser_security_headers(self)
         self.end_headers()
         self.wfile.write(content)
 
@@ -322,7 +549,7 @@ class TraderUiHandler(BaseHTTPRequestHandler):
             self.handle_torii_events_sse(parsed, "/v1/contracts/events/sse")
             return
         if parsed.path == "/api/pipeline/transactions/status":
-            self.handle_torii_read_proxy(parsed, "/v1/pipeline/transactions/status")
+            self.handle_pipeline_transaction_status(parsed)
             return
         self.serve_static(parsed.path)
 
@@ -336,6 +563,10 @@ class TraderUiHandler(BaseHTTPRequestHandler):
             body = contract_console.parse_request_body(self)
         except ValueError as exc:
             contract_console.json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        sensitive_key_error = contract_console.explicit_sensitive_key_error(body)
+        if sensitive_key_error:
+            contract_console.json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": sensitive_key_error})
             return
 
         environment = str(body.get("environment") or "").strip()
@@ -368,12 +599,14 @@ class TraderUiHandler(BaseHTTPRequestHandler):
             }
             if "gas_limit" in body and body["gas_limit"] not in (None, ""):
                 try:
-                    request_payload["gas_limit"] = int(body["gas_limit"])
-                except (TypeError, ValueError):
+                    request_payload["gas_limit"] = contract_console.normalize_browser_gas_limit(
+                        body["gas_limit"]
+                    )
+                except ValueError as exc:
                     contract_console.json_response(
                         self,
                         HTTPStatus.BAD_REQUEST,
-                        {"ok": False, "error": "gas_limit must be an integer"},
+                        {"ok": False, "error": str(exc)},
                     )
                     return
 
@@ -427,16 +660,13 @@ class TraderUiHandler(BaseHTTPRequestHandler):
             )
             return
 
-        gas_limit = body.get("gas_limit")
-        if gas_limit in (None, ""):
-            gas_limit = DEFAULT_GAS_LIMIT
         try:
-            gas_limit = int(gas_limit)
-        except (TypeError, ValueError):
+            gas_limit = contract_console.normalize_browser_gas_limit(body.get("gas_limit"))
+        except ValueError as exc:
             contract_console.json_response(
                 self,
                 HTTPStatus.BAD_REQUEST,
-                {"ok": False, "error": "gas_limit must be an integer"},
+                {"ok": False, "error": str(exc)},
             )
             return
 
@@ -494,7 +724,7 @@ class TraderUiHandler(BaseHTTPRequestHandler):
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Serve the SoraSwap trader cockpit.")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host. Default: 127.0.0.1")
-    parser.add_argument("--port", type=int, default=4274, help="Bind port. Default: 4274")
+    parser.add_argument("--port", type=contract_console.parse_tcp_port_arg, default=4274, help="Bind port. Default: 4274")
     parser.add_argument(
         "--signer",
         action="append",
@@ -535,6 +765,22 @@ def main(argv: list[str] | None = None) -> int:
         auto_discover=not args.no_auto_signers,
     )
     state = TraderUiState(REPO_ROOT, signers)
+    evidence_issues = contract_console.mutation_enabled_public_deployment_evidence_issues(
+        state.contract_console_state
+    )
+    if evidence_issues:
+        print(
+            "refusing to start mutation-enabled public trader cockpit with stale deployment evidence:",
+            file=sys.stderr,
+        )
+        for issue in evidence_issues:
+            print(f"  - {issue}", file=sys.stderr)
+        print(
+            "Unset the public mutation consent flag for read-only use, or refresh the public evidence.",
+            file=sys.stderr,
+        )
+        return 1
+
     server = FastThreadingHTTPServer((args.host, args.port), TraderUiHandler)
     server.state = state  # type: ignore[attr-defined]
 

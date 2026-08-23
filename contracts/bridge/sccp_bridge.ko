@@ -1,262 +1,433 @@
-// Generic SCCP bridge registry and settlement surface for Sora Nexus.
-// The bridge is hub-oriented: remote routes terminate on Nexus and use
-// canonical-home lock/release for Sora-origin assets and wrapped burn/mint for
-// remote-origin assets.
+// SCCP bridge registry and settlement surface for Sora Nexus.
+// Sora-home assets use lock/release; remote-home assets use burn/mint. Route
+// asset and vault bindings are derived from the governed asset registry so a
+// route cannot substitute custody or a local asset.
 
 seiyaku SccpBridge {
+  error enum SccpBridgeError {
+    BridgeOwnerMismatch = 1,
+    BridgeGuardianMismatch = 2,
+    BridgeProofAuthorityMismatch = 3,
+    RegistryDisabled = 4,
+    InvalidRegistryEnabled = 5,
+    AssetExists = 6,
+    AssetMissing = 7,
+    AssetOperatorMismatch = 8,
+    AssetVaultMissing = 9,
+    AssetVaultMismatch = 10,
+    InvalidHomeDomain = 11,
+    InvalidDecimals = 12,
+    RouteExists = 13,
+    RouteMissing = 14,
+    RouteOwnerMismatch = 15,
+    RouteDisabled = 16,
+    RouteAssetMismatch = 17,
+    RouteRemoteMismatch = 18,
+    RouteLocalAssetMismatch = 19,
+    RouteVaultMismatch = 20,
+    RouteGovernanceMismatch = 21,
+    GovernedRouteIsProofManaged = 22,
+    InvalidRemoteDomain = 23,
+    TransferExists = 24,
+    TransferMissing = 25,
+    InvalidAmount = 26,
+    MessageConsumed = 27,
+  }
+
   state int BridgeInitialized;
   state AccountId BridgeOwner;
+  state AccountId BridgeGuardian;
   state AccountId BridgeProofAuthority;
   state int RegistryEnabled;
   state AssetDefinitionId ListingFeeAsset;
   state AccountId TreasuryAccount;
-  state int ListingFeeAmount;
+  state quantity ListingFeeAmount;
 
-  state RegisteredAsset: Map<Name, AssetDefinitionId>;
-  state AssetHomeDomain: Map<Name, int>;
-  state AssetDecimals: Map<Name, int>;
-  state AssetListingPaid: Map<Name, int>;
-  state AssetVaultAccount: Map<Name, AccountId>;
+  state StateMap<Name, AssetDefinitionId> RegisteredAsset;
+  state StateMap<Name, AccountId> AssetRegistrant;
+  state StateMap<Name, int> AssetHomeDomain;
+  state StateMap<Name, int> AssetDecimals;
+  state StateMap<Name, quantity> AssetListingPaid;
+  state StateMap<Name, AccountId> AssetVaultAccount;
 
-  state RouteOwner: Map<Name, AccountId>;
-  state RouteAssetKey: Map<Name, Name>;
-  state RouteRemoteDomain: Map<Name, int>;
-  state RouteLocalAsset: Map<Name, AssetDefinitionId>;
-  state RouteVaultAccount: Map<Name, AccountId>;
-  state RouteEnabled: Map<Name, int>;
-  state RouteGoverned: Map<Name, int>;
-  state RouteGovernanceMessage: Map<Name, Name>;
-  state NextOutboundNonce: Map<Name, int>;
+  state StateMap<Name, AccountId> RouteOwner;
+  state StateMap<Name, Name> RouteAssetKey;
+  state StateMap<Name, int> RouteRemoteDomain;
+  state StateMap<Name, AssetDefinitionId> RouteLocalAsset;
+  state StateMap<Name, AccountId> RouteVaultAccount;
+  state StateMap<Name, int> RouteEnabled;
+  state StateMap<Name, int> RouteGoverned;
+  state StateMap<Name, Name> RouteGovernanceMessage;
+  state StateMap<Name, int> NextOutboundNonce;
 
-  state OutboundRoute: Map<Name, Name>;
-  state OutboundSender: Map<Name, AccountId>;
-  state OutboundRecipient: Map<Name, Name>;
-  state OutboundAmount: Map<Name, int>;
-  state OutboundNonce: Map<Name, int>;
-  state OutboundStatus: Map<Name, int>;
+  state StateMap<Name, Name> OutboundRoute;
+  state StateMap<Name, AccountId> OutboundSender;
+  state StateMap<Name, Name> OutboundRecipient;
+  state StateMap<Name, quantity> OutboundAmount;
+  state StateMap<Name, int> OutboundNonce;
+  state StateMap<Name, int> OutboundStatus;
+  state StateMap<Name, int> ConsumedInbound;
 
-  state ConsumedInbound: Map<Name, int>;
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
+  }
+
+  fn universal_dataspace() -> DataSpaceId {
+    let dataspace = DataSpaceId::parse("0");
+    return dataspace;
+  }
 
   fn sora_domain() -> int {
     return 0;
   }
 
-  fn assert_initialized() {
-    assert(BridgeInitialized == 1, "bridge not initialized");
-  }
-
   fn assert_owner() {
-    assert_initialized();
-    assert(BridgeOwner == authority(), "bridge owner mismatch");
+    require(BridgeOwner == context::authority(), SccpBridgeError::BridgeOwnerMismatch);
   }
 
   fn assert_proof_authority() {
-    assert_initialized();
-    assert(BridgeProofAuthority == authority(), "bridge proof authority mismatch");
+    require(
+      BridgeProofAuthority == context::authority(),
+      SccpBridgeError::BridgeProofAuthorityMismatch
+    );
   }
 
-  fn assert_asset_exists(asset_key: Name) {
-    assert(RegisteredAsset.contains(asset_key), "asset missing");
+  fn assert_owner_or_guardian() {
+    if BridgeOwner == context::authority() {
+      return;
+    }
+    require(
+      BridgeGuardian == context::authority(),
+      SccpBridgeError::BridgeGuardianMismatch
+    );
   }
 
-  fn assert_route_exists(route: Name) {
-    assert(RouteAssetKey.contains(route), "route missing");
+  fn assert_asset_exists(Name asset_key) {
+    require(RegisteredAsset.contains(asset_key), SccpBridgeError::AssetMissing);
+    require(AssetRegistrant.contains(asset_key), SccpBridgeError::AssetMissing);
   }
 
-  fn assert_route_owner(route: Name) {
+  fn registered_asset_value(Name asset_key) -> AssetDefinitionId {
+    assert_asset_exists(asset_key);
+    return RegisteredAsset.get(asset_key).unwrap_or(ListingFeeAsset);
+  }
+
+  fn asset_registrant_value(Name asset_key) -> AccountId {
+    assert_asset_exists(asset_key);
+    return AssetRegistrant.get(asset_key).unwrap_or(BridgeOwner);
+  }
+
+  fn asset_home_domain_value(Name asset_key) -> int {
+    assert_asset_exists(asset_key);
+    return AssetHomeDomain.get(asset_key).unwrap_or(0);
+  }
+
+  fn assert_asset_operator(Name asset_key) {
+    if BridgeOwner == context::authority() {
+      return;
+    }
+    require(
+      asset_registrant_value(asset_key) == context::authority(),
+      SccpBridgeError::AssetOperatorMismatch
+    );
+  }
+
+  fn assert_asset_vault_bound(Name asset_key) {
+    assert_asset_exists(asset_key);
+    require(AssetVaultAccount.contains(asset_key), SccpBridgeError::AssetVaultMissing);
+  }
+
+  fn asset_vault_value(Name asset_key) -> AccountId {
+    assert_asset_vault_bound(asset_key);
+    return AssetVaultAccount.get(asset_key).unwrap_or(TreasuryAccount);
+  }
+
+  fn assert_route_exists(Name route) {
+    require(RouteAssetKey.contains(route), SccpBridgeError::RouteMissing);
+    require(RouteOwner.contains(route), SccpBridgeError::RouteMissing);
+  }
+
+  fn route_owner_value(Name route) -> AccountId {
     assert_route_exists(route);
-    assert(RouteOwner[route] == authority(), "route owner mismatch");
+    return RouteOwner.get(route).unwrap_or(BridgeOwner);
   }
 
-  fn assert_route_not_governed(route: Name) {
-    assert(RouteGoverned.get_or(route, 0) == 0, "governed route is proof-managed");
+  fn route_asset_key_value(Name route) -> Name {
+    assert_route_exists(route);
+    return RouteAssetKey.get(route).unwrap_or(route);
   }
 
-  fn assert_asset_vault_bound(asset_key: Name) {
-    assert(AssetVaultAccount.contains(asset_key), "asset vault missing");
+  fn route_local_asset_value(Name route) -> AssetDefinitionId {
+    assert_route_exists(route);
+    return RouteLocalAsset.get(route).unwrap_or(ListingFeeAsset);
   }
 
-  fn route_message_or_self(route: Name) -> Name {
-    if RouteGovernanceMessage.contains(route) {
-      return RouteGovernanceMessage[route];
+  fn route_vault_value(Name route) -> AccountId {
+    assert_route_exists(route);
+    return RouteVaultAccount.get(route).unwrap_or(TreasuryAccount);
+  }
+
+  fn assert_route_operator(Name route) {
+    if BridgeOwner == context::authority() {
+      return;
     }
-    return route;
+    require(route_owner_value(route) == context::authority(), SccpBridgeError::RouteOwnerMismatch);
   }
 
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
-      }
-    }
+  fn assert_route_not_governed(Name route) {
+    require(
+      RouteGoverned.get(route).unwrap_or(0) == 0,
+      SccpBridgeError::GovernedRouteIsProofManaged
+    );
   }
 
-  fn charge_listing_fee(registrant: AccountId) {
-    let fee_amount = ListingFeeAmount;
-    if fee_amount > 0 {
-      move_asset_if_needed(registrant, TreasuryAccount, ListingFeeAsset, fee_amount);
-    }
+  fn route_message_or_self(Name route) -> Name {
+    return RouteGovernanceMessage.get(route).unwrap_or(route);
   }
 
-  fn spend_outbound(route: Name,
-                    sender: AccountId,
-                    amount: int) {
-    let asset_key = RouteAssetKey[route];
-    let local_asset = RouteLocalAsset[route];
-    let vault = RouteVaultAccount[route];
-    if AssetHomeDomain[asset_key] == sora_domain() {
-      move_asset_if_needed(sender, vault, local_asset, amount);
-    } else {
-      burn_asset(sender, local_asset, amount);
-    }
-  }
-
-  fn settle_inbound(route: Name,
-                    recipient: AccountId,
-                    amount: int) {
-    let asset_key = RouteAssetKey[route];
-    let local_asset = RouteLocalAsset[route];
-    let vault = RouteVaultAccount[route];
-    if AssetHomeDomain[asset_key] == sora_domain() {
-      move_asset_if_needed(vault, recipient, local_asset, amount);
-    } else {
-      mint_asset(recipient, local_asset, amount);
+  fn move_asset_if_needed(
+    AccountId source,
+    AccountId destination,
+    AssetDefinitionId asset,
+    quantity amount
+  ) {
+    if amount > zero_quantity() && source != destination {
+      ledger::asset::transfer(
+        source: source,
+        destination: destination,
+        asset_definition: asset,
+        amount: amount,
+        dataspace: universal_dataspace()
+      );
     }
   }
 
-  fn store_route(route: Name,
-                 asset_key: Name,
-                 remote_domain: int,
-                 local_asset: AssetDefinitionId,
-                 vault_account: AccountId,
-                 governed: int,
-                 governance_message: Name) {
-    RouteOwner[route] = authority();
+  fn charge_listing_fee(AccountId registrant) {
+    move_asset_if_needed(
+      source: registrant,
+      destination: TreasuryAccount,
+      asset: ListingFeeAsset,
+      amount: ListingFeeAmount
+    );
+  }
+
+  fn store_route(
+    AccountId owner,
+    Name route,
+    Name asset_key,
+    int remote_domain,
+    int governed,
+    Name governance_message
+  ) {
+    RouteOwner[route] = owner;
     RouteAssetKey[route] = asset_key;
     RouteRemoteDomain[route] = remote_domain;
-    RouteLocalAsset[route] = local_asset;
-    RouteVaultAccount[route] = vault_account;
+    RouteLocalAsset[route] = registered_asset_value(asset_key);
+    RouteVaultAccount[route] = asset_vault_value(asset_key);
     RouteEnabled[route] = 1;
     RouteGoverned[route] = governed;
     RouteGovernanceMessage[route] = governance_message;
-    if NextOutboundNonce.get_or(route, 0) <= 0 {
+    if !NextOutboundNonce.contains(route) {
       NextOutboundNonce[route] = 1;
     }
   }
 
-  kotoage fn main() -> int {
-    return BridgeInitialized;
+  fn spend_outbound(Name route, AccountId sender, quantity amount) {
+    let asset_key = route_asset_key_value(route);
+    let local_asset = route_local_asset_value(route);
+    let vault = route_vault_value(route);
+    if asset_home_domain_value(asset_key) == sora_domain() {
+      move_asset_if_needed(
+        source: sender,
+        destination: vault,
+        asset: local_asset,
+        amount: amount
+      );
+    } else {
+      ledger::asset::burn(account: sender, asset_definition: local_asset, amount: amount);
+    }
   }
 
-  kotoage fn init_bridge(listing_fee_asset: AssetDefinitionId,
-                         treasury: AccountId,
-                         listing_fee_amount: int,
-                         proof_authority: AccountId) {
-    assert(BridgeInitialized == 0, "bridge initialized");
-    assert(listing_fee_amount >= 0, "invalid listing fee");
-    BridgeOwner = authority();
+  fn settle_inbound(Name route, AccountId recipient, quantity amount) {
+    let asset_key = route_asset_key_value(route);
+    let local_asset = route_local_asset_value(route);
+    let vault = route_vault_value(route);
+    if asset_home_domain_value(asset_key) == sora_domain() {
+      move_asset_if_needed(
+        source: vault,
+        destination: recipient,
+        asset: local_asset,
+        amount: amount
+      );
+    } else {
+      ledger::asset::mint(account: recipient, asset_definition: local_asset, amount: amount);
+    }
+  }
+
+  hajimari(
+    AssetDefinitionId listing_fee_asset,
+    AccountId treasury,
+    quantity listing_fee_amount,
+    AccountId proof_authority,
+    AccountId guardian
+  ) {
+    BridgeInitialized = 1;
+    BridgeOwner = context::authority();
+    BridgeGuardian = guardian;
     BridgeProofAuthority = proof_authority;
+    RegistryEnabled = 1;
     ListingFeeAsset = listing_fee_asset;
     TreasuryAccount = treasury;
     ListingFeeAmount = listing_fee_amount;
-    RegistryEnabled = 1;
-    BridgeInitialized = 1;
   }
 
-  kotoage fn set_proof_authority(proof_authority: AccountId) {
+  view fn main() -> int {
+    return BridgeInitialized;
+  }
+
+  kotoage fn set_proof_authority(AccountId proof_authority) authorize("Admin") {
     assert_owner();
     BridgeProofAuthority = proof_authority;
   }
 
-  kotoage fn register_asset(asset_key: Name,
-                            asset: AssetDefinitionId,
-                            home_domain: int,
-                            decimals: int) permission(AssetOps) {
-    assert_initialized();
-    assert(RegistryEnabled == 1, "registry disabled");
-    assert(!RegisteredAsset.contains(asset_key), "asset exists");
-    assert(home_domain >= 0, "invalid home domain");
-    assert(decimals >= 0, "invalid decimals");
-    charge_listing_fee(authority());
+  kotoage fn set_registry_enabled(int enabled) authorize("Admin") {
+    assert_owner_or_guardian();
+    require(enabled == 0 || enabled == 1, SccpBridgeError::InvalidRegistryEnabled);
+    if enabled == 1 {
+      assert_owner();
+    }
+    RegistryEnabled = enabled;
+  }
+
+  kotoage fn register_bridge_asset(
+    Name asset_key,
+    AssetDefinitionId asset,
+    int home_domain,
+    int decimals
+  ) authorize("AssetOps") {
+    require(RegistryEnabled == 1, SccpBridgeError::RegistryDisabled);
+    require(!RegisteredAsset.contains(asset_key), SccpBridgeError::AssetExists);
+    require(home_domain >= 0, SccpBridgeError::InvalidHomeDomain);
+    require(decimals >= 0 && decimals <= 28, SccpBridgeError::InvalidDecimals);
+    let registrant = context::authority();
+    charge_listing_fee(registrant);
     RegisteredAsset[asset_key] = asset;
+    AssetRegistrant[asset_key] = registrant;
     AssetHomeDomain[asset_key] = home_domain;
     AssetDecimals[asset_key] = decimals;
     AssetListingPaid[asset_key] = ListingFeeAmount;
   }
 
-  kotoage fn bind_asset_vault(asset_key: Name,
-                              vault_account: AccountId) permission(AssetOps) {
-    assert_initialized();
-    assert_asset_exists(asset_key);
+  kotoage fn bind_asset_vault(
+    Name asset_key,
+    AccountId vault_account
+  ) authorize("Entry") {
+    assert_asset_operator(asset_key);
     if AssetVaultAccount.contains(asset_key) {
-      assert(AssetVaultAccount[asset_key] == vault_account, "asset vault mismatch");
+      require(
+        asset_vault_value(asset_key) == vault_account,
+        SccpBridgeError::AssetVaultMismatch
+      );
       return;
     }
     AssetVaultAccount[asset_key] = vault_account;
   }
 
-  kotoage fn activate_route(route: Name,
-                            asset_key: Name,
-                            remote_domain: int,
-                            local_asset: AssetDefinitionId,
-                            vault_account: AccountId) {
-    assert_initialized();
-    assert_asset_exists(asset_key);
-    assert(!RouteAssetKey.contains(route), "route exists");
-    assert(remote_domain >= 0, "invalid remote domain");
-    store_route(route, asset_key, remote_domain, local_asset, vault_account, 0, route);
-  }
-
-  kotoage fn activate_route_governed(message_id: Name,
-                                     route: Name,
-                                     asset_key: Name,
-                                     remote_domain: int) {
-    assert_initialized();
-    assert_proof_authority();
-    assert_asset_exists(asset_key);
+  kotoage fn activate_route(
+    Name route,
+    Name asset_key,
+    int remote_domain
+  ) authorize("Entry") {
+    assert_asset_operator(asset_key);
     assert_asset_vault_bound(asset_key);
-    assert(remote_domain >= 0, "invalid remote domain");
-
-    let local_asset = RegisteredAsset[asset_key];
-    let vault_account = AssetVaultAccount[asset_key];
-    if RouteAssetKey.contains(route) {
-      assert(RouteAssetKey[route] == asset_key, "route asset mismatch");
-      assert(RouteRemoteDomain[route] == remote_domain, "route remote mismatch");
-      assert(RouteLocalAsset[route] == local_asset, "route local asset mismatch");
-      assert(RouteVaultAccount[route] == vault_account, "route vault mismatch");
-    }
-    store_route(route, asset_key, remote_domain, local_asset, vault_account, 1, message_id);
+    require(!RouteAssetKey.contains(route), SccpBridgeError::RouteExists);
+    require(remote_domain > sora_domain(), SccpBridgeError::InvalidRemoteDomain);
+    store_route(
+      owner: context::authority(),
+      route: route,
+      asset_key: asset_key,
+      remote_domain: remote_domain,
+      governed: 0,
+      governance_message: route
+    );
   }
 
-  kotoage fn pause_route(route: Name) {
-    assert_route_owner(route);
-    assert_route_not_governed(route);
+  kotoage fn activate_route_governed(
+    Name message_id,
+    Name route,
+    Name asset_key,
+    int remote_domain
+  ) authorize("Entry") {
+    assert_proof_authority();
+    assert_asset_vault_bound(asset_key);
+    require(remote_domain > sora_domain(), SccpBridgeError::InvalidRemoteDomain);
+    let local_asset = registered_asset_value(asset_key);
+    let vault_account = asset_vault_value(asset_key);
+    if RouteAssetKey.contains(route) {
+      require(route_asset_key_value(route) == asset_key, SccpBridgeError::RouteAssetMismatch);
+      require(
+        RouteRemoteDomain.get(route).unwrap_or(0) == remote_domain,
+        SccpBridgeError::RouteRemoteMismatch
+      );
+      require(
+        route_local_asset_value(route) == local_asset,
+        SccpBridgeError::RouteLocalAssetMismatch
+      );
+      require(route_vault_value(route) == vault_account, SccpBridgeError::RouteVaultMismatch);
+      require(RouteGoverned.get(route).unwrap_or(0) == 1, SccpBridgeError::RouteGovernanceMismatch);
+      require(
+        route_message_or_self(route) == message_id,
+        SccpBridgeError::RouteGovernanceMismatch
+      );
+      RouteEnabled[route] = 1;
+      return;
+    }
+    store_route(
+      owner: BridgeProofAuthority,
+      route: route,
+      asset_key: asset_key,
+      remote_domain: remote_domain,
+      governed: 1,
+      governance_message: message_id
+    );
+  }
+
+  kotoage fn pause_route(Name route) authorize("Entry") {
+    assert_route_operator(route);
+    if BridgeOwner != context::authority() {
+      assert_route_not_governed(route);
+    }
     RouteEnabled[route] = 0;
   }
 
-  kotoage fn resume_route(route: Name) {
-    assert_route_owner(route);
-    assert_route_not_governed(route);
+  kotoage fn emergency_pause_route(Name route) authorize("Admin") {
+    assert_owner_or_guardian();
+    assert_route_exists(route);
+    RouteEnabled[route] = 0;
+  }
+
+  kotoage fn resume_route(Name route) authorize("Entry") {
+    assert_route_operator(route);
+    if BridgeOwner != context::authority() {
+      assert_route_not_governed(route);
+    }
     RouteEnabled[route] = 1;
   }
 
-  kotoage fn lock_to_remote(route: Name,
-                            transfer: Name,
-                            recipient: Name,
-                            amount: int) -> int permission(AssetOps) {
-    assert_initialized();
+  kotoage fn lock_to_remote(
+    Name route,
+    Name transfer,
+    Name recipient,
+    quantity amount
+  ) -> int authorize("AssetOps") {
     assert_route_exists(route);
-    assert(RouteEnabled[route] == 1, "route disabled");
-    assert(!OutboundRoute.contains(transfer), "transfer exists");
-    assert(amount > 0, "invalid amount");
-
-    let next_nonce = NextOutboundNonce.get_or(route, 1);
-    let sender = authority();
-    spend_outbound(route, sender, amount);
-
+    require(RouteEnabled.get(route).unwrap_or(0) == 1, SccpBridgeError::RouteDisabled);
+    require(!OutboundRoute.contains(transfer), SccpBridgeError::TransferExists);
+    require(amount > zero_quantity(), SccpBridgeError::InvalidAmount);
+    let next_nonce = NextOutboundNonce.get(route).unwrap_or(1);
+    let sender = context::authority();
+    spend_outbound(route: route, sender: sender, amount: amount);
     OutboundRoute[transfer] = route;
     OutboundSender[transfer] = sender;
     OutboundRecipient[transfer] = recipient;
@@ -267,126 +438,104 @@ seiyaku SccpBridge {
     return next_nonce;
   }
 
-  kotoage fn finalize_inbound(route: Name,
-                              message_id: Name,
-                              recipient: AccountId,
-                              amount: int) permission(AssetOps) {
-    assert_initialized();
+  kotoage fn finalize_inbound(
+    Name route,
+    Name message_id,
+    AccountId recipient,
+    quantity amount
+  ) authorize("AssetOps") {
     assert_proof_authority();
     assert_route_exists(route);
-    assert(amount > 0, "invalid amount");
-    assert(ConsumedInbound.get_or(message_id, 0) == 0, "message consumed");
-    settle_inbound(route, recipient, amount);
+    require(RouteEnabled.get(route).unwrap_or(0) == 1, SccpBridgeError::RouteDisabled);
+    require(amount > zero_quantity(), SccpBridgeError::InvalidAmount);
+    require(
+      ConsumedInbound.get(message_id).unwrap_or(0) == 0,
+      SccpBridgeError::MessageConsumed
+    );
+    settle_inbound(route: route, recipient: recipient, amount: amount);
     ConsumedInbound[message_id] = 1;
   }
 
-  view fn listing_config() -> (AssetDefinitionId, AccountId, int, int) {
-    assert_initialized();
-    return (
-      ListingFeeAsset,
-      TreasuryAccount,
-      ListingFeeAmount,
-      RegistryEnabled
-    );
+  view fn listing_config() -> (AssetDefinitionId, AccountId, quantity, int) {
+    return (ListingFeeAsset, TreasuryAccount, ListingFeeAmount, RegistryEnabled);
   }
 
-  view fn bridge_authorities() -> (AccountId, AccountId) {
-    assert_initialized();
-    return (
-      BridgeOwner,
-      BridgeProofAuthority
-    );
+  view fn bridge_authorities() -> (AccountId, AccountId, AccountId) {
+    return (BridgeOwner, BridgeProofAuthority, BridgeGuardian);
   }
 
-  view fn mirror_asset(asset_key: Name) -> (int, int, int, int) {
-    let registered = 0;
-    if RegisteredAsset.contains(asset_key) {
-      registered = 1;
-    }
+  view fn mirror_asset(Name asset_key) -> (int, int, int, quantity) {
+    let registered = RegisteredAsset.contains(asset_key) ? 1 : 0;
     return (
       registered,
-      AssetHomeDomain.get_or(asset_key, 0),
-      AssetDecimals.get_or(asset_key, 0),
-      AssetListingPaid.get_or(asset_key, 0)
+      AssetHomeDomain.get(asset_key).unwrap_or(0),
+      AssetDecimals.get(asset_key).unwrap_or(0),
+      AssetListingPaid.get(asset_key).unwrap_or(zero_quantity())
     );
   }
 
-  view fn asset_config(asset_key: Name) -> (AssetDefinitionId, int, int) {
-    assert_asset_exists(asset_key);
+  view fn asset_config(Name asset_key) -> (AssetDefinitionId, AccountId, int, int) {
     return (
-      RegisteredAsset[asset_key],
-      AssetHomeDomain.get_or(asset_key, 0),
-      AssetDecimals.get_or(asset_key, 0)
+      registered_asset_value(asset_key),
+      asset_registrant_value(asset_key),
+      asset_home_domain_value(asset_key),
+      AssetDecimals.get(asset_key).unwrap_or(0)
     );
   }
 
-  view fn asset_vault_bound(asset_key: Name) -> int {
-    if AssetVaultAccount.contains(asset_key) {
-      return 1;
-    }
-    return 0;
+  view fn asset_vault_bound(Name asset_key) -> int {
+    return AssetVaultAccount.contains(asset_key) ? 1 : 0;
   }
 
-  view fn asset_vault_account(asset_key: Name) -> AccountId {
-    assert_asset_vault_bound(asset_key);
-    return AssetVaultAccount[asset_key];
+  view fn asset_vault_account(Name asset_key) -> AccountId {
+    return asset_vault_value(asset_key);
   }
 
-  view fn mirror_route(route: Name) -> (int, int, int, int) {
-    let registered = 0;
-    if RouteAssetKey.contains(route) {
-      registered = 1;
-    }
+  view fn mirror_route(Name route) -> (int, int, int, int) {
+    let registered = RouteAssetKey.contains(route) ? 1 : 0;
     return (
       registered,
-      RouteRemoteDomain.get_or(route, 0),
-      RouteEnabled.get_or(route, 0),
-      NextOutboundNonce.get_or(route, 0)
+      RouteRemoteDomain.get(route).unwrap_or(0),
+      RouteEnabled.get(route).unwrap_or(0),
+      NextOutboundNonce.get(route).unwrap_or(0)
     );
   }
 
-  view fn route_config(route: Name) -> (Name, int, AssetDefinitionId, AccountId) {
+  view fn route_config(Name route) -> (Name, int, AssetDefinitionId, AccountId) {
+    return (
+      route_asset_key_value(route),
+      RouteRemoteDomain.get(route).unwrap_or(0),
+      route_local_asset_value(route),
+      route_vault_value(route)
+    );
+  }
+
+  view fn route_provenance(Name route) -> (int, Name) {
     assert_route_exists(route);
-    return (
-      RouteAssetKey[route],
-      RouteRemoteDomain.get_or(route, 0),
-      RouteLocalAsset[route],
-      RouteVaultAccount[route]
-    );
+    return (RouteGoverned.get(route).unwrap_or(0), route_message_or_self(route));
   }
 
-  view fn route_provenance(route: Name) -> (int, Name) {
-    assert_route_exists(route);
-    return (
-      RouteGoverned.get_or(route, 0),
-      route_message_or_self(route)
-    );
-  }
-
-  view fn mirror_outbound(transfer: Name) -> (int, int, int, int) {
-    let registered = 0;
-    if OutboundRoute.contains(transfer) {
-      registered = 1;
-    }
+  view fn mirror_outbound(Name transfer) -> (int, quantity, int, int) {
+    let registered = OutboundRoute.contains(transfer) ? 1 : 0;
     return (
       registered,
-      OutboundAmount.get_or(transfer, 0),
-      OutboundNonce.get_or(transfer, 0),
-      OutboundStatus.get_or(transfer, 0)
+      OutboundAmount.get(transfer).unwrap_or(zero_quantity()),
+      OutboundNonce.get(transfer).unwrap_or(0),
+      OutboundStatus.get(transfer).unwrap_or(0)
     );
   }
 
-  view fn outbound_config(transfer: Name) -> (Name, AccountId, Name, int) {
-    assert(OutboundRoute.contains(transfer), "transfer missing");
+  view fn outbound_config(Name transfer) -> (Name, AccountId, Name, quantity) {
+    require(OutboundRoute.contains(transfer), SccpBridgeError::TransferMissing);
     return (
-      OutboundRoute[transfer],
-      OutboundSender[transfer],
-      OutboundRecipient[transfer],
-      OutboundAmount[transfer]
+      OutboundRoute.get(transfer).unwrap_or(transfer),
+      OutboundSender.get(transfer).unwrap_or(BridgeOwner),
+      OutboundRecipient.get(transfer).unwrap_or(transfer),
+      OutboundAmount.get(transfer).unwrap_or(zero_quantity())
     );
   }
 
-  view fn inbound_consumed(message_id: Name) -> int {
-    return ConsumedInbound.get_or(message_id, 0);
+  view fn inbound_consumed(Name message_id) -> int {
+    return ConsumedInbound.get(message_id).unwrap_or(0);
   }
 }

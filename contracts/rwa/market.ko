@@ -1,86 +1,214 @@
 seiyaku RwaMarket {
-  state MarketController: Map<Name, AccountId>;
-  state MarketShareAsset: Map<Name, AssetDefinitionId>;
-  state MarketNavAsset: Map<Name, AssetDefinitionId>;
-  state MarketNavPerShare: Map<Name, int>;
-  state MarketTotalShares: Map<Name, int>;
-  state MarketStatus: Map<Name, int>;
-  state RedemptionOwner: Map<Name, AccountId>;
-  state RedemptionMarket: Map<Name, Name>;
-  state RedemptionShares: Map<Name, int>;
-  state RedemptionStatus: Map<Name, int>;
-
-  fn assert_market_exists(market_id: Name) {
-    assert(MarketController.contains(market_id), "rwa market missing");
-  }
-
-  fn assert_controller(market_id: Name) {
-    assert_market_exists(market_id);
-    assert(MarketController[market_id] == authority(), "controller mismatch");
-  }
-
-  kotoage fn main() -> int {
-    return 1;
-  }
-
-  kotoage fn issue_lot(market_id: Name,
-                       share_asset: AssetDefinitionId,
-                       nav_asset: AssetDefinitionId,
-                       initial_nav_per_share: int,
-                       total_shares: int) {
-    assert(!MarketController.contains(market_id), "market exists");
-    assert(initial_nav_per_share > 0, "invalid nav");
-    assert(total_shares > 0, "invalid shares");
-    MarketController[market_id] = authority();
-    MarketShareAsset[market_id] = share_asset;
-    MarketNavAsset[market_id] = nav_asset;
-    MarketNavPerShare[market_id] = initial_nav_per_share;
-    MarketTotalShares[market_id] = total_shares;
-    MarketStatus[market_id] = 1;
-  }
-
-  kotoage fn bind_share_asset(market_id: Name, share_asset: AssetDefinitionId) {
-    assert_controller(market_id);
-    MarketShareAsset[market_id] = share_asset;
-  }
-
-  kotoage fn report_nav(market_id: Name, nav_per_share: int, total_shares: int, status: int) {
-    assert_controller(market_id);
-    assert(nav_per_share > 0, "invalid nav");
-    assert(total_shares >= 0, "invalid shares");
-    MarketNavPerShare[market_id] = nav_per_share;
-    MarketTotalShares[market_id] = total_shares;
-    MarketStatus[market_id] = status;
-  }
-
-  kotoage fn request_redemption(market_id: Name, redemption_id: Name, shares: int) {
-    assert_market_exists(market_id);
-    assert(!RedemptionOwner.contains(redemption_id), "redemption exists");
-    assert(shares > 0, "invalid shares");
-    RedemptionOwner[redemption_id] = authority();
-    RedemptionMarket[redemption_id] = market_id;
-    RedemptionShares[redemption_id] = shares;
-    RedemptionStatus[redemption_id] = 1;
-  }
-
-  kotoage fn settle_redemption(redemption_id: Name) {
-    assert(RedemptionOwner.contains(redemption_id), "redemption missing");
-    let market_id = RedemptionMarket[redemption_id];
-    assert_controller(market_id);
-    assert(RedemptionStatus.ensure(redemption_id, 0) == 1, "redemption not open");
-    RedemptionStatus[redemption_id] = 2;
-  }
-
-  view fn rwa_market_state(market_id: Name) -> (int, int, int, int) {
-    let registered = 0;
-    if MarketController.contains(market_id) {
-      registered = 1;
+    const string UNIVERSAL_DATASPACE_LITERAL = "0";
+    error enum RwaError {
+        MarketMissing = 1, ControllerMismatch = 2, MarketAlreadyExists = 3, InvalidNav = 4, InvalidShares = 5, InvalidMarketStatus = 6, MarketNotActive = 7, RedemptionAlreadyExists = 8, RedemptionMissing = 9, RedemptionNotOpen = 10, RedemptionOwnerMismatch = 11, IncompleteMarketConfiguration = 12, InsufficientOutstandingShares = 13, InvalidQuantityConversion = 14,
     }
-    return (
-      registered,
-      MarketNavPerShare.get_or(market_id, 0),
-      MarketTotalShares.get_or(market_id, 0),
-      MarketStatus.get_or(market_id, 0)
-    );
-  }
+
+    state StateMap<Name, AccountId> MarketController;
+    state StateMap<Name, AssetDefinitionId> MarketShareAsset;
+    state StateMap<Name, AssetDefinitionId> MarketNavAsset;
+    state StateMap<Name, decimal> MarketNavPerShare;
+    state StateMap<Name, quantity> MarketTotalShares;
+    state StateMap<Name, int> MarketStatus;
+    state StateMap<Name, AccountId> RedemptionOwner;
+    state StateMap<Name, Name> RedemptionMarket;
+    state StateMap<Name, AssetDefinitionId> RedemptionShareAsset;
+    state StateMap<Name, quantity> RedemptionShares;
+    state StateMap<Name, quantity> RedemptionPayout;
+    state StateMap<Name, int> RedemptionStatus;
+    fn checked_quantity(decimal value) -> quantity {
+        return match quantity::try_from_decimal(value: value) {
+            Result::ok(amount) => amount,
+            Result::err(_) => {
+                require(false, RwaError::InvalidQuantityConversion);
+                0
+            },
+        };
+    }
+
+    fn assert_market_exists(Name market_id) {
+        require(MarketController.contains(key: market_id), RwaError::MarketMissing);
+    }
+
+    fn market_controller(Name market_id) -> AccountId {
+        assert_market_exists(market_id: market_id);
+        return MarketController.get(key: market_id).unwrap_or(default: context::authority());
+    }
+
+    fn assert_controller(Name market_id) {
+        require(
+            market_controller(market_id: market_id) == context::authority(),
+            RwaError::ControllerMismatch,
+        );
+    }
+
+    fn assert_redemption_exists(Name redemption_id) {
+        require(RedemptionOwner.contains(key: redemption_id), RwaError::RedemptionMissing);
+        require(RedemptionMarket.contains(key: redemption_id), RwaError::RedemptionMissing);
+    }
+
+    fn redemption_market(Name redemption_id) -> Name {
+        assert_redemption_exists(redemption_id: redemption_id);
+        return RedemptionMarket.get(key: redemption_id).unwrap_or(default: redemption_id);
+    }
+
+    view fn main() -> int {
+        return 1;
+    }
+
+    kotoage fn issue_lot(
+        Name market_id,
+        AssetDefinitionId share_asset,
+        AssetDefinitionId nav_asset,
+        decimal initial_nav_per_share,
+        quantity total_shares,
+    ) authorize("Admin") {
+        require(!MarketController.contains(key: market_id), RwaError::MarketAlreadyExists);
+        require(initial_nav_per_share > 0, RwaError::InvalidNav);
+        require(total_shares > 0, RwaError::InvalidShares);
+        MarketController[market_id] = context::authority();
+        MarketShareAsset[market_id] = share_asset;
+        MarketNavAsset[market_id] = nav_asset;
+        MarketNavPerShare[market_id] = initial_nav_per_share;
+        MarketTotalShares[market_id] = total_shares;
+        MarketStatus[market_id] = 1;
+    }
+
+    kotoage fn report_nav(
+        Name market_id,
+        decimal nav_per_share,
+        quantity total_shares,
+        int status,
+    ) authorize("Admin") {
+        assert_controller(market_id: market_id);
+        require(nav_per_share > 0, RwaError::InvalidNav);
+        require(status >= 1 && status <= 3, RwaError::InvalidMarketStatus);
+        MarketNavPerShare[market_id] = nav_per_share;
+        MarketTotalShares[market_id] = total_shares;
+        MarketStatus[market_id] = status;
+    }
+
+    kotoage fn request_redemption(Name market_id, Name redemption_id, quantity shares, ) authorize(
+        "AssetOps"
+    ) {
+        assert_market_exists(market_id: market_id);
+        require(MarketStatus.get_or(key: market_id, default: 0) == 1, RwaError::MarketNotActive);
+        require(!RedemptionOwner.contains(key: redemption_id), RwaError::RedemptionAlreadyExists, );
+        require(shares > 0, RwaError::InvalidShares);
+        require(
+            shares <= MarketTotalShares.get_or(key: market_id, default: 0),
+            RwaError::InsufficientOutstandingShares,
+        );
+        require(
+            MarketShareAsset.contains(key: market_id),
+            RwaError::IncompleteMarketConfiguration,
+        );
+        if let Option::some(share_asset) = MarketShareAsset.get(key: market_id) {
+            ledger::asset::transfer(
+                source: context::authority(),
+                destination: market_controller(market_id: market_id),
+                asset_definition: share_asset,
+                amount: shares,
+                dataspace: DataSpaceId::parse(UNIVERSAL_DATASPACE_LITERAL),
+            );
+            RedemptionShareAsset[redemption_id] = share_asset;
+        } else {
+            require(false, RwaError::IncompleteMarketConfiguration);
+        }
+        RedemptionOwner[redemption_id] = context::authority();
+        RedemptionMarket[redemption_id] = market_id;
+        RedemptionShares[redemption_id] = shares;
+        RedemptionPayout[redemption_id] = 0;
+        RedemptionStatus[redemption_id] = 1;
+    }
+
+    kotoage fn settle_redemption(Name redemption_id) -> quantity authorize("AssetOps") {
+        let market_id = redemption_market(redemption_id: redemption_id);
+        assert_controller(market_id: market_id);
+        require(
+            RedemptionStatus.get_or(key: redemption_id, default: 0) == 1,
+            RwaError::RedemptionNotOpen,
+        );
+        require(
+            RedemptionOwner.contains(key: redemption_id) && MarketNavAsset.contains(key: market_id) && MarketNavPerShare.contains(
+                key: market_id,
+            ),
+            RwaError::IncompleteMarketConfiguration,
+        );
+        let shares = RedemptionShares.get_or(key: redemption_id, default: 0);
+        let outstanding = MarketTotalShares.get_or(key: market_id, default: 0);
+        require(outstanding >= shares, RwaError::InsufficientOutstandingShares);
+        let payout = checked_quantity(
+            value: MarketNavPerShare.get_or(key: market_id, default: 0) * decimal::from_quantity(
+                value: shares,
+            ),
+        );
+        if let Option::some(owner) = RedemptionOwner.get(key: redemption_id) {
+            if let Option::some(nav_asset) = MarketNavAsset.get(key: market_id) {
+                ledger::asset::transfer(
+                    source: context::authority(),
+                    destination: owner,
+                    asset_definition: nav_asset,
+                    amount: payout,
+                    dataspace: DataSpaceId::parse(UNIVERSAL_DATASPACE_LITERAL),
+                );
+            } else {
+                require(false, RwaError::IncompleteMarketConfiguration);
+            }
+        } else {
+            require(false, RwaError::IncompleteMarketConfiguration);
+        }
+        MarketTotalShares[market_id] = outstanding - shares;
+        RedemptionPayout[redemption_id] = payout;
+        RedemptionStatus[redemption_id] = 2;
+        return payout;
+    }
+
+    kotoage fn cancel_redemption(Name redemption_id) authorize("AssetOps") {
+        let market_id = redemption_market(redemption_id: redemption_id);
+        require(
+            RedemptionStatus.get_or(key: redemption_id, default: 0) == 1,
+            RwaError::RedemptionNotOpen,
+        );
+        let owner = RedemptionOwner.get(key: redemption_id).unwrap_or(default: context::authority());
+        require(owner == context::authority(), RwaError::RedemptionOwnerMismatch);
+        require(
+            RedemptionShareAsset.contains(key: redemption_id),
+            RwaError::IncompleteMarketConfiguration,
+        );
+        if let Option::some(share_asset) = RedemptionShareAsset.get(key: redemption_id) {
+            ledger::asset::transfer(
+                source: market_controller(market_id: market_id),
+                destination: owner,
+                asset_definition: share_asset,
+                amount: RedemptionShares.get_or(key: redemption_id, default: 0),
+                dataspace: DataSpaceId::parse(UNIVERSAL_DATASPACE_LITERAL),
+            );
+        } else {
+            require(false, RwaError::IncompleteMarketConfiguration);
+        }
+        RedemptionStatus[redemption_id] = 3;
+    }
+
+    view fn rwa_market_state(Name market_id) -> (int, decimal, quantity, int) {
+        var int registered = 0;
+        if MarketController.contains(key: market_id) {
+            registered = 1;
+        }
+        return (registered, MarketNavPerShare.get_or(key: market_id, default: 0), MarketTotalShares.get_or(
+            key: market_id,
+            default: 0,
+        ), MarketStatus.get_or(key: market_id, default: 0));
+    }
+
+    view fn redemption_state(Name redemption_id) -> (int, quantity, quantity, int) {
+        var int registered = 0;
+        if RedemptionOwner.contains(key: redemption_id) {
+            registered = 1;
+        }
+        return (registered, RedemptionShares.get_or(key: redemption_id, default: 0), RedemptionPayout.get_or(
+            key: redemption_id,
+            default: 0,
+        ), RedemptionStatus.get_or(key: redemption_id, default: 0));
+    }
 }

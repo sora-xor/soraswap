@@ -1,59 +1,166 @@
-koto_test { target: "../../contracts/dlmm_hooks/hook_manager.ko" }
+module DlmmHookManagerV1Regressions {
+  koto_test { target: "../../contracts/dlmm_hooks/hook_manager.ko" }
 
-fixture twamm_actors {
-  actor("owner", account_id("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
-  grant_permission("owner", "AssetOps");
-}
+  fixture hook_actors {
+    actor(
+      "owner",
+      AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX"),
+      "0x0909090909090909090909090909090909090909090909090909090909090909"
+    );
+    actor(
+      "custody",
+      AccountId::parse("sorauﾛ1PMGMaaﾈﾊｼﾘnｵrWﾏｺyｽGy7ｺｿﾜ2ﾓXwkﾅﾕﾀVuﾅmhﾕﾃC1CJVY")
+    );
+    actor(
+      "guardian",
+      AccountId::parse("sorauﾛ1PtFNAtpｵKﾏUFDpﾇｷﾁﾇﾂun88ｹﾆ2NAHﾅB7UkﾓﾕJmヰVDDE5T")
+    );
+    grant_permission("owner", "Admin");
+    grant_permission("owner", "Entry");
+    grant_permission("owner", "AssetOps");
+    grant_permission("guardian", "Admin");
+    grant_permission("guardian", "AssetOps");
+  }
 
-fn seed_twamm_claimable_order(order_id: Name,
-                              owner: AccountId,
-                              status: int,
-                              executed_out: int,
-                              claimed_out: int,
-                              min_total_out: int) {
-  TwammInitialized = 1;
-  TwammContractId = owner;
-  TwammContractBound = 1;
-  TwammBaseAsset = asset_definition("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
-  TwammQuoteAsset = asset_definition("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
-  TwammOrderOwner[order_id] = owner;
-  TwammOrderInputIsBase[order_id] = 1;
-  TwammOrderMinTotalOut[order_id] = min_total_out;
-  TwammOrderExecutedOut[order_id] = executed_out;
-  TwammOrderClaimedOut[order_id] = claimed_out;
-  TwammOrderStatus[order_id] = status;
-}
+  fn initialize_hook_manager() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "hajimari",
+      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"custody_account\":\"sorauﾛ1PMGMaaﾈﾊｼﾘnｵrWﾏｺyｽGy7ｺｿﾜ2ﾓXwkﾅﾕﾀVuﾅmhﾕﾃC1CJVY\",\"router_contract\":\"0x01\",\"guardian\":\"sorauﾛ1PtFNAtpｵKﾏUFDpﾇｷﾁﾇﾂun88ｹﾆ2NAHﾅB7UkﾓﾕJmヰVDDE5T\"}")
+    );
+  }
 
-#[test]
-fn final_twamm_slice_min_out_carries_rounding_remainder() {
-  let order_id = name("twmin");
-  TwammOrderTotalIn[order_id] = 3;
-  TwammOrderMinTotalOut[order_id] = 2;
-  TwammOrderExecutedOut[order_id] = 0;
+  fn resume_hook_manager() {
+    test::invoke_entrypoint_as(
+      actor: "owner",
+      entrypoint: "exit_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+  }
 
-  let first_slice_min = twamm_min_slice_out(order_id, 1, 3);
-  let final_slice_min = twamm_min_slice_out(order_id, 1, 1);
+  #[test(fixture = "hook_actors")]
+  fn lifecycle_is_immutable_and_starts_paused() {
+    initialize_hook_manager();
+    test::assert(HookManagerInitialized == 1);
+    test::assert(HookManagerWithdrawalOnly == 1);
+    test::assert(HookManagerCustodyAccount == test::actor_account("custody"));
+    test::assert(TwammActiveOrderCount == 0);
+  }
 
-  assert(first_slice_min == 0, "non-final slice keeps proportional floor");
-  assert(final_slice_min == 2, "final slice carries aggregate remainder");
-}
+  #[test(fixture = "hook_actors")]
+  fn owner_cannot_masquerade_as_contract_custody() {
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "hajimari",
+      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"custody_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"router_contract\":\"0x01\",\"guardian\":\"sorauﾛ1PtFNAtpｵKﾏUFDpﾇｷﾁﾇﾂun88ｹﾆ2NAHﾅB7UkﾓﾕJmヰVDDE5T\"}")
+    );
+    test::assert(HookManagerInitialized == 0);
+  }
 
-#[test(fixture="twamm_actors")]
-fn completed_twamm_claim_rejects_below_total_min_out() {
-  let owner = actor_account("owner");
-  let order_id = name("under");
-  seed_twamm_claimable_order(order_id, owner, 3, 1, 0, 2);
+  #[test(fixture = "hook_actors")]
+  fn guardian_can_pause_but_cannot_resume() {
+    initialize_hook_manager();
+    resume_hook_manager();
+    test::invoke_entrypoint_as(
+      actor: "guardian",
+      entrypoint: "enter_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+    test::expect_reject_as(
+      actor: "guardian",
+      entrypoint: "exit_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+    test::assert(HookManagerWithdrawalOnly == 1);
+  }
 
-  expect_reject_as("owner", "claim_twamm", json("{\"order_id\":\"under\"}"));
-}
+  #[test(fixture = "hook_actors")]
+  fn invalid_hook_policy_is_atomic() {
+    initialize_hook_manager();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "configure_hook_policy",
+      arguments: Json::parse("{\"hook_id\":\"bad\",\"phase\":\"0\",\"max_fee_pips\":\"1000000\",\"enabled\":\"2\"}")
+    );
+    test::assert(!HookEnabled.contains(Name::parse("bad")));
+  }
 
-#[test(fixture="twamm_actors")]
-fn cancelled_twamm_can_claim_executed_output_below_total_min_out() {
-  let owner = actor_account("owner");
-  let order_id = name("cancelclaim");
-  seed_twamm_claimable_order(order_id, owner, 4, 1, 0, 2);
+  #[test(fixture = "hook_actors")]
+  fn paused_twamm_rejects_before_slot_allocation() {
+    initialize_hook_manager();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "schedule_twamm_v2",
+      arguments: Json::parse("{\"order_id\":\"paused\",\"total_in\":\"10\",\"slice_in\":\"1\",\"input_is_base\":\"1\",\"min_total_out\":\"1\",\"start_slot\":\"0\",\"interval_slots\":\"1\"}")
+    );
+    test::assert(TwammActiveOrderCount == 0);
+    test::assert(!TwammOrderOwner.contains(Name::parse("paused")));
+  }
 
-  let claimed = invoke_entrypoint_as("owner", "claim_twamm", json("{\"order_id\":\"cancelclaim\"}"));
-  assert(claimed == 1, "cancelled order claim");
-  assert(TwammOrderClaimedOut[order_id] == 1, "claimed output stored");
+  #[test]
+  fn final_slice_carries_aggregate_rounding_remainder() {
+    let order_id = Name::parse("rounding");
+    TwammOrderTotalIn[order_id] = 3;
+    TwammOrderMinTotalOut[order_id] = 2;
+    TwammOrderExecutedOut[order_id] = 0;
+    let first = twamm_min_slice_out(order_id: order_id, amount_in: 1, remaining: 3);
+    let final_slice = twamm_min_slice_out(order_id: order_id, amount_in: 1, remaining: 1);
+    test::assert(first == 0);
+    test::assert(final_slice == 2);
+  }
+
+  #[test(fixture = "hook_actors")]
+  fn active_order_cap_rejects_without_overwriting_slots() {
+    initialize_hook_manager();
+    resume_hook_manager();
+    for offset in range(64) {
+      TwammSlotOccupied[offset + 1] = 1;
+    }
+    TwammActiveOrderCount = 64;
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "schedule_twamm_v2",
+      arguments: Json::parse("{\"order_id\":\"overflow\",\"total_in\":\"10\",\"slice_in\":\"1\",\"input_is_base\":\"1\",\"min_total_out\":\"1\",\"start_slot\":\"0\",\"interval_slots\":\"1\"}")
+    );
+    test::assert(TwammActiveOrderCount == 64);
+    test::assert(!TwammOrderOwner.contains(Name::parse("overflow")));
+  }
+
+  #[test(fixture = "hook_actors")]
+  fn malformed_twamm_schedule_rejects_before_escrow() {
+    initialize_hook_manager();
+    resume_hook_manager();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "schedule_twamm_v2",
+      arguments: Json::parse("{\"order_id\":\"badshape\",\"total_in\":\"10\",\"slice_in\":\"11\",\"input_is_base\":\"2\",\"min_total_out\":\"1\",\"start_slot\":\"0\",\"interval_slots\":\"0\"}")
+    );
+    test::assert(TwammActiveOrderCount == 0);
+  }
+
+  #[test(fixture = "hook_actors")]
+  fn non_owner_cannot_cancel_active_order() {
+    initialize_hook_manager();
+    let order_id = Name::parse("owned");
+    TwammOrderOwner[order_id] = test::actor_account("owner");
+    TwammOrderStatus[order_id] = 1;
+    test::expect_reject_as(
+      actor: "guardian",
+      entrypoint: "cancel_twamm",
+      arguments: Json::parse("{\"order_id\":\"owned\"}")
+    );
+    test::assert(TwammOrderStatus.get(order_id).unwrap_or(0) == 1);
+  }
+
+  #[test(fixture = "hook_actors")]
+  fn trigger_configuration_enforces_v1_bound() {
+    initialize_hook_manager();
+    test::expect_reject_as(
+      actor: "owner",
+      entrypoint: "configure_trigger_twamm",
+      arguments: Json::parse("{\"cadence_slots\":\"1\",\"max_orders_per_tick\":\"65\",\"enabled\":\"1\"}")
+    );
+    test::assert(TwammTriggerEnabled == 0);
+    test::assert(TwammMaxOrdersPerTick == 1);
+  }
 }

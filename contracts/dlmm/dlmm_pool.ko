@@ -1,9 +1,54 @@
-// DLMM-style single-pool contract with deterministic multi-bin execution.
-// The intended quote/base anchor for deployable pools is xor#universal.
+// Production DLMM pool for one base/quote pair.
+//
+// Financial values use Kotodama V1 `quantity`; prices and fee growth use
+// `decimal`. Bins are held in a bounded sorted linked index, so swaps traverse
+// initialized liquidity rather than scanning the numeric bin-id space.
 
 seiyaku DlmmPool {
+  error enum DlmmPoolError {
+    IdenticalAssets = 1,
+    InvalidFeePips = 2,
+    InvalidBinStep = 3,
+    InvalidBinId = 4,
+    InvalidImpactCap = 5,
+    InvalidMaxBinsPerSwap = 6,
+    BinCapBelowBaseFloor = 7,
+    BinCapBelowQuoteFloor = 8,
+    PoolOwnerMismatch = 9,
+    VaultOperatorMismatch = 10,
+    TooManyBins = 11,
+    BinIndexCorrupt = 12,
+    NoExecutableLiquidity = 13,
+    ZeroLiquidity = 14,
+    BaseReserveCap = 15,
+    QuoteReserveCap = 16,
+    PositionNotFound = 17,
+    PositionOwnerMismatch = 18,
+    PositionBinMismatch = 19,
+    InvalidShares = 20,
+    InsufficientPositionShares = 21,
+    InsufficientSharesOut = 22,
+    ZeroRemoval = 23,
+    CollectBaseFeesFirst = 24,
+    CollectQuoteFeesFirst = 25,
+    NothingToCollect = 26,
+    FeeGrowthRegression = 27,
+    AssetNotInPool = 28,
+    InsufficientInputUsed = 29,
+    PartialFill = 30,
+    Slippage = 31,
+    InvalidCadence = 32,
+    InvalidDrift = 33,
+    InvalidEnabled = 34,
+    UnexpectedRecipient = 35,
+    InvalidAmount = 36,
+    AdminAlreadyRenounced = 37,
+    AdminRenounced = 38,
+  }
+
   state int PoolInitialized;
   state AccountId PoolOwner;
+  state int AdminRenounced;
   state AssetDefinitionId BaseAsset;
   state AssetDefinitionId QuoteAsset;
   state AccountId VaultAccount;
@@ -11,23 +56,31 @@ seiyaku DlmmPool {
   state int BinStep;
   state int ActiveBin;
   state int ImpactCapBps;
-  state int MinReserveBase;
-  state int MinReserveQuote;
+  state quantity MinReserveBase;
+  state quantity MinReserveQuote;
   state int MaxBinsPerSwap;
-  state int BinLiquidityCap;
+  state quantity BinLiquidityCap;
 
-  state BinReserveBase: Map<int, int>;
-  state BinReserveQuote: Map<int, int>;
-  state BinShareSupply: Map<int, int>;
-  state BinFeeGrowthBase: Map<int, int>;
-  state BinFeeGrowthQuote: Map<int, int>;
-  state PositionOwner: Map<Name, AccountId>;
-  state PositionBinId: Map<Name, int>;
-  state PositionShares: Map<Name, int>;
-  state PositionFeeDebtBase: Map<Name, int>;
-  state PositionFeeDebtQuote: Map<Name, int>;
-  state PositionCreditBase: Map<Name, int>;
-  state PositionCreditQuote: Map<Name, int>;
+  state int IndexedBinCount;
+  state int FirstIndexedBin;
+  state int LastIndexedBin;
+  state StateMap<int, int> BinIndexed;
+  state StateMap<int, int> PreviousIndexedBin;
+  state StateMap<int, int> NextIndexedBin;
+
+  state StateMap<int, quantity> BinReserveBase;
+  state StateMap<int, quantity> BinReserveQuote;
+  state StateMap<int, quantity> BinShareSupply;
+  state StateMap<int, decimal> BinFeeGrowthBase;
+  state StateMap<int, decimal> BinFeeGrowthQuote;
+
+  state StateMap<Name, AccountId> PositionOwner;
+  state StateMap<Name, int> PositionBinId;
+  state StateMap<Name, quantity> PositionShares;
+  state StateMap<Name, decimal> PositionFeeDebtBase;
+  state StateMap<Name, decimal> PositionFeeDebtQuote;
+  state StateMap<Name, quantity> PositionCreditBase;
+  state StateMap<Name, quantity> PositionCreditQuote;
 
   state int RangeGovernorEnabled;
   state int RangeGovernorCadenceSlots;
@@ -38,386 +91,430 @@ seiyaku DlmmPool {
   state int RangeGovernorLastSlot;
   state int RangeGovernorLastAction;
 
-  register_trigger soraswap_range_governor_tick {
-    call native_range_governor_tick;
+  trigger soraswap_range_governor_tick -> native_range_governor_tick {
     on time pre_commit;
     repeats indefinitely;
-    metadata { tag: "soraswap"; module: "dlmm.dlmm_pool"; __enabled: false; }
+    metadata { "tag": "soraswap"; "module": "dlmm.dlmm_pool"; "__enabled": false; }
   }
 
-  fn ppm_scale() -> int {
-    return 1_000_000;
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
   }
 
-  fn default_impact_cap_bps() -> int {
-    return 10_000;
+  fn zero_decimal() -> decimal {
+    let decimal zero = 0;
+    return zero;
   }
 
-  fn default_max_bins_per_swap() -> int {
-    return 32;
+  fn universal_dataspace() -> DataSpaceId {
+    let dataspace = DataSpaceId::parse("0");
+    return dataspace;
   }
 
-  fn fee_growth_scale() -> int {
-    return 1_000_000_000;
-  }
-
-  fn base_asset_key() -> Name {
-    let key = name!("base_asset");
-    return key;
-  }
-
-  fn quote_asset_key() -> Name {
-    let key = name!("quote_asset");
-    return key;
-  }
-
-  fn vault_account_key() -> Name {
-    let key = name!("vault_account");
-    return key;
-  }
-
-  fn provider_key() -> Name {
-    let key = name!("provider");
-    return key;
-  }
-
-  fn bin_id_key() -> Name {
-    let key = name!("bin_id");
-    return key;
-  }
-
-  fn base_amount_key() -> Name {
-    let key = name!("base_amount");
-    return key;
-  }
-
-  fn quote_amount_key() -> Name {
-    let key = name!("quote_amount");
-    return key;
-  }
-
-  fn position_id_key() -> Name {
-    let key = name!("position_id");
-    return key;
-  }
-
-  fn recipient_key() -> Name {
-    let key = name!("recipient");
-    return key;
-  }
-
-  fn abs_int(value: int) -> int {
+  fn abs_int(int value) -> int {
     if value < 0 {
       return 0 - value;
     }
     return value;
   }
 
-  fn min_int(a: int, b: int) -> int {
-    if a <= b {
-      return a;
+  fn min_quantity(quantity left, quantity right) -> quantity {
+    if left <= right {
+      return left;
     }
-    return b;
+    return right;
   }
 
-  fn ceil_div(numerator: int, denominator: int) -> int {
-    assert(denominator > 0, "invalid denominator");
-    if numerator <= 0 {
-      return 0;
-    }
-    return (numerator + denominator - 1) / denominator;
+  fn assert_valid_fee(int fee_pips) {
+    require(fee_pips >= 0, DlmmPoolError::InvalidFeePips);
+    require(fee_pips < 1_000_000, DlmmPoolError::InvalidFeePips);
   }
 
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
-      }
-    }
+  fn assert_valid_bin_step(int bin_step) {
+    require(bin_step > 0, DlmmPoolError::InvalidBinStep);
+    require(bin_step <= 100_000, DlmmPoolError::InvalidBinStep);
   }
 
-  fn assert_pool_initialized() {
-    assert(PoolInitialized == 1, "pool not initialized");
+  fn assert_valid_bin_id(int bin_id) {
+    require(abs_int(bin_id) <= 200_000, DlmmPoolError::InvalidBinId);
   }
 
   fn assert_pool_owner() {
-    assert_pool_initialized();
-    assert(PoolOwner == authority(), "pool owner mismatch");
+    require(AdminRenounced == 0, DlmmPoolError::AdminRenounced);
+    require(PoolOwner == context::authority(), DlmmPoolError::PoolOwnerMismatch);
   }
 
   fn assert_vault_operator() {
-    assert_pool_initialized();
-    assert(VaultAccount == authority(), "vault operator mismatch");
+    require(VaultAccount == context::authority(), DlmmPoolError::VaultOperatorMismatch);
   }
 
-  fn assert_valid_fee(fee_pips: int) {
-    assert(fee_pips >= 0, "negative fee_pips");
-    assert(fee_pips < ppm_scale(), "fee_pips too large");
+  fn renounce_admin_impl() {
+    require(AdminRenounced == 0, DlmmPoolError::AdminAlreadyRenounced);
+    require(PoolOwner == context::authority(), DlmmPoolError::PoolOwnerMismatch);
+    RangeGovernorEnabled = 0;
+    RangeGovernorNextSlot = 0;
+    AdminRenounced = 1;
   }
 
-  fn assert_valid_bin_step(bin_step: int) {
-    assert(bin_step > 0, "invalid bin_step");
-    assert(bin_step <= 100_000, "bin_step too large");
+  fn fee_multiplier(int fee_pips) -> decimal {
+    assert_valid_fee(fee_pips);
+    let decimal scale = 1_000_000;
+    let fee = decimal::from_int(value: fee_pips);
+    return (scale - fee) / scale;
   }
 
-  fn assert_valid_bin_id(bin_id: int) {
-    assert(abs_int(bin_id) <= 200_000, "bin_id too large");
+  fn fee_adjusted_amount(quantity amount_in, int fee_pips) -> quantity {
+    return amount_in * fee_multiplier(fee_pips);
   }
 
-  fn bin_reserve_base_value(bin_id: int) -> int {
-    if BinReserveBase.contains(bin_id) {
-      return BinReserveBase[bin_id];
-    }
-    return 0;
+  fn fee_paid_amount(quantity amount_in, int fee_pips) -> quantity {
+    return amount_in - fee_adjusted_amount(amount_in: amount_in, fee_pips: fee_pips);
   }
 
-  fn bin_reserve_quote_value(bin_id: int) -> int {
-    if BinReserveQuote.contains(bin_id) {
-      return BinReserveQuote[bin_id];
-    }
-    return 0;
-  }
-
-  fn bin_liquidity_value(bin_id: int) -> int {
-    return bin_reserve_base_value(bin_id) + bin_reserve_quote_value(bin_id);
-  }
-
-  fn bin_share_supply_value(bin_id: int) -> int {
-    if BinShareSupply.contains(bin_id) {
-      return BinShareSupply[bin_id];
-    }
-    return 0;
-  }
-
-  fn bin_fee_growth_base_value(bin_id: int) -> int {
-    if BinFeeGrowthBase.contains(bin_id) {
-      return BinFeeGrowthBase[bin_id];
-    }
-    return 0;
-  }
-
-  fn bin_fee_growth_quote_value(bin_id: int) -> int {
-    if BinFeeGrowthQuote.contains(bin_id) {
-      return BinFeeGrowthQuote[bin_id];
-    }
-    return 0;
-  }
-
-  fn position_shares_value(position_id: Name) -> int {
-    if PositionShares.contains(position_id) {
-      return PositionShares[position_id];
-    }
-    return 0;
-  }
-
-  fn position_fee_debt_base_value(position_id: Name) -> int {
-    if PositionFeeDebtBase.contains(position_id) {
-      return PositionFeeDebtBase[position_id];
-    }
-    return 0;
-  }
-
-  fn position_fee_debt_quote_value(position_id: Name) -> int {
-    if PositionFeeDebtQuote.contains(position_id) {
-      return PositionFeeDebtQuote[position_id];
-    }
-    return 0;
-  }
-
-  fn position_credit_base_value(position_id: Name) -> int {
-    if PositionCreditBase.contains(position_id) {
-      return PositionCreditBase[position_id];
-    }
-    return 0;
-  }
-
-  fn position_credit_quote_value(position_id: Name) -> int {
-    if PositionCreditQuote.contains(position_id) {
-      return PositionCreditQuote[position_id];
-    }
-    return 0;
-  }
-
-  fn liquidity_units(base_amount: int, quote_amount: int) -> int {
-    return base_amount + quote_amount;
-  }
-
-  fn share_mint_for_state(share_supply: int,
-                          total_liquidity: int,
-                          base_amount: int,
-                          quote_amount: int) -> int {
-    let deposit_liquidity = liquidity_units(base_amount, quote_amount);
-    assert(deposit_liquidity > 0, "zero liquidity");
-
-    if share_supply <= 0 || total_liquidity <= 0 {
-      return deposit_liquidity;
-    }
-
-    let minted = (deposit_liquidity * share_supply) / total_liquidity;
-    assert(minted > 0, "share mint too small");
-    return minted;
-  }
-
-  fn share_mint_for_deposit(bin_id: int,
-                            base_amount: int,
-                            quote_amount: int) -> int {
-    return share_mint_for_state(
-      bin_share_supply_value(bin_id),
-      bin_liquidity_value(bin_id),
-      base_amount,
-      quote_amount
+  fn gross_from_net(quantity net_amount, int fee_pips) -> quantity {
+    return net_amount.div_round(
+      divisor: fee_multiplier(fee_pips),
+      scale: 28,
+      mode: Rounding::ceil
     );
   }
 
-  fn fee_adjusted_amount(amount_in: int, fee_pips: int) -> int {
-    if amount_in <= 0 {
-      return 0;
-    }
-    assert_valid_fee(fee_pips);
-    return (amount_in * (ppm_scale() - fee_pips)) / ppm_scale();
-  }
-
-  fn fee_paid_amount(amount_in: int, fee_pips: int) -> int {
-    let effective = fee_adjusted_amount(amount_in, fee_pips);
-    return amount_in - effective;
-  }
-
-  fn credit_bin_fee_growth_base(bin_id: int, fee_paid: int) {
-    let share_supply = bin_share_supply_value(bin_id);
-    if fee_paid <= 0 || share_supply <= 0 {
-      return;
-    }
-    BinFeeGrowthBase[bin_id] = bin_fee_growth_base_value(bin_id) +
-      ((fee_paid * fee_growth_scale()) / share_supply);
-  }
-
-  fn credit_bin_fee_growth_quote(bin_id: int, fee_paid: int) {
-    let share_supply = bin_share_supply_value(bin_id);
-    if fee_paid <= 0 || share_supply <= 0 {
-      return;
-    }
-    BinFeeGrowthQuote[bin_id] = bin_fee_growth_quote_value(bin_id) +
-      ((fee_paid * fee_growth_scale()) / share_supply);
-  }
-
-  fn gross_from_net(net_amount: int, fee_pips: int) -> int {
-    if net_amount <= 0 {
-      return 0;
-    }
-    let gross = ceil_div(net_amount * ppm_scale(), ppm_scale() - fee_pips);
-    if fee_adjusted_amount(gross, fee_pips) < net_amount {
-      return gross + 1;
-    }
-    return gross;
-  }
-
-  fn bin_price_ppm(bin_id: int, bin_step: int) -> int {
-    let scale = ppm_scale();
-    assert_valid_bin_step(bin_step);
+  fn bin_price(int bin_id, int bin_step) -> decimal {
     assert_valid_bin_id(bin_id);
-
+    assert_valid_bin_step(bin_step);
+    let decimal scale = 1_000_000;
+    let offset = decimal::from_int(value: abs_int(bin_id) * bin_step);
     if bin_id >= 0 {
-      return scale + (bin_id * bin_step);
+      return (scale + offset) / scale;
+    }
+    return scale.div_round(
+      divisor: scale + offset,
+      scale: 28,
+      mode: Rounding::floor
+    );
+  }
+
+  fn price_impact_bps(decimal start_price, decimal current_price) -> int {
+    var delta = current_price - start_price;
+    if delta < 0 {
+      delta = 0 - delta;
+    }
+    let ratio = delta.div_round(
+      divisor: start_price,
+      scale: 12,
+      mode: Rounding::ceil
+    );
+    return decimal::to_int_round(
+      value: ratio * 10_000,
+      mode: Rounding::ceil
+    );
+  }
+
+  fn bin_reserve_base_value(int bin_id) -> quantity {
+    return BinReserveBase.get(bin_id).unwrap_or(zero_quantity());
+  }
+
+  fn bin_reserve_quote_value(int bin_id) -> quantity {
+    return BinReserveQuote.get(bin_id).unwrap_or(zero_quantity());
+  }
+
+  fn bin_share_supply_value(int bin_id) -> quantity {
+    return BinShareSupply.get(bin_id).unwrap_or(zero_quantity());
+  }
+
+  fn bin_fee_growth_base_value(int bin_id) -> decimal {
+    return BinFeeGrowthBase.get(bin_id).unwrap_or(zero_decimal());
+  }
+
+  fn bin_fee_growth_quote_value(int bin_id) -> decimal {
+    return BinFeeGrowthQuote.get(bin_id).unwrap_or(zero_decimal());
+  }
+
+  fn position_shares_value(Name position_id) -> quantity {
+    return PositionShares.get(position_id).unwrap_or(zero_quantity());
+  }
+
+  fn position_fee_debt_base_value(Name position_id) -> decimal {
+    return PositionFeeDebtBase.get(position_id).unwrap_or(zero_decimal());
+  }
+
+  fn position_fee_debt_quote_value(Name position_id) -> decimal {
+    return PositionFeeDebtQuote.get(position_id).unwrap_or(zero_decimal());
+  }
+
+  fn position_credit_base_value(Name position_id) -> quantity {
+    return PositionCreditBase.get(position_id).unwrap_or(zero_quantity());
+  }
+
+  fn position_credit_quote_value(Name position_id) -> quantity {
+    return PositionCreditQuote.get(position_id).unwrap_or(zero_quantity());
+  }
+
+  fn position_owner_value(Name position_id) -> AccountId {
+    require(PositionOwner.contains(position_id), DlmmPoolError::PositionNotFound);
+    return PositionOwner.get(position_id).unwrap_or(context::authority());
+  }
+
+  fn position_bin_value(Name position_id) -> int {
+    require(PositionBinId.contains(position_id), DlmmPoolError::PositionNotFound);
+    return PositionBinId.get(position_id).unwrap_or(ActiveBin);
+  }
+
+  fn move_asset_if_needed(
+    AccountId source,
+    AccountId destination,
+    AssetDefinitionId asset,
+    quantity amount
+  ) {
+    if amount > zero_quantity() && source != destination {
+      ledger::asset::transfer(
+        source: source,
+        destination: destination,
+        asset_definition: asset,
+        amount: amount,
+        dataspace: universal_dataspace()
+      );
+    }
+  }
+
+  fn ensure_bin_indexed(int bin_id) {
+    assert_valid_bin_id(bin_id);
+    if BinIndexed.contains(bin_id) {
+      return;
     }
 
-    let denominator = scale + (abs_int(bin_id) * bin_step);
-    let price = (scale * scale) / denominator;
-    assert(price > 0, "bin price underflow");
-    return price;
+    require(IndexedBinCount < 64, DlmmPoolError::TooManyBins);
+    if IndexedBinCount == 0 {
+      FirstIndexedBin = bin_id;
+      LastIndexedBin = bin_id;
+    } else {
+      var cursor = FirstIndexedBin;
+      var inserted = 0;
+      for _index_step in range(64) {
+        if inserted == 1 {
+          break;
+        }
+        require(BinIndexed.contains(cursor), DlmmPoolError::BinIndexCorrupt);
+        require(cursor != bin_id, DlmmPoolError::BinIndexCorrupt);
+        if bin_id < cursor {
+          if PreviousIndexedBin.contains(cursor) {
+            let previous = PreviousIndexedBin.get(cursor).unwrap_or(cursor);
+            require(previous < bin_id, DlmmPoolError::BinIndexCorrupt);
+            NextIndexedBin[previous] = bin_id;
+            PreviousIndexedBin[bin_id] = previous;
+          } else {
+            FirstIndexedBin = bin_id;
+          }
+          NextIndexedBin[bin_id] = cursor;
+          PreviousIndexedBin[cursor] = bin_id;
+          inserted = 1;
+        } else {
+          if NextIndexedBin.contains(cursor) {
+            let next = NextIndexedBin.get(cursor).unwrap_or(cursor);
+            require(next > cursor, DlmmPoolError::BinIndexCorrupt);
+            cursor = next;
+          } else {
+            NextIndexedBin[cursor] = bin_id;
+            PreviousIndexedBin[bin_id] = cursor;
+            LastIndexedBin = bin_id;
+            inserted = 1;
+          }
+        }
+      }
+      require(inserted == 1, DlmmPoolError::BinIndexCorrupt);
+    }
+
+    BinIndexed[bin_id] = 1;
+    BinReserveBase[bin_id] = zero_quantity();
+    BinReserveQuote[bin_id] = zero_quantity();
+    BinShareSupply[bin_id] = zero_quantity();
+    BinFeeGrowthBase[bin_id] = zero_decimal();
+    BinFeeGrowthQuote[bin_id] = zero_decimal();
+    IndexedBinCount = IndexedBinCount + 1;
   }
 
-  fn price_impact_bps(start_price: int, current_price: int) -> int {
-    assert(start_price > 0, "invalid start price");
-    return (abs_int(current_price - start_price) * 10_000) / start_price;
+  fn liquidity_value(
+    int bin_id,
+    quantity base_amount,
+    quantity quote_amount
+  ) -> quantity {
+    return quote_amount + base_amount * bin_price(bin_id: bin_id, bin_step: BinStep);
   }
 
-  fn assert_position_exists(position_id: Name) {
-    assert(PositionOwner.contains(position_id), "position not found");
+  fn share_mint_for_deposit(
+    int bin_id,
+    quantity base_amount,
+    quantity quote_amount
+  ) -> quantity {
+    let deposit_value = liquidity_value(
+      bin_id: bin_id,
+      base_amount: base_amount,
+      quote_amount: quote_amount
+    );
+    require(deposit_value > zero_quantity(), DlmmPoolError::ZeroLiquidity);
+    let share_supply = bin_share_supply_value(bin_id);
+    let current_value = liquidity_value(
+      bin_id: bin_id,
+      base_amount: bin_reserve_base_value(bin_id),
+      quote_amount: bin_reserve_quote_value(bin_id)
+    );
+    if share_supply == zero_quantity() || current_value == zero_quantity() {
+      return deposit_value;
+    }
+    let share_ratio = deposit_value.ratio_round(
+      divisor: current_value,
+      scale: 28,
+      mode: Rounding::floor
+    );
+    let minted = share_supply * share_ratio;
+    require(minted > zero_quantity(), DlmmPoolError::ZeroLiquidity);
+    return minted;
   }
 
-  fn accrue_position_fees(position_id: Name) {
+  fn credit_bin_fee_growth_base(int bin_id, quantity fee_paid) {
+    let supply = bin_share_supply_value(bin_id);
+    if fee_paid == zero_quantity() || supply == zero_quantity() {
+      return;
+    }
+    let growth = fee_paid.ratio_round(
+      divisor: supply,
+      scale: 28,
+      mode: Rounding::floor
+    );
+    BinFeeGrowthBase[bin_id] = bin_fee_growth_base_value(bin_id) + growth;
+  }
+
+  fn credit_bin_fee_growth_quote(int bin_id, quantity fee_paid) {
+    let supply = bin_share_supply_value(bin_id);
+    if fee_paid == zero_quantity() || supply == zero_quantity() {
+      return;
+    }
+    let growth = fee_paid.ratio_round(
+      divisor: supply,
+      scale: 28,
+      mode: Rounding::floor
+    );
+    BinFeeGrowthQuote[bin_id] = bin_fee_growth_quote_value(bin_id) + growth;
+  }
+
+  fn accrue_position_fees(Name position_id) {
+    let bin_id = position_bin_value(position_id);
     let shares = position_shares_value(position_id);
-    let bin_id = PositionBinId[position_id];
     let growth_base = bin_fee_growth_base_value(bin_id);
     let growth_quote = bin_fee_growth_quote_value(bin_id);
     let debt_base = position_fee_debt_base_value(position_id);
     let debt_quote = position_fee_debt_quote_value(position_id);
-
-    if shares > 0 {
-      let delta_base = growth_base - debt_base;
-      let delta_quote = growth_quote - debt_quote;
-      if delta_base > 0 {
-        PositionCreditBase[position_id] = position_credit_base_value(position_id) +
-          ((shares * delta_base) / fee_growth_scale());
-      }
-      if delta_quote > 0 {
-        PositionCreditQuote[position_id] = position_credit_quote_value(position_id) +
-          ((shares * delta_quote) / fee_growth_scale());
-      }
+    require(growth_base >= debt_base, DlmmPoolError::FeeGrowthRegression);
+    require(growth_quote >= debt_quote, DlmmPoolError::FeeGrowthRegression);
+    if shares > zero_quantity() {
+      PositionCreditBase[position_id] = position_credit_base_value(position_id) +
+        shares * (growth_base - debt_base);
+      PositionCreditQuote[position_id] = position_credit_quote_value(position_id) +
+        shares * (growth_quote - debt_quote);
     }
-
     PositionFeeDebtBase[position_id] = growth_base;
     PositionFeeDebtQuote[position_id] = growth_quote;
   }
 
-  kotoage fn main() -> int {
-    if PoolInitialized == 1 {
-      return ActiveBin;
+  fn find_quote_liquidity_from_active() -> int {
+    require(IndexedBinCount > 0, DlmmPoolError::NoExecutableLiquidity);
+    var cursor = FirstIndexedBin;
+    var found = 0;
+    var candidate = ActiveBin;
+    for _index_step in range(64) {
+      if found == 1 {
+        break;
+      }
+      require(BinIndexed.contains(cursor), DlmmPoolError::BinIndexCorrupt);
+      if cursor >= ActiveBin && bin_reserve_quote_value(cursor) > MinReserveQuote {
+        candidate = cursor;
+        found = 1;
+      } else {
+        if NextIndexedBin.contains(cursor) {
+          let next = NextIndexedBin.get(cursor).unwrap_or(cursor);
+          require(next > cursor, DlmmPoolError::BinIndexCorrupt);
+          cursor = next;
+        } else {
+          break;
+        }
+      }
     }
-    return 0;
+    require(found == 1, DlmmPoolError::NoExecutableLiquidity);
+    ActiveBin = candidate;
+    return candidate;
   }
 
-  kotoage fn warm_write() {
+  fn find_base_liquidity_from_active() -> int {
+    require(IndexedBinCount > 0, DlmmPoolError::NoExecutableLiquidity);
+    var cursor = LastIndexedBin;
+    var found = 0;
+    var candidate = ActiveBin;
+    for _index_step in range(64) {
+      if found == 1 {
+        break;
+      }
+      require(BinIndexed.contains(cursor), DlmmPoolError::BinIndexCorrupt);
+      if cursor <= ActiveBin && bin_reserve_base_value(cursor) > MinReserveBase {
+        candidate = cursor;
+        found = 1;
+      } else {
+        if PreviousIndexedBin.contains(cursor) {
+          let previous = PreviousIndexedBin.get(cursor).unwrap_or(cursor);
+          require(previous < cursor, DlmmPoolError::BinIndexCorrupt);
+          cursor = previous;
+        } else {
+          break;
+        }
+      }
+    }
+    require(found == 1, DlmmPoolError::NoExecutableLiquidity);
+    ActiveBin = candidate;
+    return candidate;
   }
 
-  kotoage fn init_pool(base_asset: AssetDefinitionId,
-                       quote_asset: AssetDefinitionId,
-                       vault_account: AccountId,
-                       fee_pips: int,
-                       bin_step: int,
-                       active_bin: int,
-                       impact_cap_bps: int,
-                       min_reserve_base: int,
-                       min_reserve_quote: int,
-                       max_bins_per_swap: int,
-                       bin_liquidity_cap: int) {
-    assert(PoolInitialized == 0, "pool initialized");
-    init_pool_impl(base_asset, quote_asset, vault_account, fee_pips, bin_step, active_bin);
-    apply_risk_config(
-      impact_cap_bps,
-      min_reserve_base,
-      min_reserve_quote,
-      max_bins_per_swap,
-      bin_liquidity_cap
-    );
-  }
-
-  fn init_pool_impl(base_asset: AssetDefinitionId,
-                    quote_asset: AssetDefinitionId,
-                    vault_account: AccountId,
-                    fee_pips: int,
-                    bin_step: int,
-                    active_bin: int) {
+  hajimari(
+    AssetDefinitionId base_asset,
+    AssetDefinitionId quote_asset,
+    AccountId vault_account,
+    int fee_pips,
+    int bin_step,
+    int active_bin,
+    int impact_cap_bps,
+    quantity min_reserve_base,
+    quantity min_reserve_quote,
+    int max_bins_per_swap,
+    quantity bin_liquidity_cap
+  ) {
+    require(base_asset != quote_asset, DlmmPoolError::IdenticalAssets);
     assert_valid_fee(fee_pips);
     assert_valid_bin_step(bin_step);
     assert_valid_bin_id(active_bin);
+    require(impact_cap_bps >= 0, DlmmPoolError::InvalidImpactCap);
+    require(max_bins_per_swap > 0, DlmmPoolError::InvalidMaxBinsPerSwap);
+    require(max_bins_per_swap <= 64, DlmmPoolError::InvalidMaxBinsPerSwap);
+    if bin_liquidity_cap > zero_quantity() {
+      require(bin_liquidity_cap >= min_reserve_base, DlmmPoolError::BinCapBelowBaseFloor);
+      require(bin_liquidity_cap >= min_reserve_quote, DlmmPoolError::BinCapBelowQuoteFloor);
+    }
 
     PoolInitialized = 1;
-    PoolOwner = authority();
+    PoolOwner = context::authority();
+    AdminRenounced = 0;
     BaseAsset = base_asset;
     QuoteAsset = quote_asset;
     VaultAccount = vault_account;
     FeePips = fee_pips;
     BinStep = bin_step;
     ActiveBin = active_bin;
-    ImpactCapBps = default_impact_cap_bps();
-    MinReserveBase = 0;
-    MinReserveQuote = 0;
-    MaxBinsPerSwap = default_max_bins_per_swap();
-    BinLiquidityCap = 0;
+    ImpactCapBps = impact_cap_bps;
+    MinReserveBase = min_reserve_base;
+    MinReserveQuote = min_reserve_quote;
+    MaxBinsPerSwap = max_bins_per_swap;
+    BinLiquidityCap = bin_liquidity_cap;
+    IndexedBinCount = 0;
+    FirstIndexedBin = active_bin;
+    LastIndexedBin = active_bin;
     RangeGovernorEnabled = 0;
     RangeGovernorCadenceSlots = 0;
     RangeGovernorNextSlot = 0;
@@ -428,360 +525,623 @@ seiyaku DlmmPool {
     RangeGovernorLastAction = 0;
   }
 
-  fn apply_risk_config(impact_cap_bps: int,
-                       min_reserve_base: int,
-                       min_reserve_quote: int,
-                       max_bins_per_swap: int,
-                       bin_liquidity_cap: int) {
-    assert_pool_initialized();
-    assert(impact_cap_bps >= 0, "negative impact cap");
-    assert(min_reserve_base >= 0, "negative min_reserve_base");
-    assert(min_reserve_quote >= 0, "negative min_reserve_quote");
-    assert(max_bins_per_swap > 0, "invalid max_bins_per_swap");
-    assert(bin_liquidity_cap >= 0, "negative bin_liquidity_cap");
-    if bin_liquidity_cap > 0 {
-      assert(bin_liquidity_cap >= min_reserve_base, "bin cap below base floor");
-      assert(bin_liquidity_cap >= min_reserve_quote, "bin cap below quote floor");
-    }
-
-    ImpactCapBps = impact_cap_bps;
-    MinReserveBase = min_reserve_base;
-    MinReserveQuote = min_reserve_quote;
-    MaxBinsPerSwap = max_bins_per_swap;
-    BinLiquidityCap = bin_liquidity_cap;
+  view fn main() -> int {
+    return ActiveBin;
   }
 
-  kotoage fn seed_bin(bin_id: int,
-                      base_amount: int,
-                      quote_amount: int) permission(AssetOps) {
-    seed_bin_impl(
-      authority(),
-      VaultAccount,
-      BaseAsset,
-      QuoteAsset,
-      bin_id,
-      base_amount,
-      quote_amount
-    );
-  }
-
-  kotoage fn seed_bin_c2c(bin_id: int,
-                          base_amount: int,
-                          quote_amount: int) -> int permission(AssetOps) {
-    seed_bin(bin_id, base_amount, quote_amount);
-    return 1;
-  }
-
-  fn seed_bin_impl(provider: AccountId,
-                   vault: AccountId,
-                   base_asset: AssetDefinitionId,
-                   quote_asset: AssetDefinitionId,
-                   bin_id: int,
-                   base_amount: int,
-                   quote_amount: int) {
-    let reserve_base = bin_reserve_base_value(bin_id);
-    let reserve_quote = bin_reserve_quote_value(bin_id);
-    let minted_shares = 0;
-    let cap = BinLiquidityCap;
-    assert_pool_initialized();
-    assert_valid_bin_id(bin_id);
-    assert(base_amount >= 0, "negative base_amount");
-    assert(quote_amount >= 0, "negative quote_amount");
-    minted_shares = share_mint_for_deposit(bin_id, base_amount, quote_amount);
-
-    if cap > 0 {
-      assert(reserve_base + base_amount <= cap, "base reserve cap");
-      assert(reserve_quote + quote_amount <= cap, "quote reserve cap");
-    }
-
-    if base_amount > 0 {
-      move_asset_if_needed(provider, vault, base_asset, base_amount);
-    }
-    if quote_amount > 0 {
-      move_asset_if_needed(provider, vault, quote_asset, quote_amount);
-    }
-
-    BinReserveBase[bin_id] = reserve_base + base_amount;
-    BinReserveQuote[bin_id] = reserve_quote + quote_amount;
-    BinShareSupply[bin_id] = bin_share_supply_value(bin_id) + minted_shares;
-  }
-
-  kotoage fn add_position_liquidity(position_id: Name,
-                                    bin_id: int,
-                                    base_amount: int,
-                                    quote_amount: int,
-                                    min_shares_out: int) -> int permission(AssetOps) {
+  kotoage fn add_position_liquidity(
+    Name position_id,
+    int bin_id,
+    quantity base_amount,
+    quantity quote_amount,
+    quantity min_shares_out,
+  ) -> quantity authorize("CanInvokeContractEntrypoint") {
     return add_position_liquidity_impl(
-      position_id,
-      authority(),
-      VaultAccount,
-      BaseAsset,
-      QuoteAsset,
-      bin_id,
-      base_amount,
-      quote_amount,
-      min_shares_out
+      position_id: position_id,
+      provider: context::authority(),
+      bin_id: bin_id,
+      base_amount: base_amount,
+      quote_amount: quote_amount,
+      min_shares_out: min_shares_out,
     );
   }
 
-  fn add_position_liquidity_impl(position_id: Name,
-                                 provider: AccountId,
-                                 vault: AccountId,
-                                 base_asset: AssetDefinitionId,
-                                 quote_asset: AssetDefinitionId,
-                                 bin_id: int,
-                                 base_amount: int,
-                                 quote_amount: int,
-                                 min_shares_out: int) -> int {
+  // Bootstrap and launchpad seeding is represented by an owned position so
+  // shares and earned fees can never become anonymous or permanently trapped.
+  kotoage fn seed_bin(Name position_id, int bin_id, quantity base_amount, quantity quote_amount) -> quantity authorize(
+    "CanInvokeContractEntrypoint"
+  ) {
+    return add_position_liquidity_impl(
+      position_id: position_id,
+      provider: context::authority(),
+      bin_id: bin_id,
+      base_amount: base_amount,
+      quote_amount: quote_amount,
+      min_shares_out: zero_quantity(),
+    );
+  }
+
+  kotoage fn seed_bin_c2c(
+    Name position_id,
+    int bin_id,
+    quantity base_amount,
+    quantity quote_amount
+  ) -> quantity authorize("AssetOps") {
+    return add_position_liquidity_impl(
+      position_id: position_id,
+      provider: context::authority(),
+      bin_id: bin_id,
+      base_amount: base_amount,
+      quote_amount: quote_amount,
+      min_shares_out: zero_quantity()
+    );
+  }
+
+  fn add_position_liquidity_impl(
+    Name position_id,
+    AccountId provider,
+    int bin_id,
+    quantity base_amount,
+    quantity quote_amount,
+    quantity min_shares_out
+  ) -> quantity {
+    ensure_bin_indexed(bin_id);
     let reserve_base = bin_reserve_base_value(bin_id);
     let reserve_quote = bin_reserve_quote_value(bin_id);
-    let share_supply = bin_share_supply_value(bin_id);
-    let minted_shares = 0;
-    let cap = BinLiquidityCap;
-    assert_pool_initialized();
-    assert_valid_bin_id(bin_id);
-    assert(base_amount >= 0, "negative base_amount");
-    assert(quote_amount >= 0, "negative quote_amount");
-    assert(min_shares_out >= 0, "negative min_shares_out");
-    minted_shares = share_mint_for_state(
-      share_supply,
-      reserve_base + reserve_quote,
-      base_amount,
-      quote_amount
-    );
-    assert(minted_shares >= min_shares_out, "insufficient shares out");
-
-    if cap > 0 {
-      assert(reserve_base + base_amount <= cap, "base reserve cap");
-      assert(reserve_quote + quote_amount <= cap, "quote reserve cap");
+    if BinLiquidityCap > zero_quantity() {
+      require(
+        reserve_base + base_amount <= BinLiquidityCap,
+        DlmmPoolError::BaseReserveCap
+      );
+      require(
+        reserve_quote + quote_amount <= BinLiquidityCap,
+        DlmmPoolError::QuoteReserveCap
+      );
     }
+    let minted = share_mint_for_deposit(
+      bin_id: bin_id,
+      base_amount: base_amount,
+      quote_amount: quote_amount
+    );
+    require(minted >= min_shares_out, DlmmPoolError::InsufficientSharesOut);
 
     if PositionOwner.contains(position_id) {
-      assert(PositionOwner[position_id] == provider, "position owner mismatch");
-      assert(PositionBinId[position_id] == bin_id, "position bin mismatch");
+      require(
+        position_owner_value(position_id) == provider,
+        DlmmPoolError::PositionOwnerMismatch
+      );
+      require(position_bin_value(position_id) == bin_id, DlmmPoolError::PositionBinMismatch);
       accrue_position_fees(position_id);
     } else {
       PositionOwner[position_id] = provider;
       PositionBinId[position_id] = bin_id;
-      PositionShares[position_id] = 0;
-      PositionCreditBase[position_id] = 0;
-      PositionCreditQuote[position_id] = 0;
+      PositionShares[position_id] = zero_quantity();
+      PositionCreditBase[position_id] = zero_quantity();
+      PositionCreditQuote[position_id] = zero_quantity();
     }
 
-    if base_amount > 0 {
-      move_asset_if_needed(provider, vault, base_asset, base_amount);
-    }
-    if quote_amount > 0 {
-      move_asset_if_needed(provider, vault, quote_asset, quote_amount);
-    }
-
+    move_asset_if_needed(
+      source: provider,
+      destination: VaultAccount,
+      asset: BaseAsset,
+      amount: base_amount
+    );
+    move_asset_if_needed(
+      source: provider,
+      destination: VaultAccount,
+      asset: QuoteAsset,
+      amount: quote_amount
+    );
     BinReserveBase[bin_id] = reserve_base + base_amount;
     BinReserveQuote[bin_id] = reserve_quote + quote_amount;
-    BinShareSupply[bin_id] = share_supply + minted_shares;
-    PositionShares[position_id] = position_shares_value(position_id) + minted_shares;
+    BinShareSupply[bin_id] = bin_share_supply_value(bin_id) + minted;
+    PositionShares[position_id] = position_shares_value(position_id) + minted;
     PositionFeeDebtBase[position_id] = bin_fee_growth_base_value(bin_id);
     PositionFeeDebtQuote[position_id] = bin_fee_growth_quote_value(bin_id);
-    return minted_shares;
+    return minted;
   }
 
-  kotoage fn remove_position_liquidity(position_id: Name,
-                                       shares: int) -> int permission(AssetOps) {
-    return remove_position_liquidity_impl(
-      position_id,
-      authority(),
-      VaultAccount,
-      BaseAsset,
-      QuoteAsset,
-      shares
+  kotoage fn remove_position_liquidity(
+    Name position_id,
+    quantity shares
+  ) -> quantity authorize("AssetOps") {
+    let recipient = context::authority();
+    require(
+      recipient == position_owner_value(position_id),
+      DlmmPoolError::UnexpectedRecipient
     );
-  }
-
-  fn remove_position_liquidity_impl(position_id: Name,
-                                    recipient: AccountId,
-                                    vault: AccountId,
-                                    base_asset: AssetDefinitionId,
-                                    quote_asset: AssetDefinitionId,
-                                    shares: int) -> int {
-    assert_pool_initialized();
-    assert_position_exists(position_id);
-    assert(recipient == PositionOwner[position_id], "unexpected recipient");
     accrue_position_fees(position_id);
-    assert(position_credit_base_value(position_id) == 0, "collect base fees first");
-    assert(position_credit_quote_value(position_id) == 0, "collect quote fees first");
+    require(
+      position_credit_base_value(position_id) == zero_quantity(),
+      DlmmPoolError::CollectBaseFeesFirst
+    );
+    require(
+      position_credit_quote_value(position_id) == zero_quantity(),
+      DlmmPoolError::CollectQuoteFeesFirst
+    );
 
-    let bin_id = PositionBinId[position_id];
-    let position_shares = position_shares_value(position_id);
-    let share_supply = bin_share_supply_value(bin_id);
+    let bin_id = position_bin_value(position_id);
+    let owned_shares = position_shares_value(position_id);
+    let supply = bin_share_supply_value(bin_id);
+    require(shares > zero_quantity(), DlmmPoolError::InvalidShares);
+    require(shares <= owned_shares, DlmmPoolError::InsufficientPositionShares);
+    require(shares <= supply, DlmmPoolError::BinIndexCorrupt);
+    let ratio = shares.ratio_round(
+      divisor: supply,
+      scale: 28,
+      mode: Rounding::floor
+    );
     let reserve_base = bin_reserve_base_value(bin_id);
     let reserve_quote = bin_reserve_quote_value(bin_id);
-    assert(shares > 0, "invalid shares");
-    assert(shares <= position_shares, "insufficient position shares");
-    assert(share_supply > 0, "empty bin");
+    let base_out = reserve_base * ratio;
+    let quote_out = reserve_quote * ratio;
+    require(
+      base_out > zero_quantity() || quote_out > zero_quantity(),
+      DlmmPoolError::ZeroRemoval
+    );
 
-    let base_out = (reserve_base * shares) / share_supply;
-    let quote_out = (reserve_quote * shares) / share_supply;
-    assert(base_out > 0 || quote_out > 0, "zero removal");
-
-    PositionShares[position_id] = position_shares - shares;
-    BinShareSupply[bin_id] = share_supply - shares;
+    PositionShares[position_id] = owned_shares - shares;
+    BinShareSupply[bin_id] = supply - shares;
     BinReserveBase[bin_id] = reserve_base - base_out;
     BinReserveQuote[bin_id] = reserve_quote - quote_out;
     PositionFeeDebtBase[position_id] = bin_fee_growth_base_value(bin_id);
     PositionFeeDebtQuote[position_id] = bin_fee_growth_quote_value(bin_id);
-
-    move_asset_if_needed(vault, recipient, base_asset, base_out);
-    move_asset_if_needed(vault, recipient, quote_asset, quote_out);
+    move_asset_if_needed(
+      source: VaultAccount,
+      destination: recipient,
+      asset: BaseAsset,
+      amount: base_out
+    );
+    move_asset_if_needed(
+      source: VaultAccount,
+      destination: recipient,
+      asset: QuoteAsset,
+      amount: quote_out
+    );
     return base_out + quote_out;
   }
 
-  kotoage fn collect_position_fees(position_id: Name) -> int permission(AssetOps) {
-    return collect_position_fees_impl(
-      position_id,
-      authority(),
-      VaultAccount,
-      BaseAsset,
-      QuoteAsset
+  kotoage fn collect_position_fees(Name position_id) -> quantity authorize("AssetOps") {
+    let recipient = context::authority();
+    require(
+      recipient == position_owner_value(position_id),
+      DlmmPoolError::UnexpectedRecipient
     );
-  }
-
-  fn collect_position_fees_impl(position_id: Name,
-                                recipient: AccountId,
-                                vault: AccountId,
-                                base_asset: AssetDefinitionId,
-                                quote_asset: AssetDefinitionId) -> int {
-    assert_pool_initialized();
-    assert_position_exists(position_id);
-    assert(recipient == PositionOwner[position_id], "unexpected recipient");
     accrue_position_fees(position_id);
-
-    let bin_id = PositionBinId[position_id];
+    let bin_id = position_bin_value(position_id);
     let reserve_base = bin_reserve_base_value(bin_id);
     let reserve_quote = bin_reserve_quote_value(bin_id);
-    let credit_base = position_credit_base_value(position_id);
-    let credit_quote = position_credit_quote_value(position_id);
-    let available_base = reserve_base - MinReserveBase;
-    let available_quote = reserve_quote - MinReserveQuote;
-    if available_base < 0 {
-      available_base = 0;
-    }
-    if available_quote < 0 {
-      available_quote = 0;
-    }
-    let payout_base = min_int(credit_base, available_base);
-    let payout_quote = min_int(credit_quote, available_quote);
-    assert(payout_base > 0 || payout_quote > 0, "nothing to collect");
-
-    PositionCreditBase[position_id] = credit_base - payout_base;
-    PositionCreditQuote[position_id] = credit_quote - payout_quote;
+    let available_base = (reserve_base > MinReserveBase)
+      ? reserve_base - MinReserveBase
+      : zero_quantity();
+    let available_quote = (reserve_quote > MinReserveQuote)
+      ? reserve_quote - MinReserveQuote
+      : zero_quantity();
+    let payout_base = min_quantity(
+      left: position_credit_base_value(position_id),
+      right: available_base
+    );
+    let payout_quote = min_quantity(
+      left: position_credit_quote_value(position_id),
+      right: available_quote
+    );
+    require(
+      payout_base > zero_quantity() || payout_quote > zero_quantity(),
+      DlmmPoolError::NothingToCollect
+    );
+    PositionCreditBase[position_id] = position_credit_base_value(position_id) - payout_base;
+    PositionCreditQuote[position_id] = position_credit_quote_value(position_id) - payout_quote;
     BinReserveBase[bin_id] = reserve_base - payout_base;
     BinReserveQuote[bin_id] = reserve_quote - payout_quote;
-
-    move_asset_if_needed(vault, recipient, base_asset, payout_base);
-    move_asset_if_needed(vault, recipient, quote_asset, payout_quote);
+    move_asset_if_needed(
+      source: VaultAccount,
+      destination: recipient,
+      asset: BaseAsset,
+      amount: payout_base
+    );
+    move_asset_if_needed(
+      source: VaultAccount,
+      destination: recipient,
+      asset: QuoteAsset,
+      amount: payout_quote
+    );
     return payout_base + payout_quote;
   }
 
-  view fn mirror_state() -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
-    let bin_id = ActiveBin;
-    let reserve_base = bin_reserve_base_value(bin_id);
-    let reserve_quote = bin_reserve_quote_value(bin_id);
-    assert_pool_initialized();
-    return (
-      PoolInitialized,
-      bin_id,
-      FeePips,
-      BinStep,
-      reserve_base,
-      reserve_quote,
-      reserve_base + reserve_quote,
-      bin_share_supply_value(bin_id),
-      ImpactCapBps,
-      MinReserveBase,
-      MinReserveQuote,
-      MaxBinsPerSwap,
-      BinLiquidityCap
+  fn swap_base_for_quote(
+    AccountId trader,
+    AccountId recipient,
+    quantity amount_in,
+    quantity min_out,
+    int require_full_fill
+  ) -> quantity {
+    let fee_pips = FeePips;
+    let start_bin = find_quote_liquidity_from_active();
+    let start_price = bin_price(bin_id: start_bin, bin_step: BinStep);
+    var current_bin = start_bin;
+    var amount_remaining = amount_in;
+    var amount_used = zero_quantity();
+    var amount_out = zero_quantity();
+    var bins_visited = 0;
+
+    for _index_step in range(64) {
+      if amount_remaining == zero_quantity() || bins_visited >= MaxBinsPerSwap {
+        break;
+      }
+      require(BinIndexed.contains(current_bin), DlmmPoolError::BinIndexCorrupt);
+      let price = bin_price(bin_id: current_bin, bin_step: BinStep);
+      if ImpactCapBps > 0 && price_impact_bps(
+        start_price: start_price,
+        current_price: price
+      ) > ImpactCapBps {
+        break;
+      }
+      let reserve_base = bin_reserve_base_value(current_bin);
+      let reserve_quote = bin_reserve_quote_value(current_bin);
+      let available_quote = (reserve_quote > MinReserveQuote)
+        ? reserve_quote - MinReserveQuote
+        : zero_quantity();
+      var gross_limit = amount_remaining;
+      if BinLiquidityCap > zero_quantity() {
+        if reserve_base >= BinLiquidityCap {
+          gross_limit = zero_quantity();
+        } else {
+          gross_limit = min_quantity(
+            left: gross_limit,
+            right: BinLiquidityCap - reserve_base
+          );
+        }
+      }
+
+      var gross_used = gross_limit;
+      var output = fee_adjusted_amount(
+        amount_in: gross_limit,
+        fee_pips: fee_pips
+      ) * price;
+      if output > available_quote && available_quote > zero_quantity() {
+        let net_needed = available_quote.div_round(
+          divisor: price,
+          scale: 28,
+          mode: Rounding::ceil
+        );
+        gross_used = min_quantity(
+          left: gross_limit,
+          right: gross_from_net(net_amount: net_needed, fee_pips: fee_pips)
+        );
+        output = fee_adjusted_amount(
+          amount_in: gross_used,
+          fee_pips: fee_pips
+        ) * price;
+        if output > available_quote {
+          output = available_quote;
+        }
+      }
+
+      if gross_used > zero_quantity() && output > zero_quantity() {
+        BinReserveBase[current_bin] = reserve_base + gross_used;
+        BinReserveQuote[current_bin] = reserve_quote - output;
+        credit_bin_fee_growth_base(
+          bin_id: current_bin,
+          fee_paid: fee_paid_amount(amount_in: gross_used, fee_pips: fee_pips)
+        );
+        amount_remaining = amount_remaining - gross_used;
+        amount_used = amount_used + gross_used;
+        amount_out = amount_out + output;
+      }
+      bins_visited = bins_visited + 1;
+      if amount_remaining > zero_quantity() {
+        if NextIndexedBin.contains(current_bin) {
+          let next = NextIndexedBin.get(current_bin).unwrap_or(current_bin);
+          require(next > current_bin, DlmmPoolError::BinIndexCorrupt);
+          current_bin = next;
+          ActiveBin = next;
+        } else {
+          break;
+        }
+      } else {
+        ActiveBin = current_bin;
+      }
+    }
+
+    require(amount_used > zero_quantity(), DlmmPoolError::InsufficientInputUsed);
+    if require_full_fill == 1 {
+      require(amount_used == amount_in, DlmmPoolError::PartialFill);
+    }
+    require(amount_out >= min_out, DlmmPoolError::Slippage);
+    move_asset_if_needed(
+      source: trader,
+      destination: VaultAccount,
+      asset: BaseAsset,
+      amount: amount_used
+    );
+    move_asset_if_needed(
+      source: VaultAccount,
+      destination: recipient,
+      asset: QuoteAsset,
+      amount: amount_out
+    );
+    return amount_out;
+  }
+
+  fn swap_quote_for_base(
+    AccountId trader,
+    AccountId recipient,
+    quantity amount_in,
+    quantity min_out,
+    int require_full_fill
+  ) -> quantity {
+    let fee_pips = FeePips;
+    let start_bin = find_base_liquidity_from_active();
+    let start_price = bin_price(bin_id: start_bin, bin_step: BinStep);
+    var current_bin = start_bin;
+    var amount_remaining = amount_in;
+    var amount_used = zero_quantity();
+    var amount_out = zero_quantity();
+    var bins_visited = 0;
+
+    for _index_step in range(64) {
+      if amount_remaining == zero_quantity() || bins_visited >= MaxBinsPerSwap {
+        break;
+      }
+      require(BinIndexed.contains(current_bin), DlmmPoolError::BinIndexCorrupt);
+      let price = bin_price(bin_id: current_bin, bin_step: BinStep);
+      if ImpactCapBps > 0 && price_impact_bps(
+        start_price: start_price,
+        current_price: price
+      ) > ImpactCapBps {
+        break;
+      }
+      let reserve_base = bin_reserve_base_value(current_bin);
+      let reserve_quote = bin_reserve_quote_value(current_bin);
+      let available_base = (reserve_base > MinReserveBase)
+        ? reserve_base - MinReserveBase
+        : zero_quantity();
+      var gross_limit = amount_remaining;
+      if BinLiquidityCap > zero_quantity() {
+        if reserve_quote >= BinLiquidityCap {
+          gross_limit = zero_quantity();
+        } else {
+          gross_limit = min_quantity(
+            left: gross_limit,
+            right: BinLiquidityCap - reserve_quote
+          );
+        }
+      }
+
+      var gross_used = gross_limit;
+      var output = fee_adjusted_amount(
+        amount_in: gross_limit,
+        fee_pips: fee_pips
+      ).div_round(divisor: price, scale: 28, mode: Rounding::floor);
+      if output > available_base && available_base > zero_quantity() {
+        let net_needed = available_base * price;
+        gross_used = min_quantity(
+          left: gross_limit,
+          right: gross_from_net(net_amount: net_needed, fee_pips: fee_pips)
+        );
+        output = fee_adjusted_amount(
+          amount_in: gross_used,
+          fee_pips: fee_pips
+        ).div_round(divisor: price, scale: 28, mode: Rounding::floor);
+        if output > available_base {
+          output = available_base;
+        }
+      }
+
+      if gross_used > zero_quantity() && output > zero_quantity() {
+        BinReserveQuote[current_bin] = reserve_quote + gross_used;
+        BinReserveBase[current_bin] = reserve_base - output;
+        credit_bin_fee_growth_quote(
+          bin_id: current_bin,
+          fee_paid: fee_paid_amount(amount_in: gross_used, fee_pips: fee_pips)
+        );
+        amount_remaining = amount_remaining - gross_used;
+        amount_used = amount_used + gross_used;
+        amount_out = amount_out + output;
+      }
+      bins_visited = bins_visited + 1;
+      if amount_remaining > zero_quantity() {
+        if PreviousIndexedBin.contains(current_bin) {
+          let previous = PreviousIndexedBin.get(current_bin).unwrap_or(current_bin);
+          require(previous < current_bin, DlmmPoolError::BinIndexCorrupt);
+          current_bin = previous;
+          ActiveBin = previous;
+        } else {
+          break;
+        }
+      } else {
+        ActiveBin = current_bin;
+      }
+    }
+
+    require(amount_used > zero_quantity(), DlmmPoolError::InsufficientInputUsed);
+    if require_full_fill == 1 {
+      require(amount_used == amount_in, DlmmPoolError::PartialFill);
+    }
+    require(amount_out >= min_out, DlmmPoolError::Slippage);
+    move_asset_if_needed(
+      source: trader,
+      destination: VaultAccount,
+      asset: QuoteAsset,
+      amount: amount_used
+    );
+    move_asset_if_needed(
+      source: VaultAccount,
+      destination: recipient,
+      asset: BaseAsset,
+      amount: amount_out
+    );
+    return amount_out;
+  }
+
+  fn swap_exact_in_impl(
+    AccountId trader,
+    AccountId recipient,
+    AssetDefinitionId input_asset,
+    quantity amount_in,
+    quantity min_out,
+    int require_full_fill
+  ) -> quantity {
+    if input_asset == BaseAsset {
+      return swap_base_for_quote(
+        trader: trader,
+        recipient: recipient,
+        amount_in: amount_in,
+        min_out: min_out,
+        require_full_fill: require_full_fill
+      );
+    }
+    require(input_asset == QuoteAsset, DlmmPoolError::AssetNotInPool);
+    return swap_quote_for_base(
+      trader: trader,
+      recipient: recipient,
+      amount_in: amount_in,
+      min_out: min_out,
+      require_full_fill: require_full_fill
     );
   }
 
-  view fn pool_config() -> (AssetDefinitionId, AssetDefinitionId, AccountId, int, int, int) {
-    assert_pool_initialized();
-    return (BaseAsset, QuoteAsset, VaultAccount, FeePips, BinStep, ActiveBin);
+  kotoage fn swap_exact_in(
+    AssetDefinitionId input_asset,
+    quantity amount_in,
+    quantity min_out
+  ) -> quantity authorize("AssetOps") {
+    return swap_exact_in_impl(
+      trader: context::authority(),
+      recipient: context::authority(),
+      input_asset: input_asset,
+      amount_in: amount_in,
+      min_out: min_out,
+      require_full_fill: 0
+    );
   }
 
-  kotoage fn bind_custody_account(vault_account: AccountId) {
-    assert_vault_operator();
+  kotoage fn swap_exact_in_base(
+    quantity amount_in,
+    quantity min_out
+  ) -> quantity authorize("AssetOps") {
+    return swap_exact_in_impl(
+      trader: context::authority(),
+      recipient: context::authority(),
+      input_asset: BaseAsset,
+      amount_in: amount_in,
+      min_out: min_out,
+      require_full_fill: 0
+    );
+  }
+
+  kotoage fn swap_exact_in_quote(
+    quantity amount_in,
+    quantity min_out
+  ) -> quantity authorize("AssetOps") {
+    return swap_exact_in_impl(
+      trader: context::authority(),
+      recipient: context::authority(),
+      input_asset: QuoteAsset,
+      amount_in: amount_in,
+      min_out: min_out,
+      require_full_fill: 0
+    );
+  }
+
+  // This exact selector is admitted through a direct
+  // `CanInvokeContractEntrypoint` token. The surface deliberately has no
+  // trader or recipient parameter: the caller funds the complete quote-asset
+  // input and receives the base-asset output.
+  kotoage fn swap_exact_in_quote_public(quantity amount_in, quantity min_out) -> quantity authorize(
+    "CanInvokeContractEntrypoint"
+  ) {
+    require(amount_in > zero_quantity(), DlmmPoolError::InvalidAmount);
+    return swap_exact_in_impl(
+      trader: context::authority(),
+      recipient: context::authority(),
+      input_asset: QuoteAsset,
+      amount_in: amount_in,
+      min_out: min_out,
+      require_full_fill: 1,
+    );
+  }
+
+  kotoage fn swap_exact_in_base_for(
+    AccountId recipient,
+    quantity amount_in,
+    quantity min_out
+  ) -> quantity authorize("AssetOps") {
+    return swap_exact_in_impl(
+      trader: context::authority(),
+      recipient: recipient,
+      input_asset: BaseAsset,
+      amount_in: amount_in,
+      min_out: min_out,
+      require_full_fill: 1
+    );
+  }
+
+  kotoage fn swap_exact_in_quote_for(
+    AccountId recipient,
+    quantity amount_in,
+    quantity min_out
+  ) -> quantity authorize("AssetOps") {
+    return swap_exact_in_impl(
+      trader: context::authority(),
+      recipient: recipient,
+      input_asset: QuoteAsset,
+      amount_in: amount_in,
+      min_out: min_out,
+      require_full_fill: 1
+    );
+  }
+
+  kotoage fn bind_custody_account(AccountId vault_account) authorize("Admin") {
+    assert_pool_owner();
     VaultAccount = vault_account;
   }
 
-  kotoage fn repair_active_bin(active_bin: int) {
-    assert_vault_operator();
-    assert_valid_bin_id(active_bin);
-    assert(
-      bin_reserve_base_value(active_bin) > 0
-      || bin_reserve_quote_value(active_bin) > 0
-      || bin_share_supply_value(active_bin) > 0,
-      "target bin empty"
-    );
-    ActiveBin = active_bin;
+  // Permanently freezes every owner-controlled pool setting. The pool has no
+  // `kaizen`, owner rotation, or recovery entrypoint, so this transition
+  // cannot be reversed by contract code.
+  kotoage fn renounce_admin() authorize("CanInvokeContractEntrypoint") {
+    renounce_admin_impl();
   }
 
-  view fn custody_account() -> AccountId {
-    assert_pool_initialized();
-    return VaultAccount;
-  }
-
-  view fn risk_config() -> (int, int, int, int, int) {
-    assert_pool_initialized();
-    return (
-      ImpactCapBps,
-      MinReserveBase,
-      MinReserveQuote,
-      MaxBinsPerSwap,
-      BinLiquidityCap
-    );
-  }
-
-  kotoage fn configure_range_governor(cadence_slots: int,
-                                      max_fee_pips: int,
-                                      target_active_bin: int,
-                                      max_active_bin_drift: int,
-                                      enabled: int) permission(Admin) {
+  kotoage fn configure_range_governor(
+    int cadence_slots,
+    int max_fee_pips,
+    int target_active_bin,
+    int max_active_bin_drift,
+    int enabled
+  ) authorize("Admin") {
     assert_pool_owner();
-    assert(cadence_slots >= 0, "invalid cadence");
+    require(cadence_slots >= 0, DlmmPoolError::InvalidCadence);
     assert_valid_fee(max_fee_pips);
     assert_valid_bin_id(target_active_bin);
-    assert(max_active_bin_drift >= 0, "invalid drift");
-    assert(enabled == 0 || enabled == 1, "invalid enabled");
+    require(max_active_bin_drift >= 0, DlmmPoolError::InvalidDrift);
+    require(enabled == 0 || enabled == 1, DlmmPoolError::InvalidEnabled);
     RangeGovernorCadenceSlots = cadence_slots;
     RangeGovernorMaxFeePips = max_fee_pips;
     RangeGovernorTargetActiveBin = target_active_bin;
     RangeGovernorMaxActiveBinDrift = max_active_bin_drift;
     RangeGovernorEnabled = enabled;
-    RangeGovernorNextSlot = block_height() + cadence_slots;
-    set_trigger_enabled(name("soraswap_range_governor_tick"), enabled);
+    RangeGovernorNextSlot = context::block_height() + cadence_slots;
+    ledger::trigger::set_enabled(Name::parse("soraswap_range_governor_tick"), enabled);
   }
 
-  kotoage fn native_range_governor_tick() {
-    if PoolInitialized == 0 {
-      return;
-    }
+  kotoage fn native_range_governor_tick() authorize("Admin") {
     if RangeGovernorEnabled == 0 {
       return;
     }
-    let current_slot = block_height();
+    let current_slot = context::block_height();
     if RangeGovernorNextSlot > 0 && current_slot < RangeGovernorNextSlot {
       return;
     }
-    let action = 0;
+    var action = 0;
     if FeePips > RangeGovernorMaxFeePips {
       FeePips = RangeGovernorMaxFeePips;
       action = 1;
     }
     let drift = abs_int(ActiveBin - RangeGovernorTargetActiveBin);
     if RangeGovernorMaxActiveBinDrift > 0 && drift > RangeGovernorMaxActiveBinDrift {
-      if bin_reserve_base_value(RangeGovernorTargetActiveBin) > 0 ||
-        bin_reserve_quote_value(RangeGovernorTargetActiveBin) > 0 ||
-        bin_share_supply_value(RangeGovernorTargetActiveBin) > 0 {
+      if BinIndexed.contains(RangeGovernorTargetActiveBin) {
         ActiveBin = RangeGovernorTargetActiveBin;
         action = action + 2;
       }
@@ -791,8 +1151,142 @@ seiyaku DlmmPool {
     RangeGovernorNextSlot = current_slot + RangeGovernorCadenceSlots;
   }
 
+  view fn mirror_state() -> (
+    int,
+    int,
+    int,
+    int,
+    quantity,
+    quantity,
+    quantity,
+    quantity,
+    int,
+    quantity,
+    quantity,
+    int,
+    quantity
+  ) {
+    let reserve_base = bin_reserve_base_value(ActiveBin);
+    let reserve_quote = bin_reserve_quote_value(ActiveBin);
+    return (
+      PoolInitialized,
+      ActiveBin,
+      FeePips,
+      BinStep,
+      reserve_base,
+      reserve_quote,
+      reserve_base + reserve_quote,
+      bin_share_supply_value(ActiveBin),
+      ImpactCapBps,
+      MinReserveBase,
+      MinReserveQuote,
+      MaxBinsPerSwap,
+      BinLiquidityCap
+    );
+  }
+
+  view fn pool_config() -> (
+    AssetDefinitionId,
+    AssetDefinitionId,
+    AccountId,
+    int,
+    int,
+    int
+  ) {
+    return (BaseAsset, QuoteAsset, VaultAccount, FeePips, BinStep, ActiveBin);
+  }
+
+  view fn configured_base_asset() -> AssetDefinitionId {
+    return BaseAsset;
+  }
+
+  view fn configured_quote_asset() -> AssetDefinitionId {
+    return QuoteAsset;
+  }
+
+  view fn configured_vault_account() -> AccountId {
+    return VaultAccount;
+  }
+
+  view fn custody_account() -> AccountId {
+    return VaultAccount;
+  }
+
+  view fn risk_config() -> (int, quantity, quantity, int, quantity) {
+    return (
+      ImpactCapBps,
+      MinReserveBase,
+      MinReserveQuote,
+      MaxBinsPerSwap,
+      BinLiquidityCap
+    );
+  }
+
+  view fn mirror_bin(int bin_id) -> (
+    quantity,
+    quantity,
+    quantity,
+    decimal,
+    decimal
+  ) {
+    assert_valid_bin_id(bin_id);
+    return (
+      bin_reserve_base_value(bin_id),
+      bin_reserve_quote_value(bin_id),
+      bin_share_supply_value(bin_id),
+      bin_fee_growth_base_value(bin_id),
+      bin_fee_growth_quote_value(bin_id)
+    );
+  }
+
+  view fn mirror_bin_index(int bin_id) -> (int, int, int, int) {
+    assert_valid_bin_id(bin_id);
+    let registered = BinIndexed.contains(bin_id) ? 1 : 0;
+    return (
+      registered,
+      PreviousIndexedBin.get(bin_id).unwrap_or(bin_id),
+      NextIndexedBin.get(bin_id).unwrap_or(bin_id),
+      IndexedBinCount
+    );
+  }
+
+  view fn mirror_position(Name position_id) -> (
+    int,
+    int,
+    quantity,
+    decimal,
+    decimal,
+    quantity,
+    quantity
+  ) {
+    let registered = PositionOwner.contains(position_id) ? 1 : 0;
+    return (
+      registered,
+      PositionBinId.get(position_id).unwrap_or(ActiveBin),
+      position_shares_value(position_id),
+      position_fee_debt_base_value(position_id),
+      position_fee_debt_quote_value(position_id),
+      position_credit_base_value(position_id),
+      position_credit_quote_value(position_id)
+    );
+  }
+
+  view fn quote_position_fees(Name position_id) -> (quantity, quantity) {
+    let bin_id = position_bin_value(position_id);
+    let shares = position_shares_value(position_id);
+    let growth_base = bin_fee_growth_base_value(bin_id);
+    let growth_quote = bin_fee_growth_quote_value(bin_id);
+    let debt_base = position_fee_debt_base_value(position_id);
+    let debt_quote = position_fee_debt_quote_value(position_id);
+    require(growth_base >= debt_base, DlmmPoolError::FeeGrowthRegression);
+    require(growth_quote >= debt_quote, DlmmPoolError::FeeGrowthRegression);
+    return (
+      position_credit_base_value(position_id) + shares * (growth_base - debt_base),
+      position_credit_quote_value(position_id) + shares * (growth_quote - debt_quote)
+    );
+  }
+
   view fn range_governor_state() -> (int, int, int, int, int, int, int, int) {
-    assert_pool_initialized();
     return (
       RangeGovernorEnabled,
       RangeGovernorCadenceSlots,
@@ -805,741 +1299,7 @@ seiyaku DlmmPool {
     );
   }
 
-  view fn mirror_bin(bin_id: int) -> (int, int, int, int, int) {
-    assert_pool_initialized();
-    assert_valid_bin_id(bin_id);
-    return (
-      bin_reserve_base_value(bin_id),
-      bin_reserve_quote_value(bin_id),
-      bin_share_supply_value(bin_id),
-      bin_fee_growth_base_value(bin_id),
-      bin_fee_growth_quote_value(bin_id)
-    );
-  }
-
-  view fn mirror_position(position_id: Name) -> (int, int, int, int, int, int, int) {
-    assert_pool_initialized();
-    let position_registered = 0;
-    if PositionOwner.contains(position_id) {
-      position_registered = 1;
-    }
-    return (
-      position_registered,
-      PositionBinId.get_or(position_id, 0), position_shares_value(position_id),
-      position_fee_debt_base_value(position_id),
-      position_fee_debt_quote_value(position_id),
-      position_credit_base_value(position_id),
-      position_credit_quote_value(position_id)
-    );
-  }
-
-  view fn quote_position_fees(position_id: Name) -> (int, int) {
-    assert_pool_initialized();
-    assert_position_exists(position_id);
-
-    let pending_base = position_credit_base_value(position_id);
-    let pending_quote = position_credit_quote_value(position_id);
-    let shares = position_shares_value(position_id);
-    let bin_id = PositionBinId[position_id];
-
-    if shares > 0 {
-      let delta_base = bin_fee_growth_base_value(bin_id) - position_fee_debt_base_value(position_id);
-      let delta_quote = bin_fee_growth_quote_value(bin_id) - position_fee_debt_quote_value(position_id);
-      if delta_base > 0 {
-        pending_base = pending_base + ((shares * delta_base) / fee_growth_scale());
-      }
-      if delta_quote > 0 {
-        pending_quote = pending_quote + ((shares * delta_quote) / fee_growth_scale());
-      }
-    }
-
-    return (pending_base, pending_quote);
-  }
-
-  // Keep spot helpers adjacent to the swap entrypoints so the hot path avoids
-  // far control-transfer stubs on older runtimes.
-  fn spot_assert_pool_initialized() {
-    assert(PoolInitialized == 1, "pool not initialized");
-  }
-
-  fn spot_abs_int(value: int) -> int {
-    if value < 0 {
-      return 0 - value;
-    }
-    return value;
-  }
-
-  fn spot_ppm_scale() -> int {
-    return 1_000_000;
-  }
-
-  fn spot_fee_growth_scale() -> int {
-    return 1_000_000_000;
-  }
-
-  fn spot_assert_valid_fee(fee_pips: int) {
-    assert(fee_pips >= 0, "negative fee_pips");
-    assert(fee_pips < spot_ppm_scale(), "fee_pips too large");
-  }
-
-  fn spot_assert_valid_bin_step(bin_step: int) {
-    assert(bin_step > 0, "invalid bin_step");
-    assert(bin_step <= 100_000, "bin_step too large");
-  }
-
-  fn spot_assert_valid_bin_id(bin_id: int) {
-    assert(spot_abs_int(bin_id) <= 200_000, "bin_id too large");
-  }
-
-  fn spot_bin_reserve_base_value(bin_id: int) -> int {
-    if BinReserveBase.contains(bin_id) {
-      return BinReserveBase[bin_id];
-    }
-    return 0;
-  }
-
-  fn spot_bin_reserve_quote_value(bin_id: int) -> int {
-    if BinReserveQuote.contains(bin_id) {
-      return BinReserveQuote[bin_id];
-    }
-    return 0;
-  }
-
-  fn spot_bin_share_supply_value(bin_id: int) -> int {
-    if BinShareSupply.contains(bin_id) {
-      return BinShareSupply[bin_id];
-    }
-    return 0;
-  }
-
-  fn spot_bin_fee_growth_base_value(bin_id: int) -> int {
-    if BinFeeGrowthBase.contains(bin_id) {
-      return BinFeeGrowthBase[bin_id];
-    }
-    return 0;
-  }
-
-  fn spot_bin_fee_growth_quote_value(bin_id: int) -> int {
-    if BinFeeGrowthQuote.contains(bin_id) {
-      return BinFeeGrowthQuote[bin_id];
-    }
-    return 0;
-  }
-
-  fn spot_bin_has_quote_liquidity(bin_id: int) -> int {
-    if spot_bin_reserve_quote_value(bin_id) > MinReserveQuote {
-      return 1;
-    }
-    return 0;
-  }
-
-  fn spot_bin_has_base_liquidity(bin_id: int) -> int {
-    if spot_bin_reserve_base_value(bin_id) > MinReserveBase {
-      return 1;
-    }
-    return 0;
-  }
-
-  fn spot_realign_active_bin_base_side() -> int {
-    let step = BinStep;
-    let current_bin = ActiveBin;
-    let probe = current_bin;
-    let candidate = current_bin;
-    let found = 0;
-    let stop = 0;
-
-    if spot_bin_has_quote_liquidity(current_bin) == 1 {
-      candidate = current_bin;
-      found = 1;
-    }
-
-    while found == 0 && stop == 0 {
-      let next_probe = probe - step;
-      if spot_abs_int(next_probe) > 200_000 {
-        stop = 1;
-      } else {
-        probe = next_probe;
-        if spot_bin_has_quote_liquidity(probe) == 1 {
-          candidate = probe;
-          found = 1;
-        }
-      }
-    }
-
-    probe = current_bin;
-    stop = 0;
-    while found == 0 && stop == 0 {
-      let next_probe = probe + step;
-      if spot_abs_int(next_probe) > 200_000 {
-        stop = 1;
-      } else {
-        probe = next_probe;
-        if spot_bin_has_quote_liquidity(probe) == 1 {
-          candidate = probe;
-          found = 1;
-        }
-      }
-    }
-
-    if found == 0 {
-      return current_bin;
-    }
-
-    probe = candidate;
-    stop = 0;
-    while stop == 0 {
-      let next_probe = probe - step;
-      if spot_abs_int(next_probe) > 200_000 {
-        stop = 1;
-      } else {
-        if spot_bin_has_quote_liquidity(next_probe) == 1 {
-          candidate = next_probe;
-          probe = next_probe;
-        } else {
-          stop = 1;
-        }
-      }
-    }
-
-    ActiveBin = candidate;
-    return candidate;
-  }
-
-  fn spot_realign_active_bin_quote_side() -> int {
-    let step = BinStep;
-    let current_bin = ActiveBin;
-    let probe = current_bin;
-    let candidate = current_bin;
-    let found = 0;
-    let stop = 0;
-
-    if spot_bin_has_base_liquidity(current_bin) == 1 {
-      candidate = current_bin;
-      found = 1;
-    }
-
-    while found == 0 && stop == 0 {
-      let next_probe = probe - step;
-      if spot_abs_int(next_probe) > 200_000 {
-        stop = 1;
-      } else {
-        probe = next_probe;
-        if spot_bin_has_base_liquidity(probe) == 1 {
-          candidate = probe;
-          found = 1;
-        }
-      }
-    }
-
-    probe = current_bin;
-    stop = 0;
-    while found == 0 && stop == 0 {
-      let next_probe = probe + step;
-      if spot_abs_int(next_probe) > 200_000 {
-        stop = 1;
-      } else {
-        probe = next_probe;
-        if spot_bin_has_base_liquidity(probe) == 1 {
-          candidate = probe;
-          found = 1;
-        }
-      }
-    }
-
-    if found == 0 {
-      return current_bin;
-    }
-
-    probe = candidate;
-    stop = 0;
-    while stop == 0 {
-      let next_probe = probe + step;
-      if spot_abs_int(next_probe) > 200_000 {
-        stop = 1;
-      } else {
-        if spot_bin_has_base_liquidity(next_probe) == 1 {
-          candidate = next_probe;
-          probe = next_probe;
-        } else {
-          stop = 1;
-        }
-      }
-    }
-
-    ActiveBin = candidate;
-    return candidate;
-  }
-
-  fn spot_move_asset_if_needed(from: AccountId,
-                               to: AccountId,
-                               asset: AssetDefinitionId,
-                               amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
-      }
-    }
-  }
-
-  fn spot_fee_adjusted_amount(amount_in: int, fee_pips: int) -> int {
-    if amount_in <= 0 {
-      return 0;
-    }
-    spot_assert_valid_fee(fee_pips);
-    return (amount_in * (spot_ppm_scale() - fee_pips)) / spot_ppm_scale();
-  }
-
-  fn spot_fee_paid_amount(amount_in: int, fee_pips: int) -> int {
-    let effective = spot_fee_adjusted_amount(amount_in, fee_pips);
-    return amount_in - effective;
-  }
-
-  fn spot_credit_bin_fee_growth_base(bin_id: int, fee_paid: int) {
-    let share_supply = spot_bin_share_supply_value(bin_id);
-    if fee_paid <= 0 || share_supply <= 0 {
-      return;
-    }
-    BinFeeGrowthBase[bin_id] = spot_bin_fee_growth_base_value(bin_id) +
-      ((fee_paid * spot_fee_growth_scale()) / share_supply);
-  }
-
-  fn spot_credit_bin_fee_growth_quote(bin_id: int, fee_paid: int) {
-    let share_supply = spot_bin_share_supply_value(bin_id);
-    if fee_paid <= 0 || share_supply <= 0 {
-      return;
-    }
-    BinFeeGrowthQuote[bin_id] = spot_bin_fee_growth_quote_value(bin_id) +
-      ((fee_paid * spot_fee_growth_scale()) / share_supply);
-  }
-
-  fn spot_ceil_div(numerator: int, denominator: int) -> int {
-    assert(denominator > 0, "invalid denominator");
-    if numerator <= 0 {
-      return 0;
-    }
-    return (numerator + denominator - 1) / denominator;
-  }
-
-  fn spot_gross_from_net(net_amount: int, fee_pips: int) -> int {
-    if net_amount <= 0 {
-      return 0;
-    }
-    let gross = spot_ceil_div(
-      net_amount * spot_ppm_scale(),
-      spot_ppm_scale() - fee_pips
-    );
-    if spot_fee_adjusted_amount(gross, fee_pips) < net_amount {
-      return gross + 1;
-    }
-    return gross;
-  }
-
-  fn spot_bin_price_ppm(bin_id: int, bin_step: int) -> int {
-    let scale = spot_ppm_scale();
-    spot_assert_valid_bin_step(bin_step);
-    spot_assert_valid_bin_id(bin_id);
-
-    if bin_id >= 0 {
-      return scale + (bin_id * bin_step);
-    }
-
-    let denominator = scale + (spot_abs_int(bin_id) * bin_step);
-    let price = (scale * scale) / denominator;
-    assert(price > 0, "bin price underflow");
-    return price;
-  }
-
-  fn spot_price_impact_bps(start_price: int, current_price: int) -> int {
-    assert(start_price > 0, "invalid start price");
-    return (spot_abs_int(current_price - start_price) * 10_000) / start_price;
-  }
-
-  fn try_swap_exact_in_base_side_single_bin(funding_account: AccountId,
-                                            recipient: AccountId,
-                                            vault: AccountId,
-                                            base_asset: AssetDefinitionId,
-                                            quote_asset: AssetDefinitionId,
-                                            amount_in: int,
-                                            min_out: int) -> int {
-    if BinLiquidityCap > 0 {
-      return 0;
-    }
-
-    let current_bin = spot_realign_active_bin_base_side();
-    let reserve_quote = spot_bin_reserve_quote_value(current_bin);
-    let available_quote = reserve_quote - MinReserveQuote;
-
-    if available_quote <= 0 {
-      return 0;
-    }
-
-    let output = (spot_fee_adjusted_amount(amount_in, FeePips) *
-      spot_bin_price_ppm(current_bin, BinStep)) / spot_ppm_scale();
-    if output <= 0 || output >= available_quote {
-      return 0;
-    }
-
-    BinReserveBase[current_bin] = spot_bin_reserve_base_value(current_bin) + amount_in;
-    BinReserveQuote[current_bin] = reserve_quote - output;
-    let fee_paid = spot_fee_paid_amount(amount_in, FeePips);
-    spot_credit_bin_fee_growth_base(current_bin, fee_paid);
-    assert(output >= min_out, "slippage");
-    spot_move_asset_if_needed(funding_account, vault, base_asset, amount_in);
-    spot_move_asset_if_needed(vault, recipient, quote_asset, output);
-    return output;
-  }
-
-  fn swap_exact_in_base_side_multi_bin(funding_account: AccountId,
-                                       recipient: AccountId,
-                                       vault: AccountId,
-                                       base_asset: AssetDefinitionId,
-                                       quote_asset: AssetDefinitionId,
-                                       amount_in: int,
-                                       min_out: int,
-                                       require_full_fill: int) -> int {
-    let fee_pips = FeePips;
-    let bin_step = BinStep;
-    let start_bin = spot_realign_active_bin_base_side();
-    let start_price = spot_bin_price_ppm(start_bin, bin_step);
-    let impact_cap = ImpactCapBps;
-    let min_quote = MinReserveQuote;
-    let max_bins = MaxBinsPerSwap;
-    let cap = BinLiquidityCap;
-    let scale = spot_ppm_scale();
-    let current_bin = start_bin;
-    let bins_crossed = 0;
-    let amount_remaining = amount_in;
-    let amount_out = 0;
-    let amount_used = 0;
-    let stop = 0;
-
-    while amount_remaining > 0 && bins_crossed < max_bins && stop == 0 {
-      let reserve_base = spot_bin_reserve_base_value(current_bin);
-      let reserve_quote = spot_bin_reserve_quote_value(current_bin);
-      let available_quote = reserve_quote - min_quote;
-      let price = spot_bin_price_ppm(current_bin, bin_step);
-
-      if impact_cap > 0 && spot_price_impact_bps(start_price, price) > impact_cap {
-        stop = 1;
-      } else {
-        if available_quote <= 0 {
-          current_bin = current_bin + bin_step;
-          ActiveBin = current_bin;
-          bins_crossed = bins_crossed + 1;
-        } else {
-          let gross_limit = amount_remaining;
-          let cap_hit = 0;
-          if cap > 0 {
-            let cap_remaining = cap - reserve_base;
-            if cap_remaining <= 0 {
-              stop = 1;
-            } else {
-              if cap_remaining < gross_limit {
-                gross_limit = cap_remaining;
-                cap_hit = 1;
-              }
-            }
-          }
-
-          if stop == 0 {
-            let gross_used = gross_limit;
-            let effective_limit = spot_fee_adjusted_amount(gross_limit, fee_pips);
-            if effective_limit <= 0 {
-              stop = 1;
-            } else {
-              let projected_out = (effective_limit * price) / scale;
-              let output = projected_out;
-              if projected_out >= available_quote {
-                let net_needed = spot_ceil_div(available_quote * scale, price);
-                gross_used = spot_gross_from_net(net_needed, fee_pips);
-                if gross_used > gross_limit {
-                  gross_used = gross_limit;
-                }
-                let effective_used = spot_fee_adjusted_amount(gross_used, fee_pips);
-                output = (effective_used * price) / scale;
-                if output > available_quote {
-                  output = available_quote;
-                }
-              }
-
-              if gross_used <= 0 || output <= 0 {
-                stop = 1;
-              } else {
-                let fee_paid = spot_fee_paid_amount(gross_used, fee_pips);
-                BinReserveBase[current_bin] = reserve_base + gross_used;
-                BinReserveQuote[current_bin] = reserve_quote - output;
-                spot_credit_bin_fee_growth_base(current_bin, fee_paid);
-
-                amount_remaining = amount_remaining - gross_used;
-                amount_used = amount_used + gross_used;
-                amount_out = amount_out + output;
-
-                if output >= available_quote {
-                  current_bin = current_bin + bin_step;
-                  ActiveBin = current_bin;
-                  bins_crossed = bins_crossed + 1;
-                } else {
-                  ActiveBin = current_bin;
-                  if cap_hit == 1 {
-                    stop = 1;
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    assert(amount_used > 0, "insufficient input used");
-    if require_full_fill == 1 {
-      assert(amount_used == amount_in, "partial fill");
-    }
-    assert(amount_out >= min_out, "slippage");
-    spot_move_asset_if_needed(funding_account, vault, base_asset, amount_used);
-    spot_move_asset_if_needed(vault, recipient, quote_asset, amount_out);
-    return amount_out;
-  }
-
-  fn swap_exact_in_quote_side_multi_bin(funding_account: AccountId,
-                                        recipient: AccountId,
-                                        vault: AccountId,
-                                        base_asset: AssetDefinitionId,
-                                        quote_asset: AssetDefinitionId,
-                                        amount_in: int,
-                                        min_out: int,
-                                        require_full_fill: int) -> int {
-    let fee_pips = FeePips;
-    let bin_step = BinStep;
-    let start_bin = spot_realign_active_bin_quote_side();
-    let start_price = spot_bin_price_ppm(start_bin, bin_step);
-    let impact_cap = ImpactCapBps;
-    let min_base = MinReserveBase;
-    let max_bins = MaxBinsPerSwap;
-    let cap = BinLiquidityCap;
-    let scale = spot_ppm_scale();
-    let current_bin = start_bin;
-    let bins_crossed = 0;
-    let amount_remaining = amount_in;
-    let amount_out = 0;
-    let amount_used = 0;
-    let stop = 0;
-
-    while amount_remaining > 0 && bins_crossed < max_bins && stop == 0 {
-      let reserve_base = spot_bin_reserve_base_value(current_bin);
-      let reserve_quote = spot_bin_reserve_quote_value(current_bin);
-      let available_base = reserve_base - min_base;
-      let price = spot_bin_price_ppm(current_bin, bin_step);
-
-      if impact_cap > 0 && spot_price_impact_bps(start_price, price) > impact_cap {
-        stop = 1;
-      } else {
-        if available_base <= 0 {
-          current_bin = current_bin - bin_step;
-          ActiveBin = current_bin;
-          bins_crossed = bins_crossed + 1;
-        } else {
-          let gross_limit = amount_remaining;
-          let cap_hit = 0;
-          if cap > 0 {
-            let cap_remaining = cap - reserve_quote;
-            if cap_remaining <= 0 {
-              stop = 1;
-            } else {
-              if cap_remaining < gross_limit {
-                gross_limit = cap_remaining;
-                cap_hit = 1;
-              }
-            }
-          }
-
-          if stop == 0 {
-            let gross_used = gross_limit;
-            let effective_limit = spot_fee_adjusted_amount(gross_limit, fee_pips);
-            if effective_limit <= 0 {
-              stop = 1;
-            } else {
-              let projected_out = (effective_limit * scale) / price;
-              let output = projected_out;
-              if projected_out >= available_base {
-                let net_needed = spot_ceil_div(available_base * price, scale);
-                gross_used = spot_gross_from_net(net_needed, fee_pips);
-                if gross_used > gross_limit {
-                  gross_used = gross_limit;
-                }
-                let effective_used = spot_fee_adjusted_amount(gross_used, fee_pips);
-                output = (effective_used * scale) / price;
-                if output > available_base {
-                  output = available_base;
-                }
-              }
-
-              if gross_used <= 0 || output <= 0 {
-                stop = 1;
-              } else {
-                let fee_paid = spot_fee_paid_amount(gross_used, fee_pips);
-                BinReserveQuote[current_bin] = reserve_quote + gross_used;
-                BinReserveBase[current_bin] = reserve_base - output;
-                spot_credit_bin_fee_growth_quote(current_bin, fee_paid);
-
-                amount_remaining = amount_remaining - gross_used;
-                amount_used = amount_used + gross_used;
-                amount_out = amount_out + output;
-
-                if output >= available_base {
-                  current_bin = current_bin - bin_step;
-                  ActiveBin = current_bin;
-                  bins_crossed = bins_crossed + 1;
-                } else {
-                  ActiveBin = current_bin;
-                  if cap_hit == 1 {
-                    stop = 1;
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-
-    assert(amount_used > 0, "insufficient input used");
-    if require_full_fill == 1 {
-      assert(amount_used == amount_in, "partial fill");
-    }
-    assert(amount_out >= min_out, "slippage");
-    spot_move_asset_if_needed(funding_account, vault, quote_asset, amount_used);
-    spot_move_asset_if_needed(vault, recipient, base_asset, amount_out);
-    return amount_out;
-  }
-
-  kotoage fn swap_exact_in(input_asset: AssetDefinitionId,
-                           amount_in: int,
-                           min_out: int) -> int permission(AssetOps) {
-    return swap_exact_in_impl(
-      authority(),
-      authority(),
-      input_asset,
-      VaultAccount,
-      BaseAsset,
-      QuoteAsset,
-      amount_in,
-      min_out,
-      0
-    );
-  }
-
-  kotoage fn swap_exact_in_base(amount_in: int,
-                                min_out: int) -> int permission(AssetOps) {
-    return swap_exact_in_impl(
-      authority(),
-      authority(),
-      BaseAsset,
-      VaultAccount,
-      BaseAsset,
-      QuoteAsset,
-      amount_in,
-      min_out,
-      0
-    );
-  }
-
-  kotoage fn swap_exact_in_quote(amount_in: int,
-                                 min_out: int) -> int permission(AssetOps) {
-    return swap_exact_in_impl(
-      authority(),
-      authority(),
-      QuoteAsset,
-      VaultAccount,
-      BaseAsset,
-      QuoteAsset,
-      amount_in,
-      min_out,
-      0
-    );
-  }
-
-  kotoage fn swap_exact_in_base_for(recipient: AccountId,
-                                    amount_in: int,
-                                    min_out: int) -> int permission(AssetOps) {
-    return swap_exact_in_impl(
-      authority(),
-      recipient,
-      BaseAsset,
-      VaultAccount,
-      BaseAsset,
-      QuoteAsset,
-      amount_in,
-      min_out,
-      1
-    );
-  }
-
-  kotoage fn swap_exact_in_quote_for(recipient: AccountId,
-                                     amount_in: int,
-                                     min_out: int) -> int permission(AssetOps) {
-    return swap_exact_in_impl(
-      authority(),
-      recipient,
-      QuoteAsset,
-      VaultAccount,
-      BaseAsset,
-      QuoteAsset,
-      amount_in,
-      min_out,
-      1
-    );
-  }
-
-  fn swap_exact_in_impl(trader: AccountId,
-                        recipient: AccountId,
-                        input_asset: AssetDefinitionId,
-                        vault: AccountId,
-                        base_asset: AssetDefinitionId,
-                        quote_asset: AssetDefinitionId,
-                        amount_in: int,
-                        min_out: int,
-                        require_full_fill: int) -> int {
-    spot_assert_pool_initialized();
-    if amount_in <= 0 {
-      return 0;
-    }
-
-    if input_asset == base_asset {
-      let fast_out = try_swap_exact_in_base_side_single_bin(
-        trader,
-        recipient,
-        vault,
-        base_asset,
-        quote_asset,
-        amount_in,
-        min_out
-      );
-      if fast_out > 0 {
-        return fast_out;
-      }
-      return swap_exact_in_base_side_multi_bin(
-        trader,
-        recipient,
-        vault,
-        base_asset,
-        quote_asset,
-        amount_in,
-        min_out,
-        require_full_fill
-      );
-    }
-
-    assert(input_asset == quote_asset, "asset not in pool");
-    return swap_exact_in_quote_side_multi_bin(
-      trader,
-      recipient,
-      vault,
-      base_asset,
-      quote_asset,
-      amount_in,
-      min_out,
-      require_full_fill
-    );
+  view fn admin_state() -> (AccountId, int) {
+    return (PoolOwner, AdminRenounced);
   }
 }

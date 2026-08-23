@@ -5,7 +5,7 @@ Manifest: `iroha.contracts.toml`
 ## n3x.n3x_hub
 
 - Interface: `artifacts/compiled/n3x/n3x_hub.interface.json`
-- Entrypoints: `13`
+- Entrypoints: `12`
 - State keys: `21`
 
 ### main
@@ -97,18 +97,6 @@ Manifest: `iroha.contracts.toml`
 }
 ```
 
-### repair_zero_supply_state
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "vault_account": "ed0120..."
-}
-```
-
 ### mirror_state
 
 - Kind: `View`
@@ -170,23 +158,13 @@ Manifest: `iroha.contracts.toml`
 ## dlmm.dlmm_pool
 
 - Interface: `artifacts/compiled/dlmm/dlmm_pool.interface.json`
-- Entrypoints: `25`
+- Entrypoints: `26`
 - State keys: `33`
 
 ### main
 
 - Kind: `Public`
 - Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### warm_write
-
-- Kind: `Public`
-- Return: `null`
 - Sample payload:
 
 ```json
@@ -304,6 +282,36 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
+### configured_base_asset
+
+- Kind: `View`
+- Return: `AssetDefinitionId`
+- Sample payload:
+
+```json
+{}
+```
+
+### configured_quote_asset
+
+- Kind: `View`
+- Return: `AssetDefinitionId`
+- Sample payload:
+
+```json
+{}
+```
+
+### configured_vault_account
+
+- Kind: `View`
+- Return: `AccountId`
+- Sample payload:
+
+```json
+{}
+```
+
 ### bind_custody_account
 
 - Kind: `Public`
@@ -313,18 +321,6 @@ Manifest: `iroha.contracts.toml`
 ```json
 {
   "vault_account": "ed0120..."
-}
-```
-
-### repair_active_bin
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "active_bin": 0
 }
 ```
 
@@ -692,7 +688,7 @@ Manifest: `iroha.contracts.toml`
 
 - Interface: `artifacts/compiled/batch_amm/epoch_auction.interface.json`
 - Entrypoints: `12`
-- State keys: `32`
+- State keys: `37`
 
 ### main
 
@@ -942,7 +938,7 @@ Manifest: `iroha.contracts.toml`
 ## launchpad.sale_factory
 
 - Interface: `artifacts/compiled/launchpad/sale_factory.interface.json`
-- Entrypoints: `27`
+- Entrypoints: `26`
 - State keys: `47`
 
 ### main
@@ -1110,19 +1106,6 @@ Manifest: `iroha.contracts.toml`
 ```json
 {
   "executor_contract": null
-}
-```
-
-### contribute
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "payment_amount": 0,
-  "sale": "name"
 }
 ```
 
@@ -1914,7 +1897,7 @@ Manifest: `iroha.contracts.toml`
 ## perps.perps_engine
 
 - Interface: `artifacts/compiled/perps/perps_engine.interface.json`
-- Entrypoints: `29`
+- Entrypoints: `28`
 - State keys: `67`
 
 ### main
@@ -2263,20 +2246,6 @@ Manifest: `iroha.contracts.toml`
 }
 ```
 
-### admin_repair_orphan_position
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "index_price_bps": 0,
-  "mark_price_bps": 0,
-  "position_id": 0
-}
-```
-
 ### heartbeat
 
 - Kind: `Public`
@@ -2311,8 +2280,8 @@ Manifest: `iroha.contracts.toml`
 ## options.manager
 
 - Interface: `artifacts/compiled/options/manager.interface.json`
-- Entrypoints: `19`
-- State keys: `47`
+- Entrypoints: `21`
+- State keys: `48`
 
 ### main
 
@@ -2350,6 +2319,18 @@ Manifest: `iroha.contracts.toml`
   "cadence_slots": 0,
   "enabled": 0,
   "max_items_per_tick": 0
+}
+```
+
+### configure_oracle_stale_slots
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "oracle_stale_slots": 0
 }
 ```
 
@@ -2515,6 +2496,16 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
+### oracle_stale_slots
+
+- Kind: `View`
+- Return: `int`
+- Sample payload:
+
+```json
+{}
+```
+
 ### template_state
 
 - Kind: `View`
@@ -2562,8 +2553,8 @@ Manifest: `iroha.contracts.toml`
 ## options.factory
 
 - Interface: `artifacts/compiled/options/factory.interface.json`
-- Entrypoints: `24`
-- State keys: `59`
+- Entrypoints: `26`
+- State keys: `60`
 
 ### main
 
@@ -2669,6 +2660,18 @@ Manifest: `iroha.contracts.toml`
   "cadence_slots": 0,
   "enabled": 0,
   "max_items_per_tick": 0
+}
+```
+
+### configure_oracle_stale_slots
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "oracle_stale_slots": 0
 }
 ```
 
@@ -2824,6 +2827,16 @@ Manifest: `iroha.contracts.toml`
 
 - Kind: `View`
 - Return: `(AssetDefinitionId, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
+### oracle_stale_slots
+
+- Kind: `View`
+- Return: `int`
 - Sample payload:
 
 ```json
@@ -3059,8 +3072,8 @@ Manifest: `iroha.contracts.toml`
 ## options.shout_option
 
 - Interface: `artifacts/compiled/options/shout_option.interface.json`
-- Entrypoints: `16`
-- State keys: `20`
+- Entrypoints: `18`
+- State keys: `21`
 
 ### main
 
@@ -3095,6 +3108,18 @@ Manifest: `iroha.contracts.toml`
 ```json
 {
   "controller": "ed0120..."
+}
+```
+
+### configure_oracle_stale_slots
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "oracle_stale_slots": 0
 }
 ```
 
@@ -3270,6 +3295,16 @@ Manifest: `iroha.contracts.toml`
 {
   "position_id": 0
 }
+```
+
+### oracle_stale_slots
+
+- Kind: `View`
+- Return: `int`
+- Sample payload:
+
+```json
+{}
 ```
 
 ## options.outperformance_option
@@ -3473,7 +3508,7 @@ Manifest: `iroha.contracts.toml`
 ## cover.policy_manager
 
 - Interface: `artifacts/compiled/cover/policy_manager.interface.json`
-- Entrypoints: `18`
+- Entrypoints: `21`
 - State keys: `43`
 
 ### main
@@ -3600,6 +3635,30 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
+### configure_oracle_stale_slots
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "oracle_stale_slots": 0
+}
+```
+
+### configure_next_policy_id
+
+- Kind: `Public`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "next_policy_id": 0
+}
+```
+
 ### register_policy
 
 - Kind: `Public`
@@ -3676,6 +3735,16 @@ Manifest: `iroha.contracts.toml`
 {
   "policy_id": 0
 }
+```
+
+### next_policy_id
+
+- Kind: `View`
+- Return: `int`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### automation_state
@@ -4499,8 +4568,8 @@ Manifest: `iroha.contracts.toml`
 ## dlmm_hooks.hook_manager
 
 - Interface: `artifacts/compiled/dlmm_hooks/hook_manager.interface.json`
-- Entrypoints: `16`
-- State keys: `39`
+- Entrypoints: `15`
+- State keys: `38`
 
 ### main
 
@@ -4577,22 +4646,6 @@ Manifest: `iroha.contracts.toml`
 {
   "amount_in": 0,
   "hook_id": "name",
-  "min_out": 0,
-  "order_id": "name"
-}
-```
-
-### schedule_twamm
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "amount_in": 0,
-  "hook_id": "name",
-  "interval_slots": 0,
   "min_out": 0,
   "order_id": "name"
 }

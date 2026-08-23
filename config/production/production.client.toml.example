@@ -11,8 +11,12 @@ torii_url = "https://change-me-production-torii/"
 domain = "change-me.universal"
 public_key = "ed0120CHANGE_ME"
 private_key = "802620CHANGE_ME"
+# Required. Replace this example value with the production account-address
+# network prefix; production scripts never infer or default it.
+chain_discriminant = 753
 
-# Uncomment if the target Torii deployment requires auth.
+# Optional. Uncomment both fields if the target Torii deployment requires
+# HTTP Basic authentication. Never commit the populated copy.
 #[basic_auth]
 #web_login = "change-me"
 #password = "change-me"

@@ -1,0 +1,35 @@
+{
+  "schema": "soraswap-production-monitoring-snapshot/v1",
+  "sampled_at": "REPLACE_WITH_CURRENT_UTC_TIME",
+  "sequence": 1,
+  "bindings": {
+    "chain_fingerprint": "REPLACE_WITH_EXACT_APPROVED_FINGERPRINT_OBJECT",
+    "soraswap_git_sha": "REPLACE_WITH_SIGNED_SORASWAP_RC_SHA",
+    "soraswap_tree_sha": "REPLACE_WITH_SORASWAP_TREE_SHA",
+    "soraswap_source_sha256": "REPLACE_WITH_SORASWAP_SOURCE_STATE_SHA256",
+    "iroha_state_sha256": "REPLACE_WITH_IROHA_STATE_SHA256",
+    "approval_id": "REPLACE_WITH_APPROVAL_ID",
+    "approval_sha256": "REPLACE_WITH_APPROVAL_SHA256",
+    "deploy_generated_at": "REPLACE_WITH_DEPLOY_GENERATED_AT",
+    "deploy_sha256": "REPLACE_WITH_DEPLOY_SHA256",
+    "contracts_generated_at": "REPLACE_WITH_CONTRACTS_GENERATED_AT",
+    "contracts_sha256": "REPLACE_WITH_CONTRACTS_SHA256"
+  },
+  "validator_set_sha256": "REPLACE_WITH_SHA256_OF_CANONICAL_SORTED_VALIDATOR_IDS",
+  "validators": [],
+  "api_failures": 0,
+  "oracles": {
+    "watch_sha256": "REPLACE_WITH_SHA256_OF_CANONICAL_SORTED_ORACLE_IDS",
+    "feeds": []
+  },
+  "balances": {
+    "watch_sha256": "REPLACE_WITH_SHA256_OF_CANONICAL_SORTED_BALANCE_ID_AND_KIND_PAIRS",
+    "entries": []
+  },
+  "readonly_routes": {
+    "set_sha256": "REPLACE_WITH_APPROVED_READONLY_ROUTE_SET_SHA256",
+    "ok": true,
+    "failure_count": 0
+  },
+  "shared_derivatives_regression": false
+}

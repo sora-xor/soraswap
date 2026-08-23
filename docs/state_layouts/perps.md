@@ -93,4 +93,4 @@ View tuple fields returned by `market_state()`, `market_oracle_state()`, `positi
 - `PerpsOraclePublicKey` and `PerpsOracleScheme` are init-only for v1. Signed payloads must use domain `1`, include market price fields plus `oracle_slot`, `status_flags`, and `attestation_hash`, and pass strict monotonic slot checks against `PerpsMarketLastOracleSlot`.
 
 Operational note:
-- `admin_repair_orphan_position(...)` does not add new storage, but it can move a stale live `PerpsPositionStatus` from `1=open` or `3=queued liquidation` to `2=closed` while zeroing size/margin, clearing queued/active index slots, and decrementing market open interest when bootstrap detects a position whose `risk_vault` bucket-1 liability record has already disappeared.
+- Bootstrap asserts that every `1=open` or `3=queued liquidation` position has a nonzero bucket `1` `risk_vault` liability keyed by `position_id`. Missing liability state is a release-blocking accounting invariant failure, not an administrative state repair path.

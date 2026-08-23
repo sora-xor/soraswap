@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://soraswap.invalid/schema/production-cutover-approval-v1.json",
+  "title": "SoraSwap production cutover approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "environment",
+    "approval_id",
+    "policy_sha256",
+    "issued_at",
+    "expires_at",
+    "review",
+    "findings",
+    "bindings",
+    "authorities",
+    "minimum_fee_balance",
+    "controls",
+    "observation",
+    "signatures"
+  ],
+  "properties": {
+    "schema": {"const": "soraswap-production-cutover-approval/v1"},
+    "environment": {"const": "production"},
+    "approval_id": {"type": "string", "minLength": 16},
+    "policy_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "reviewed_at", "independent"],
+      "properties": {
+        "identity": {"type": "string", "minLength": 6},
+        "reviewed_at": {"type": "string", "format": "date-time"},
+        "independent": {"const": true}
+      }
+    },
+    "findings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unresolved_critical", "unresolved_high", "unresolved"],
+      "properties": {
+        "unresolved_critical": {"const": 0},
+        "unresolved_high": {"const": 0},
+        "unresolved": {"type": "array", "maxItems": 0}
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chain_fingerprint", "soraswap_git_sha", "soraswap_tree_sha", "soraswap_source_sha256", "iroha_git_sha", "bundle_name", "checksums_sha256", "manifest_sha256", "irohad_sha256", "iroha_sha256", "kagami_sha256", "archive_sha256", "archive_sidecar_sha256", "irohad_features"],
+      "properties": {
+        "chain_fingerprint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["torii_url", "chain", "block_1_hash"],
+          "properties": {
+            "torii_url": {"type": "string", "pattern": "^https://"},
+            "chain": {"type": "string", "minLength": 12},
+            "block_1_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          }
+        },
+        "soraswap_git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "soraswap_tree_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "soraswap_source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "iroha_git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "bundle_name": {"type": "string", "pattern": "^taira-rollout-[A-Za-z0-9._-]+-release$"},
+        "checksums_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "irohad_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "iroha_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "kagami_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "archive_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "archive_sidecar_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "irohad_features": {"const": ["embedded-soracloud-runtime", "sccp-test-fixtures"]}
+      }
+    },
+    "authorities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signer", "oracle", "admin", "treasury", "bridge"],
+      "properties": {
+        "signer": {"type": "string", "minLength": 12},
+        "oracle": {"type": "string", "minLength": 12},
+        "admin": {"type": "string", "minLength": 12},
+        "treasury": {"type": "string", "minLength": 12},
+        "bridge": {"type": "string", "minLength": 12}
+      }
+    },
+    "minimum_fee_balance": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$"},
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["custody", "rotation", "admin", "pause", "rollback", "monitoring", "incident_response"],
+      "properties": {
+        "custody": {"type": "string", "minLength": 12},
+        "rotation": {"type": "string", "minLength": 12},
+        "admin": {"type": "string", "minLength": 12},
+        "pause": {"type": "string", "minLength": 12},
+        "rollback": {"type": "string", "minLength": 12},
+        "monitoring": {"type": "string", "minLength": 12},
+        "incident_response": {"type": "string", "minLength": 12}
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "monitoring_snapshot_url",
+        "maximum_monitoring_sample_age_seconds",
+        "validator_count",
+        "validator_set_sha256",
+        "maximum_canonical_lead",
+        "maximum_finality_age_ms",
+        "maximum_oracle_age_seconds",
+        "oracle_watch_sha256",
+        "minimum_fee_balance",
+        "balance_watch_sha256",
+        "readonly_route_set_sha256",
+        "trader_api_probe_url",
+        "trader_api_content_cid",
+        "trader_api_app_id",
+        "trader_api_routes_sha256",
+        "derivatives_pause_mode"
+      ],
+      "properties": {
+        "monitoring_snapshot_url": {"type": "string", "pattern": "^https://"},
+        "maximum_monitoring_sample_age_seconds": {"const": 30},
+        "validator_count": {"type": "integer", "minimum": 4},
+        "validator_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "maximum_canonical_lead": {"const": 1},
+        "maximum_finality_age_ms": {"const": 30000},
+        "maximum_oracle_age_seconds": {"type": "integer", "minimum": 1, "maximum": 300},
+        "oracle_watch_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "minimum_fee_balance": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$"},
+        "balance_watch_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "readonly_route_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "trader_api_probe_url": {"type": "string", "pattern": "^https://"},
+        "trader_api_content_cid": {"type": "string", "minLength": 20},
+        "trader_api_app_id": {"type": "string", "minLength": 1},
+        "trader_api_routes_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "derivatives_pause_mode": {"const": "external_fail_closed"}
+      }
+    },
+    "signatures": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["approver_id", "signature_base64"],
+        "properties": {
+          "approver_id": {"type": "string"},
+          "signature_base64": {"type": "string", "minLength": 32}
+        }
+      }
+    }
+  }
+}

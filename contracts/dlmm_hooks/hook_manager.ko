@@ -1,402 +1,540 @@
-seiyaku DlmmHookManager {
-  state HookOwner: Map<Name, AccountId>;
-  state HookPhase: Map<Name, int>;
-  state HookMaxFeePips: Map<Name, int>;
-  state HookEnabled: Map<Name, int>;
-  state OrderOwner: Map<Name, AccountId>;
-  state OrderHook: Map<Name, Name>;
-  state OrderAmountIn: Map<Name, int>;
-  state OrderMinOut: Map<Name, int>;
-  state OrderIntervalSlots: Map<Name, int>;
-  state OrderExecutedIn: Map<Name, int>;
-  state OrderExecutedOut: Map<Name, int>;
+// Bounded DLMM hook policy and TWAMM execution manager.
+//
+// The contract escrows inputs in one immutable custody account, limits the
+// active work set to 64 slots, and uses a typed nested router invocation.
 
-  state int TwammInitialized;
-  state AccountId TwammOwner;
-  state AccountId TwammContractId;
-  state int TwammContractBound;
-  state bytes TwammRouterContract;
-  state int TwammRouterBound;
-  state AssetDefinitionId TwammBaseAsset;
-  state AssetDefinitionId TwammQuoteAsset;
+seiyaku DlmmHookManager {
+  error enum DlmmHookManagerError {
+    OwnerMismatch = 1,
+    GuardianMismatch = 2,
+    WithdrawalOnly = 3,
+    InvalidDirection = 4,
+    InvalidFee = 5,
+    InvalidPhase = 6,
+    InvalidEnabled = 7,
+    InvalidAmount = 8,
+    InvalidMinimum = 9,
+    InvalidInterval = 10,
+    InvalidStartSlot = 11,
+    InvalidCadence = 12,
+    InvalidMaxOrders = 13,
+    HookMissing = 14,
+    HookDisabled = 15,
+    OrderExists = 16,
+    OrderMissing = 17,
+    OrderOwnerMismatch = 18,
+    OrderNotActive = 19,
+    OrderNotClaimable = 20,
+    NothingClaimable = 21,
+    InsufficientOutput = 22,
+    ActiveOrderLimit = 23,
+    SlotIndexCorrupt = 24,
+    InvalidAuthoritySeparation = 25,
+  }
+
+  state int HookManagerInitialized;
+  state AccountId HookManagerOwner;
+  state AccountId HookManagerGuardian;
+  state AccountId HookManagerCustodyAccount;
+  state bytes HookManagerRouterContract;
+  state AssetDefinitionId HookManagerBaseAsset;
+  state AssetDefinitionId HookManagerQuoteAsset;
+  state int HookManagerWithdrawalOnly;
+
+  state StateMap<Name, int> HookPhase;
+  state StateMap<Name, int> HookMaxFeePips;
+  state StateMap<Name, int> HookEnabled;
+
+  state StateMap<Name, AccountId> LimitOrderOwner;
+  state StateMap<Name, Name> LimitOrderHook;
+  state StateMap<Name, quantity> LimitOrderAmountIn;
+  state StateMap<Name, quantity> LimitOrderMinOut;
+  state StateMap<Name, quantity> LimitOrderExecutedIn;
+  state StateMap<Name, quantity> LimitOrderExecutedOut;
+
   state int TwammCadenceSlots;
   state int TwammMaxOrdersPerTick;
-  state int TwammEnabled;
-  state int TwammNextOrderIndex;
-  state int TwammScanCursor;
+  state int TwammTriggerEnabled;
+  state int TwammNextSlotCursor;
+  state int TwammActiveOrderCount;
   state int TwammLastTickSlot;
   state int TwammLastTickProcessed;
+  state StateMap<int, int> TwammSlotOccupied;
+  state StateMap<int, Name> TwammOrderBySlot;
+  state StateMap<Name, int> TwammOrderSlot;
+  state StateMap<Name, AccountId> TwammOrderOwner;
+  state StateMap<Name, int> TwammOrderInputIsBase;
+  state StateMap<Name, quantity> TwammOrderTotalIn;
+  state StateMap<Name, quantity> TwammOrderSliceIn;
+  state StateMap<Name, quantity> TwammOrderMinTotalOut;
+  state StateMap<Name, quantity> TwammOrderRemainingIn;
+  state StateMap<Name, quantity> TwammOrderExecutedIn;
+  state StateMap<Name, quantity> TwammOrderExecutedOut;
+  state StateMap<Name, quantity> TwammOrderClaimedOut;
+  state StateMap<Name, int> TwammOrderNextSlot;
+  state StateMap<Name, int> TwammOrderIntervalSlots;
+  state StateMap<Name, int> TwammOrderStatus;
 
-  state TwammOrderByIndex: Map<int, Name>;
-  state TwammOrderOwner: Map<Name, AccountId>;
-  state TwammOrderInputIsBase: Map<Name, int>;
-  state TwammOrderTotalIn: Map<Name, int>;
-  state TwammOrderSliceIn: Map<Name, int>;
-  state TwammOrderMinTotalOut: Map<Name, int>;
-  state TwammOrderRemainingIn: Map<Name, int>;
-  state TwammOrderExecutedIn: Map<Name, int>;
-  state TwammOrderExecutedOut: Map<Name, int>;
-  state TwammOrderClaimedOut: Map<Name, int>;
-  state TwammOrderNextSlot: Map<Name, int>;
-  state TwammOrderIntervalSlots: Map<Name, int>;
-  state TwammOrderStatus: Map<Name, int>;
-
-  register_trigger soraswap_twamm_tick {
-    call native_twamm_tick;
+  trigger soraswap_twamm_tick -> native_twamm_tick {
     on time pre_commit;
     repeats indefinitely;
-    metadata { tag: "soraswap"; module: "dlmm_hooks.hook_manager"; __enabled: false; }
+    metadata { "tag": "soraswap"; "module": "dlmm_hooks.hook_manager"; "__enabled": false; }
   }
 
-  fn assert_hook_owner(hook_id: Name) {
-    assert(HookOwner.contains(hook_id), "hook missing");
-    assert(HookOwner[hook_id] == authority(), "hook owner mismatch");
+  fn zero_quantity() -> quantity {
+    let quantity zero = 0;
+    return zero;
   }
 
-  fn min_int(a: int, b: int) -> int {
-    if a <= b {
-      return a;
+  fn universal_dataspace() -> DataSpaceId {
+    let dataspace = DataSpaceId::parse("0");
+    return dataspace;
+  }
+
+  fn missing_name() -> Name {
+    let missing = Name::parse("missing");
+    return missing;
+  }
+
+  fn min_quantity(quantity left, quantity right) -> quantity {
+    if left <= right {
+      return left;
     }
-    return b;
+    return right;
   }
 
-  fn max_int(a: int, b: int) -> int {
-    if a >= b {
-      return a;
+  fn max_quantity(quantity left, quantity right) -> quantity {
+    if left >= right {
+      return left;
     }
-    return b;
+    return right;
   }
 
-  fn assert_twamm_initialized() {
-    assert(TwammInitialized == 1, "twamm not initialized");
+  fn assert_owner() {
+    require(HookManagerOwner == context::authority(), DlmmHookManagerError::OwnerMismatch);
   }
 
-  fn assert_twamm_owner() {
-    assert_twamm_initialized();
-    assert(TwammOwner == authority(), "twamm owner mismatch");
+  fn assert_owner_or_guardian() {
+    if HookManagerOwner == context::authority() {
+      return;
+    }
+    require(HookManagerGuardian == context::authority(), DlmmHookManagerError::GuardianMismatch);
   }
 
-  fn assert_twamm_contract_bound() {
-    assert(TwammContractBound == 1, "twamm contract unbound");
+  fn assert_hook_exists(Name hook_id) {
+    require(HookEnabled.contains(hook_id), DlmmHookManagerError::HookMissing);
   }
 
-  fn assert_twamm_router_bound() {
-    assert(TwammRouterBound == 1, "twamm router unbound");
+  fn assert_order_exists(Name order_id) {
+    require(TwammOrderOwner.contains(order_id), DlmmHookManagerError::OrderMissing);
   }
 
-  fn assert_twamm_order_exists(order_id: Name) {
-    assert(TwammOrderOwner.contains(order_id), "twamm order missing");
+  fn assert_order_owner(Name order_id) {
+    assert_order_exists(order_id);
+    require(
+      TwammOrderOwner.get(order_id).unwrap_or(HookManagerOwner) == context::authority(),
+      DlmmHookManagerError::OrderOwnerMismatch
+    );
   }
 
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
+  fn move_asset_if_needed(
+    AccountId source,
+    AccountId destination,
+    AssetDefinitionId asset,
+    quantity amount
+  ) {
+    if amount > zero_quantity() && source != destination {
+      ledger::asset::transfer(
+        source: source,
+        destination: destination,
+        asset_definition: asset,
+        amount: amount,
+        dataspace: universal_dataspace()
+      );
+    }
+  }
+
+  fn input_asset(int input_is_base) -> AssetDefinitionId {
+    if input_is_base == 1 {
+      return HookManagerBaseAsset;
+    }
+    require(input_is_base == 0, DlmmHookManagerError::InvalidDirection);
+    return HookManagerQuoteAsset;
+  }
+
+  fn output_asset(int input_is_base) -> AssetDefinitionId {
+    if input_is_base == 1 {
+      return HookManagerQuoteAsset;
+    }
+    require(input_is_base == 0, DlmmHookManagerError::InvalidDirection);
+    return HookManagerBaseAsset;
+  }
+
+  fn allocate_slot(Name order_id) -> int {
+    require(TwammActiveOrderCount < 64, DlmmHookManagerError::ActiveOrderLimit);
+    var found = 0;
+    var chosen = 0;
+    for offset in range(64) {
+      if found == 0 {
+        let candidate = ((TwammNextSlotCursor - 1 + offset) % 64) + 1;
+        if TwammSlotOccupied.get(candidate).unwrap_or(0) == 0 {
+          found = 1;
+          chosen = candidate;
+        }
       }
     }
+    require(found == 1, DlmmHookManagerError::SlotIndexCorrupt);
+    TwammSlotOccupied[chosen] = 1;
+    TwammOrderBySlot[chosen] = order_id;
+    TwammOrderSlot[order_id] = chosen;
+    TwammActiveOrderCount = TwammActiveOrderCount + 1;
+    TwammNextSlotCursor = (chosen % 64) + 1;
+    return chosen;
   }
 
-  fn twamm_min_slice_out(order_id: Name, amount_in: int, remaining: int) -> int {
-    let total_in = TwammOrderTotalIn.get_or(order_id, 0);
-    let min_total_out = TwammOrderMinTotalOut.get_or(order_id, 0);
-    let min_slice_out = 0;
-    if total_in > 0 {
-      min_slice_out = (min_total_out * amount_in) / total_in;
-    }
+  fn release_slot(Name order_id) {
+    let slot = TwammOrderSlot.get(order_id).unwrap_or(0);
+    require(slot >= 1 && slot <= 64, DlmmHookManagerError::SlotIndexCorrupt);
+    require(TwammSlotOccupied.get(slot).unwrap_or(0) == 1, DlmmHookManagerError::SlotIndexCorrupt);
+    require(TwammActiveOrderCount > 0, DlmmHookManagerError::SlotIndexCorrupt);
+    TwammSlotOccupied[slot] = 0;
+    TwammActiveOrderCount = TwammActiveOrderCount - 1;
+  }
+
+  fn twamm_min_slice_out(
+    Name order_id,
+    quantity amount_in,
+    quantity remaining
+  ) -> quantity {
+    let total_in = TwammOrderTotalIn.get(order_id).unwrap_or(zero_quantity());
+    let min_total_out = TwammOrderMinTotalOut.get(order_id).unwrap_or(zero_quantity());
+    require(total_in > zero_quantity(), DlmmHookManagerError::InvalidAmount);
+    let ratio = amount_in.ratio_round(
+      divisor: total_in,
+      scale: 28,
+      mode: Rounding::floor
+    );
+    let proportional = min_total_out * ratio;
     if amount_in >= remaining {
-      let residual_min = min_total_out - TwammOrderExecutedOut.get_or(order_id, 0);
-      return max_int(min_slice_out, max_int(residual_min, 0));
+      let executed = TwammOrderExecutedOut.get(order_id).unwrap_or(zero_quantity());
+      let residual = (min_total_out > executed)
+        ? min_total_out - executed
+        : zero_quantity();
+      return max_quantity(left: proportional, right: residual);
     }
-    return min_slice_out;
+    return proportional;
   }
 
-  fn twamm_execute_order(order_id: Name, current_slot: int) -> int {
-    if TwammOrderStatus.get_or(order_id, 0) != 1 {
+  fn execute_twamm_order(Name order_id, int current_slot) -> int {
+    if TwammOrderStatus.get(order_id).unwrap_or(0) != 1 {
       return 0;
     }
-    if current_slot < TwammOrderNextSlot.get_or(order_id, 0) {
+    if current_slot < TwammOrderNextSlot.get(order_id).unwrap_or(0) {
       return 0;
     }
-    let remaining = TwammOrderRemainingIn.get_or(order_id, 0);
-    if remaining <= 0 {
-      TwammOrderStatus[order_id] = 3;
-      return 0;
-    }
-    let amount_in = min_int(remaining, TwammOrderSliceIn.get_or(order_id, 0));
-    if amount_in <= 0 {
-      return 0;
-    }
-    let min_slice_out = twamm_min_slice_out(order_id, amount_in, remaining);
-    let payload = json_object();
-    let payload = json_set_int(payload, name("amount_in"), amount_in);
-    let payload = json_set_int(payload, name("input_is_base"), TwammOrderInputIsBase.get_or(order_id, 0));
-    let payload = json_set_int(payload, name("min_out"), min_slice_out);
-    let amount_out = decode_int(call_contract(TwammRouterContract, "route_swap", payload));
-    assert(amount_out >= min_slice_out, "twamm insufficient output");
+    let remaining = TwammOrderRemainingIn.get(order_id).unwrap_or(zero_quantity());
+    require(remaining > zero_quantity(), DlmmHookManagerError::SlotIndexCorrupt);
+    let amount_in = min_quantity(
+      left: remaining,
+      right: TwammOrderSliceIn.get(order_id).unwrap_or(zero_quantity())
+    );
+    require(amount_in > zero_quantity(), DlmmHookManagerError::InvalidAmount);
+    let min_out = twamm_min_slice_out(
+      order_id: order_id,
+      amount_in: amount_in,
+      remaining: remaining
+    );
+    let amount_out = contract::invoke(
+      contract: HookManagerRouterContract,
+      entrypoint: "route_swap",
+      returns: "quantity",
+      amount_in: amount_in,
+      input_is_base: TwammOrderInputIsBase.get(order_id).unwrap_or(0),
+      min_out: min_out
+    );
+    require(amount_out >= min_out, DlmmHookManagerError::InsufficientOutput);
     TwammOrderRemainingIn[order_id] = remaining - amount_in;
-    TwammOrderExecutedIn[order_id] = TwammOrderExecutedIn.get_or(order_id, 0) + amount_in;
-    TwammOrderExecutedOut[order_id] = TwammOrderExecutedOut.get_or(order_id, 0) + amount_out;
-    TwammOrderNextSlot[order_id] = current_slot + TwammOrderIntervalSlots.get_or(order_id, 1);
-    if TwammOrderRemainingIn.get_or(order_id, 0) <= 0 {
+    TwammOrderExecutedIn[order_id] =
+      TwammOrderExecutedIn.get(order_id).unwrap_or(zero_quantity()) + amount_in;
+    TwammOrderExecutedOut[order_id] =
+      TwammOrderExecutedOut.get(order_id).unwrap_or(zero_quantity()) + amount_out;
+    TwammOrderNextSlot[order_id] =
+      current_slot + TwammOrderIntervalSlots.get(order_id).unwrap_or(1);
+    if TwammOrderRemainingIn.get(order_id).unwrap_or(zero_quantity()) == zero_quantity() {
+      require(
+        TwammOrderExecutedOut.get(order_id).unwrap_or(zero_quantity()) >=
+          TwammOrderMinTotalOut.get(order_id).unwrap_or(zero_quantity()),
+        DlmmHookManagerError::InsufficientOutput
+      );
       TwammOrderStatus[order_id] = 3;
+      release_slot(order_id: order_id);
     }
     return 1;
   }
 
-  kotoage fn main() -> int {
-    return 1;
-  }
-
-  kotoage fn init_trigger_twamm(base_asset: AssetDefinitionId,
-                                quote_asset: AssetDefinitionId,
-                                cadence_slots: int,
-                                max_orders_per_tick: int,
-                                enabled: int) permission(Admin) {
-    assert(TwammInitialized == 0, "twamm initialized");
-    assert(cadence_slots >= 0, "invalid cadence");
-    assert(max_orders_per_tick > 0, "invalid max orders");
-    assert(max_orders_per_tick <= 16, "max orders too high");
-    assert(enabled == 0 || enabled == 1, "invalid enabled");
-    TwammInitialized = 1;
-    TwammOwner = authority();
-    TwammContractId = authority();
-    TwammContractBound = 0;
-    TwammRouterContract = blob("");
-    TwammRouterBound = 0;
-    TwammBaseAsset = base_asset;
-    TwammQuoteAsset = quote_asset;
-    TwammCadenceSlots = cadence_slots;
-    TwammMaxOrdersPerTick = max_orders_per_tick;
-    TwammEnabled = enabled;
-    TwammNextOrderIndex = 1;
-    TwammScanCursor = 1;
+  hajimari(
+    AssetDefinitionId base_asset,
+    AssetDefinitionId quote_asset,
+    AccountId custody_account,
+    bytes router_contract,
+    AccountId guardian
+  ) {
+    require(custody_account != context::authority(), DlmmHookManagerError::InvalidAuthoritySeparation);
+    require(guardian != context::authority() && guardian != custody_account, DlmmHookManagerError::InvalidAuthoritySeparation);
+    HookManagerInitialized = 1;
+    HookManagerOwner = context::authority();
+    HookManagerGuardian = guardian;
+    HookManagerCustodyAccount = custody_account;
+    HookManagerRouterContract = router_contract;
+    HookManagerBaseAsset = base_asset;
+    HookManagerQuoteAsset = quote_asset;
+    HookManagerWithdrawalOnly = 1;
+    TwammCadenceSlots = 1;
+    TwammMaxOrdersPerTick = 1;
+    TwammTriggerEnabled = 0;
+    TwammNextSlotCursor = 1;
+    TwammActiveOrderCount = 0;
     TwammLastTickSlot = 0;
     TwammLastTickProcessed = 0;
-    set_trigger_enabled(name("soraswap_twamm_tick"), enabled);
   }
 
-  kotoage fn bind_contract(contract_id: AccountId) {
-    assert_twamm_owner();
-    TwammContractId = contract_id;
-    TwammContractBound = 1;
+  view fn main() -> int {
+    return HookManagerInitialized;
   }
 
-  kotoage fn bind_router(router_contract: bytes) {
-    assert_twamm_owner();
-    TwammRouterContract = router_contract;
-    TwammRouterBound = 1;
-  }
-
-  kotoage fn configure_hook_policy(hook_id: Name, phase: int, max_fee_pips: int, enabled: int) {
-    assert(max_fee_pips >= 0, "invalid fee");
-    assert(enabled == 0 || enabled == 1, "invalid enabled");
-    if HookOwner.contains(hook_id) {
-      assert_hook_owner(hook_id);
-    } else {
-      HookOwner[hook_id] = authority();
-    }
+  kotoage fn configure_hook_policy(
+    Name hook_id,
+    int phase,
+    int max_fee_pips,
+    int enabled
+  ) authorize("Admin") {
+    assert_owner();
+    require(phase >= 1 && phase <= 3, DlmmHookManagerError::InvalidPhase);
+    require(max_fee_pips >= 0 && max_fee_pips < 1_000_000, DlmmHookManagerError::InvalidFee);
+    require(enabled == 0 || enabled == 1, DlmmHookManagerError::InvalidEnabled);
     HookPhase[hook_id] = phase;
     HookMaxFeePips[hook_id] = max_fee_pips;
     HookEnabled[hook_id] = enabled;
   }
 
-  kotoage fn place_limit_order(order_id: Name, hook_id: Name, amount_in: int, min_out: int) {
-    assert(HookEnabled.ensure(hook_id, 0) == 1, "hook disabled");
-    assert(!OrderOwner.contains(order_id), "order exists");
-    assert(amount_in > 0, "invalid amount");
-    assert(min_out > 0, "invalid min out");
-    OrderOwner[order_id] = authority();
-    OrderHook[order_id] = hook_id;
-    OrderAmountIn[order_id] = amount_in;
-    OrderMinOut[order_id] = min_out;
+  kotoage fn configure_trigger_twamm(
+    int cadence_slots,
+    int max_orders_per_tick,
+    int enabled
+  ) authorize("AssetOps") {
+    assert_owner();
+    require(cadence_slots > 0, DlmmHookManagerError::InvalidCadence);
+    require(
+      max_orders_per_tick > 0 && max_orders_per_tick <= 64,
+      DlmmHookManagerError::InvalidMaxOrders
+    );
+    require(enabled == 0 || enabled == 1, DlmmHookManagerError::InvalidEnabled);
+    TwammCadenceSlots = cadence_slots;
+    TwammMaxOrdersPerTick = max_orders_per_tick;
+    TwammTriggerEnabled = enabled;
+    ledger::trigger::set_enabled(Name::parse("soraswap_twamm_tick"), enabled);
   }
 
-  kotoage fn schedule_twamm(order_id: Name, hook_id: Name, amount_in: int, min_out: int, interval_slots: int) {
-    place_limit_order(order_id, hook_id, amount_in, min_out);
-    assert(interval_slots > 0, "invalid interval");
-    OrderIntervalSlots[order_id] = interval_slots;
+  kotoage fn enter_withdrawal_only() authorize("Admin") {
+    assert_owner_or_guardian();
+    HookManagerWithdrawalOnly = 1;
   }
 
-  kotoage fn schedule_twamm_v2(order_id: Name,
-                               input_is_base: int,
-                               total_in: int,
-                               slice_in: int,
-                               min_total_out: int,
-                               interval_slots: int,
-                               start_slot: int) permission(AssetOps) {
-    assert_twamm_initialized();
-    assert_twamm_contract_bound();
-    assert_twamm_router_bound();
-    assert(TwammEnabled == 1, "twamm disabled");
-    assert(!TwammOrderOwner.contains(order_id), "twamm order exists");
-    assert(input_is_base == 0 || input_is_base == 1, "invalid direction");
-    assert(total_in > 0, "invalid total in");
-    assert(slice_in > 0, "invalid slice in");
-    assert(min_total_out >= 0, "invalid min total out");
-    assert(interval_slots > 0, "invalid interval");
-    assert(start_slot >= 0, "invalid start slot");
+  kotoage fn exit_withdrawal_only() authorize("Admin") {
+    assert_owner();
+    HookManagerWithdrawalOnly = 0;
+  }
 
-    if input_is_base == 1 {
-      move_asset_if_needed(authority(), TwammContractId, TwammBaseAsset, total_in);
-    } else {
-      move_asset_if_needed(authority(), TwammContractId, TwammQuoteAsset, total_in);
-    }
+  kotoage fn place_limit_order(
+    Name order_id,
+    Name hook_id,
+    quantity amount_in,
+    quantity min_out
+  ) authorize("AssetOps") {
+    require(HookManagerWithdrawalOnly == 0, DlmmHookManagerError::WithdrawalOnly);
+    assert_hook_exists(hook_id: hook_id);
+    require(HookEnabled.get(hook_id).unwrap_or(0) == 1, DlmmHookManagerError::HookDisabled);
+    require(!LimitOrderOwner.contains(order_id), DlmmHookManagerError::OrderExists);
+    require(amount_in > zero_quantity(), DlmmHookManagerError::InvalidAmount);
+    LimitOrderOwner[order_id] = context::authority();
+    LimitOrderHook[order_id] = hook_id;
+    LimitOrderAmountIn[order_id] = amount_in;
+    LimitOrderMinOut[order_id] = min_out;
+    LimitOrderExecutedIn[order_id] = zero_quantity();
+    LimitOrderExecutedOut[order_id] = zero_quantity();
+  }
 
-    let index = TwammNextOrderIndex;
-    TwammNextOrderIndex = index + 1;
-    TwammOrderByIndex[index] = order_id;
-    TwammOrderOwner[order_id] = authority();
+  kotoage fn record_execution(
+    Name order_id,
+    quantity amount_in,
+    quantity amount_out
+  ) authorize("Admin") {
+    assert_owner();
+    require(LimitOrderOwner.contains(order_id), DlmmHookManagerError::OrderMissing);
+    let next_in = LimitOrderExecutedIn.get(order_id).unwrap_or(zero_quantity()) + amount_in;
+    require(
+      next_in <= LimitOrderAmountIn.get(order_id).unwrap_or(zero_quantity()),
+      DlmmHookManagerError::InvalidAmount
+    );
+    LimitOrderExecutedIn[order_id] = next_in;
+    LimitOrderExecutedOut[order_id] =
+      LimitOrderExecutedOut.get(order_id).unwrap_or(zero_quantity()) + amount_out;
+  }
+
+  kotoage fn schedule_twamm_v2(
+    Name order_id,
+    quantity total_in,
+    quantity slice_in,
+    int input_is_base,
+    quantity min_total_out,
+    int start_slot,
+    int interval_slots
+  ) authorize("AssetOps") {
+    require(HookManagerWithdrawalOnly == 0, DlmmHookManagerError::WithdrawalOnly);
+    require(!TwammOrderOwner.contains(order_id), DlmmHookManagerError::OrderExists);
+    require(total_in > zero_quantity(), DlmmHookManagerError::InvalidAmount);
+    require(slice_in > zero_quantity() && slice_in <= total_in, DlmmHookManagerError::InvalidAmount);
+    require(min_total_out >= zero_quantity(), DlmmHookManagerError::InvalidMinimum);
+    require(input_is_base == 0 || input_is_base == 1, DlmmHookManagerError::InvalidDirection);
+    require(start_slot >= context::block_height(), DlmmHookManagerError::InvalidStartSlot);
+    require(interval_slots > 0, DlmmHookManagerError::InvalidInterval);
+    allocate_slot(order_id: order_id);
+    move_asset_if_needed(
+      source: context::authority(),
+      destination: HookManagerCustodyAccount,
+      asset: input_asset(input_is_base: input_is_base),
+      amount: total_in
+    );
+    TwammOrderOwner[order_id] = context::authority();
     TwammOrderInputIsBase[order_id] = input_is_base;
     TwammOrderTotalIn[order_id] = total_in;
     TwammOrderSliceIn[order_id] = slice_in;
     TwammOrderMinTotalOut[order_id] = min_total_out;
     TwammOrderRemainingIn[order_id] = total_in;
-    TwammOrderExecutedIn[order_id] = 0;
-    TwammOrderExecutedOut[order_id] = 0;
-    TwammOrderClaimedOut[order_id] = 0;
+    TwammOrderExecutedIn[order_id] = zero_quantity();
+    TwammOrderExecutedOut[order_id] = zero_quantity();
+    TwammOrderClaimedOut[order_id] = zero_quantity();
     TwammOrderNextSlot[order_id] = start_slot;
     TwammOrderIntervalSlots[order_id] = interval_slots;
     TwammOrderStatus[order_id] = 1;
   }
 
-  kotoage fn cancel_twamm(order_id: Name) -> int permission(AssetOps) {
-    assert_twamm_initialized();
-    assert_twamm_contract_bound();
-    assert_twamm_order_exists(order_id);
-    assert(TwammOrderOwner[order_id] == authority(), "twamm owner mismatch");
-    assert(TwammOrderStatus.get_or(order_id, 0) == 1, "twamm not active");
-    let remaining = TwammOrderRemainingIn.get_or(order_id, 0);
+  kotoage fn cancel_twamm(Name order_id) -> quantity authorize("AssetOps") {
+    assert_order_owner(order_id: order_id);
+    require(TwammOrderStatus.get(order_id).unwrap_or(0) == 1, DlmmHookManagerError::OrderNotActive);
+    let refund = TwammOrderRemainingIn.get(order_id).unwrap_or(zero_quantity());
+    TwammOrderRemainingIn[order_id] = zero_quantity();
     TwammOrderStatus[order_id] = 4;
-    TwammOrderRemainingIn[order_id] = 0;
-    if TwammOrderInputIsBase.get_or(order_id, 0) == 1 {
-      move_asset_if_needed(TwammContractId, authority(), TwammBaseAsset, remaining);
-    } else {
-      move_asset_if_needed(TwammContractId, authority(), TwammQuoteAsset, remaining);
-    }
-    return remaining;
+    release_slot(order_id: order_id);
+    move_asset_if_needed(
+      source: HookManagerCustodyAccount,
+      destination: context::authority(),
+      asset: input_asset(
+        input_is_base: TwammOrderInputIsBase.get(order_id).unwrap_or(0)
+      ),
+      amount: refund
+    );
+    return refund;
   }
 
-  kotoage fn claim_twamm(order_id: Name) -> int permission(AssetOps) {
-    assert_twamm_initialized();
-    assert_twamm_contract_bound();
-    assert_twamm_order_exists(order_id);
-    assert(TwammOrderOwner[order_id] == authority(), "twamm owner mismatch");
-    let status = TwammOrderStatus.get_or(order_id, 0);
-    assert(status == 3 || status == 4, "twamm not claimable");
-    if status == 3 {
-      assert(
-        TwammOrderExecutedOut.get_or(order_id, 0) >= TwammOrderMinTotalOut.get_or(order_id, 0),
-        "twamm min total out"
-      );
-    }
-    let claimable = TwammOrderExecutedOut.get_or(order_id, 0) - TwammOrderClaimedOut.get_or(order_id, 0);
-    assert(claimable > 0, "nothing claimable");
-    TwammOrderClaimedOut[order_id] = TwammOrderClaimedOut.get_or(order_id, 0) + claimable;
-    if TwammOrderInputIsBase.get_or(order_id, 0) == 1 {
-      move_asset_if_needed(TwammContractId, authority(), TwammQuoteAsset, claimable);
-    } else {
-      move_asset_if_needed(TwammContractId, authority(), TwammBaseAsset, claimable);
-    }
-    return claimable;
+  kotoage fn claim_twamm(Name order_id) -> quantity authorize("AssetOps") {
+    assert_order_owner(order_id: order_id);
+    let status = TwammOrderStatus.get(order_id).unwrap_or(0);
+    require(status == 3 || status == 4, DlmmHookManagerError::OrderNotClaimable);
+    let executed = TwammOrderExecutedOut.get(order_id).unwrap_or(zero_quantity());
+    let claimed = TwammOrderClaimedOut.get(order_id).unwrap_or(zero_quantity());
+    require(executed > claimed, DlmmHookManagerError::NothingClaimable);
+    let amount = executed - claimed;
+    TwammOrderClaimedOut[order_id] = executed;
+    move_asset_if_needed(
+      source: HookManagerCustodyAccount,
+      destination: context::authority(),
+      asset: output_asset(
+        input_is_base: TwammOrderInputIsBase.get(order_id).unwrap_or(0)
+      ),
+      amount: amount
+    );
+    return amount;
   }
 
-  kotoage fn native_twamm_tick() permission(AssetOps) {
-    if TwammInitialized == 0 {
+  kotoage fn native_twamm_tick() authorize("AssetOps") {
+    if HookManagerInitialized == 0 || HookManagerWithdrawalOnly == 1 || TwammTriggerEnabled == 0 {
       return;
     }
-    if TwammEnabled == 0 {
+    let current_slot = context::block_height();
+    if TwammLastTickSlot > 0 && current_slot < TwammLastTickSlot + TwammCadenceSlots {
       return;
     }
-    let current_slot = block_height();
-    if TwammCadenceSlots > 0 && TwammLastTickSlot > 0 {
-      if current_slot < TwammLastTickSlot + TwammCadenceSlots {
-        return;
+    var processed = 0;
+    for offset in range(64) {
+      if processed < TwammMaxOrdersPerTick {
+        let slot = ((TwammNextSlotCursor - 1 + offset) % 64) + 1;
+        if TwammSlotOccupied.get(slot).unwrap_or(0) == 1 {
+          require(TwammOrderBySlot.contains(slot), DlmmHookManagerError::SlotIndexCorrupt);
+          processed = processed + execute_twamm_order(
+            order_id: TwammOrderBySlot.get(slot).unwrap_or(missing_name()),
+            current_slot: current_slot
+          );
+        }
       }
     }
-    let processed = 0;
-    let scanned = 0;
-    let index = TwammScanCursor;
-    if index <= 0 || index >= TwammNextOrderIndex {
-      index = 1;
-    }
-    while scanned < TwammMaxOrdersPerTick && index < TwammNextOrderIndex {
-      let order_id = TwammOrderByIndex.get_or(index, name!("missing"));
-      processed = processed + twamm_execute_order(order_id, current_slot);
-      index = index + 1;
-      scanned = scanned + 1;
-    }
-    if index >= TwammNextOrderIndex {
-      index = 1;
-    }
-    TwammScanCursor = index;
     TwammLastTickSlot = current_slot;
     TwammLastTickProcessed = processed;
   }
 
-  kotoage fn record_execution(order_id: Name, amount_in: int, amount_out: int) {
-    assert(OrderOwner.contains(order_id), "order missing");
-    let hook_id = OrderHook[order_id];
-    assert_hook_owner(hook_id);
-    assert(amount_out >= OrderMinOut.ensure(order_id, 0), "insufficient output");
-    OrderExecutedIn[order_id] = OrderExecutedIn.ensure(order_id, 0) + amount_in;
-    OrderExecutedOut[order_id] = OrderExecutedOut.ensure(order_id, 0) + amount_out;
-  }
-
-  view fn hook_policy(hook_id: Name) -> (int, int, int, int) {
-    let registered = 0;
-    if HookOwner.contains(hook_id) {
-      registered = 1;
-    }
+  view fn hook_policy(Name hook_id) -> (int, int, int, int) {
+    let exists = HookEnabled.contains(hook_id) ? 1 : 0;
     return (
-      registered,
-      HookPhase.get_or(hook_id, 0),
-      HookMaxFeePips.get_or(hook_id, 0),
-      HookEnabled.get_or(hook_id, 0)
+      exists,
+      HookPhase.get(hook_id).unwrap_or(0),
+      HookMaxFeePips.get(hook_id).unwrap_or(0),
+      HookEnabled.get(hook_id).unwrap_or(0)
     );
   }
 
-  view fn quote_hooked_swap(order_id: Name) -> (int, int, int, int, int) {
-    let registered = 0;
-    if OrderOwner.contains(order_id) {
-      registered = 1;
-    }
+  view fn quote_hooked_swap(Name order_id) -> (quantity, quantity, quantity, quantity, int) {
+    require(LimitOrderOwner.contains(order_id), DlmmHookManagerError::OrderMissing);
     return (
-      registered,
-      OrderAmountIn.get_or(order_id, 0),
-      OrderMinOut.get_or(order_id, 0),
-      OrderExecutedIn.get_or(order_id, 0),
-      OrderExecutedOut.get_or(order_id, 0)
+      LimitOrderAmountIn.get(order_id).unwrap_or(zero_quantity()),
+      LimitOrderMinOut.get(order_id).unwrap_or(zero_quantity()),
+      LimitOrderExecutedIn.get(order_id).unwrap_or(zero_quantity()),
+      LimitOrderExecutedOut.get(order_id).unwrap_or(zero_quantity()),
+      HookEnabled.get(LimitOrderHook.get(order_id).unwrap_or(missing_name())).unwrap_or(0)
     );
   }
 
-  view fn twamm_order_state(order_id: Name) -> (int, int, int, int, int, int, int, int, int) {
-    let registered = 0;
-    if TwammOrderOwner.contains(order_id) {
-      registered = 1;
-    }
+  view fn twamm_order_state(Name order_id) -> (
+    int,
+    quantity,
+    quantity,
+    quantity,
+    quantity,
+    quantity,
+    int,
+    int,
+    int
+  ) {
+    let exists = TwammOrderOwner.contains(order_id) ? 1 : 0;
     return (
-      registered,
-      TwammOrderInputIsBase.get_or(order_id, 0),
-      TwammOrderTotalIn.get_or(order_id, 0),
-      TwammOrderRemainingIn.get_or(order_id, 0),
-      TwammOrderExecutedIn.get_or(order_id, 0),
-      TwammOrderExecutedOut.get_or(order_id, 0),
-      TwammOrderClaimedOut.get_or(order_id, 0),
-      TwammOrderNextSlot.get_or(order_id, 0),
-      TwammOrderStatus.get_or(order_id, 0)
+      exists,
+      TwammOrderTotalIn.get(order_id).unwrap_or(zero_quantity()),
+      TwammOrderRemainingIn.get(order_id).unwrap_or(zero_quantity()),
+      TwammOrderExecutedIn.get(order_id).unwrap_or(zero_quantity()),
+      TwammOrderExecutedOut.get(order_id).unwrap_or(zero_quantity()),
+      TwammOrderClaimedOut.get(order_id).unwrap_or(zero_quantity()),
+      TwammOrderNextSlot.get(order_id).unwrap_or(0),
+      TwammOrderIntervalSlots.get(order_id).unwrap_or(0),
+      TwammOrderStatus.get(order_id).unwrap_or(0)
     );
   }
 
   view fn twamm_trigger_state() -> (int, int, int, int, int, int, int) {
     return (
-      TwammInitialized,
-      TwammContractBound,
-      TwammRouterBound,
+      TwammTriggerEnabled,
       TwammCadenceSlots,
       TwammMaxOrdersPerTick,
+      TwammNextSlotCursor,
+      TwammActiveOrderCount,
       TwammLastTickSlot,
       TwammLastTickProcessed
     );

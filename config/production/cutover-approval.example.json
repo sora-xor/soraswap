@@ -1,0 +1,83 @@
+{
+  "schema": "soraswap-production-cutover-approval/v1",
+  "environment": "production",
+  "approval_id": "REPLACE_WITH_UNIQUE_APPROVAL_ID",
+  "policy_sha256": "REPLACE_WITH_TRACKED_POLICY_SHA256",
+  "issued_at": "REPLACE_WITH_UTC_REVIEW_TIME",
+  "expires_at": "REPLACE_WITH_UTC_EXPIRY_TIME",
+  "review": {
+    "identity": "REPLACE_WITH_POLICY_APPROVER_ID",
+    "reviewed_at": "REPLACE_WITH_UTC_REVIEW_TIME",
+    "independent": true
+  },
+  "findings": {
+    "unresolved_critical": 0,
+    "unresolved_high": 0,
+    "unresolved": []
+  },
+  "bindings": {
+    "chain_fingerprint": {
+      "torii_url": "https://REPLACE_WITH_PRODUCTION_TORII",
+      "chain": "REPLACE_WITH_NON_TAIRA_CHAIN_ID",
+      "block_1_hash": "REPLACE_WITH_BLOCK_1_HASH"
+    },
+    "soraswap_git_sha": "REPLACE_WITH_SIGNED_SORASWAP_RC_SHA",
+    "soraswap_tree_sha": "REPLACE_WITH_SORASWAP_TREE_SHA",
+    "soraswap_source_sha256": "REPLACE_WITH_SORASWAP_SOURCE_STATE_SHA256",
+    "iroha_git_sha": "REPLACE_WITH_SIGNED_IROHA_SHA",
+    "bundle_name": "REPLACE_WITH_CANONICAL_BUNDLE_NAME",
+    "checksums_sha256": "REPLACE_WITH_SHA256",
+    "manifest_sha256": "REPLACE_WITH_SHA256",
+    "irohad_sha256": "REPLACE_WITH_SHA256",
+    "iroha_sha256": "REPLACE_WITH_SHA256",
+    "kagami_sha256": "REPLACE_WITH_SHA256",
+    "archive_sha256": "REPLACE_WITH_SHA256",
+    "archive_sidecar_sha256": "REPLACE_WITH_SHA256",
+    "irohad_features": ["embedded-soracloud-runtime", "sccp-test-fixtures"]
+  },
+  "authorities": {
+    "signer": "REPLACE_WITH_PRODUCTION_SIGNER_AUTHORITY",
+    "oracle": "REPLACE_WITH_ORACLE_PUBLIC_KEY_HEX",
+    "admin": "REPLACE_WITH_ADMIN_AUTHORITY",
+    "treasury": "REPLACE_WITH_TREASURY_AUTHORITY",
+    "bridge": "REPLACE_WITH_BRIDGE_AUTHORITY"
+  },
+  "minimum_fee_balance": "REPLACE_WITH_EXPLICIT_MINIMUM_FEE",
+  "controls": {
+    "custody": "REPLACE_WITH_EXTERNAL_CUSTODY_REFERENCE",
+    "rotation": "REPLACE_WITH_EXTERNAL_ROTATION_REFERENCE",
+    "admin": "REPLACE_WITH_EXTERNAL_ADMIN_REFERENCE",
+    "pause": "REPLACE_WITH_EXTERNAL_PAUSE_REFERENCE",
+    "rollback": "REPLACE_WITH_EXTERNAL_ROLLBACK_REFERENCE",
+    "monitoring": "REPLACE_WITH_EXTERNAL_MONITORING_REFERENCE",
+    "incident_response": "REPLACE_WITH_EXTERNAL_INCIDENT_RESPONSE_REFERENCE"
+  },
+  "observation": {
+    "monitoring_snapshot_url": "https://REPLACE_WITH_MONITORING_ORIGIN/cutover-snapshot",
+    "maximum_monitoring_sample_age_seconds": 30,
+    "validator_count": 4,
+    "validator_set_sha256": "REPLACE_WITH_VALIDATOR_SET_SHA256",
+    "maximum_canonical_lead": 1,
+    "maximum_finality_age_ms": 30000,
+    "maximum_oracle_age_seconds": 60,
+    "oracle_watch_sha256": "REPLACE_WITH_ORACLE_WATCH_SHA256",
+    "minimum_fee_balance": "REPLACE_WITH_EXPLICIT_MINIMUM_FEE",
+    "balance_watch_sha256": "REPLACE_WITH_BALANCE_WATCH_SHA256",
+    "readonly_route_set_sha256": "REPLACE_WITH_READONLY_ROUTE_SET_SHA256",
+    "trader_api_probe_url": "https://REPLACE_WITH_APPROVED_TRADER_API_ORIGIN/v1/app-api/cid/REPLACE_WITH_CONTENT_CID",
+    "trader_api_content_cid": "REPLACE_WITH_CONTENT_CID",
+    "trader_api_app_id": "soraswap.trader",
+    "trader_api_routes_sha256": "REPLACE_WITH_ROUTES_SHA256",
+    "derivatives_pause_mode": "external_fail_closed"
+  },
+  "signatures": [
+    {
+      "approver_id": "REPLACE_WITH_SECURITY_APPROVER_ID",
+      "signature_base64": "REPLACE_WITH_OPENSSH_SSHSIG_BASE64"
+    },
+    {
+      "approver_id": "REPLACE_WITH_OPERATIONS_APPROVER_ID",
+      "signature_base64": "REPLACE_WITH_OPENSSH_SSHSIG_BASE64"
+    }
+  ]
+}

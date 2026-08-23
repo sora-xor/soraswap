@@ -1,177 +1,192 @@
 seiyaku JobQueue {
-  state JobOwner: Map<Name, AccountId>;
-  state JobExecutor: Map<Name, AccountId>;
-  state JobPayloadHash: Map<Name, int>;
-  state JobStatus: Map<Name, int>;
-  state RetryCount: Map<Name, int>;
-  state JobNextSlot: Map<Name, int>;
-  state JobCronIntervalSlots: Map<Name, int>;
-  state JobMaxRetries: Map<Name, int>;
-  state JobRetryDelaySlots: Map<Name, int>;
-  state JobLastRunSlot: Map<Name, int>;
-  state JobRunCount: Map<Name, int>;
-
-  fn assert_job_exists(job: Name) {
-    assert(JobOwner.contains(job), "job missing");
-  }
-
-  fn assert_job_owner(job: Name) {
-    assert_job_exists(job);
-    assert(JobOwner[job] == authority(), "job owner mismatch");
-  }
-
-  fn assert_job_runner(job: Name) {
-    assert_job_exists(job);
-    if JobExecutor.contains(job) {
-      assert(JobExecutor[job] == authority(), "executor mismatch");
-      return;
+    error enum JobQueueError {
+        JobMissing = 1, OwnerMismatch = 2, ExecutorMismatch = 3, RunnerMismatch = 4, JobNotQueued = 5, JobNotReady = 6, RetryLimitReached = 7, JobAlreadyExists = 8, InvalidNextSlot = 9, InvalidMaxRetries = 10, InvalidRetryDelay = 11, InvalidCronInterval = 12, JobNotRunning = 13, InvalidCurrentSlot = 14, JobNotActive = 15, JobNotPaused = 16, JobAlreadyDone = 17, JobAlreadyCancelled = 18, JobNotRetryable = 19, JobNotConfigurable = 20,
     }
-    assert(JobOwner[job] == authority(), "job runner mismatch");
-  }
 
-  fn mark_running_impl(job: Name) {
-    assert_job_runner(job);
-    let current_slot = block_height();
-    assert(JobStatus.ensure(job, 0) == 1, "job not queued");
-    assert(current_slot >= JobNextSlot.ensure(job, 0), "job not ready");
-    JobStatus[job] = 2;
-    JobLastRunSlot[job] = current_slot;
-    JobRunCount[job] = JobRunCount.ensure(job, 0) + 1;
-  }
-
-  fn retry_impl(job: Name) {
-    assert_job_owner(job);
-    let current_slot = block_height();
-    let retries = RetryCount.ensure(job, 0);
-    let max_retries = JobMaxRetries.ensure(job, 0);
-    if max_retries > 0 {
-      assert(retries < max_retries, "retry limit");
+    state StateMap<Name, AccountId> JobOwner;
+    state StateMap<Name, AccountId> JobExecutor;
+    state StateMap<Name, int> JobPayloadHash;
+    state StateMap<Name, int> JobStatus;
+    state StateMap<Name, int> RetryCount;
+    state StateMap<Name, int> JobNextSlot;
+    state StateMap<Name, int> JobCronIntervalSlots;
+    state StateMap<Name, int> JobMaxRetries;
+    state StateMap<Name, int> JobRetryDelaySlots;
+    state StateMap<Name, int> JobLastRunSlot;
+    state StateMap<Name, int> JobRunCount;
+    fn assert_job_exists(Name job) {
+        require(JobOwner.contains(key: job), JobQueueError::JobMissing);
     }
-    JobStatus[job] = 1;
-    RetryCount[job] = retries + 1;
-    JobNextSlot[job] = current_slot + JobRetryDelaySlots.ensure(job, 0);
-  }
 
-  kotoage fn main() -> int {
-    return 1;
-  }
-
-  kotoage fn enqueue(job: Name, payload_hash: int) {
-    assert(!JobOwner.contains(job), "job exists");
-    JobOwner[job] = authority();
-    JobPayloadHash[job] = payload_hash;
-    JobStatus[job] = 1;
-    RetryCount[job] = 0;
-    JobNextSlot[job] = 0;
-    JobCronIntervalSlots[job] = 0;
-    JobMaxRetries[job] = 0;
-    JobRetryDelaySlots[job] = 0;
-    JobLastRunSlot[job] = 0;
-    JobRunCount[job] = 0;
-  }
-
-  kotoage fn assign_executor(job: Name, executor: AccountId) {
-    assert_job_owner(job);
-    JobExecutor[job] = executor;
-  }
-
-  kotoage fn configure_job(job: Name,
-                           next_slot: int,
-                           max_retries: int,
-                           retry_delay_slots: int) {
-    assert_job_owner(job);
-    assert(next_slot >= 0, "invalid next slot");
-    assert(max_retries >= 0, "invalid max retries");
-    assert(retry_delay_slots >= 0, "invalid retry delay");
-    JobNextSlot[job] = next_slot;
-    JobMaxRetries[job] = max_retries;
-    JobRetryDelaySlots[job] = retry_delay_slots;
-  }
-
-  kotoage fn configure_cron(job: Name, interval_slots: int) {
-    assert_job_owner(job);
-    assert(interval_slots >= 0, "invalid interval");
-    JobCronIntervalSlots[job] = interval_slots;
-  }
-
-  kotoage fn mark_running(job: Name) {
-    mark_running_impl(job);
-  }
-
-  kotoage fn dispatch_job(job: Name) {
-    mark_running_impl(job);
-  }
-
-  kotoage fn mark_done(job: Name) {
-    assert_job_runner(job);
-    let status = JobStatus.ensure(job, 0);
-    assert(status != 3, "job already done");
-    assert(status != 5, "job canceled");
-    JobStatus[job] = 3;
-  }
-
-  kotoage fn complete_run(job: Name) {
-    assert_job_runner(job);
-    let current_slot = block_height();
-    assert(JobStatus.ensure(job, 0) == 2, "job not running");
-    assert(current_slot >= JobLastRunSlot.ensure(job, 0), "invalid current slot");
-    let interval_slots = JobCronIntervalSlots.ensure(job, 0);
-    if interval_slots > 0 {
-      JobStatus[job] = 1;
-      JobNextSlot[job] = current_slot + interval_slots;
-    } else {
-      JobStatus[job] = 3;
+    fn assert_job_owner(Name job) {
+        assert_job_exists(job: job);
+        let owner = JobOwner.get_or(key: job, default: context::authority());
+        require(owner == context::authority(), JobQueueError::OwnerMismatch);
     }
-  }
 
-  kotoage fn retry(job: Name) {
-    retry_impl(job);
-  }
-
-  kotoage fn pause_job(job: Name) {
-    assert_job_owner(job);
-    let status = JobStatus.ensure(job, 0);
-    assert(status == 1 || status == 2, "job not active");
-    JobStatus[job] = 4;
-  }
-
-  kotoage fn resume_job(job: Name) {
-    assert_job_owner(job);
-    let current_slot = block_height();
-    assert(JobStatus.ensure(job, 0) == 4, "job not paused");
-    JobStatus[job] = 1;
-    JobNextSlot[job] = current_slot;
-  }
-
-  kotoage fn cancel_job(job: Name) {
-    assert_job_owner(job);
-    let status = JobStatus.ensure(job, 0);
-    assert(status != 3, "job already done");
-    assert(status != 5, "job already canceled");
-    JobStatus[job] = 5;
-  }
-
-  view fn mirror_job(job: Name) -> (int, int, int, int, int, int, int, int, int, int, int) {
-    let job_registered = 0;
-    let executor_bound = 0;
-    if JobOwner.contains(job) {
-      job_registered = 1;
+    fn assert_job_runner(Name job) {
+        assert_job_exists(job: job);
+        if JobExecutor.contains(key: job) {
+            let executor = JobExecutor.get_or(key: job, default: context::authority());
+            require(executor == context::authority(), JobQueueError::ExecutorMismatch);
+        } else {
+            let owner = JobOwner.get_or(key: job, default: context::authority());
+            require(owner == context::authority(), JobQueueError::RunnerMismatch);
+        }
     }
-    if JobExecutor.contains(job) {
-      executor_bound = 1;
+
+    fn assert_job_configurable(Name job) {
+        let status = JobStatus.get_or(key: job, default: 0);
+        require(status == 1 || status == 4, JobQueueError::JobNotConfigurable);
     }
-    return (
-      job_registered,
-      executor_bound,
-      JobPayloadHash.get_or(job, 0),
-      JobStatus.get_or(job, 0),
-      RetryCount.get_or(job, 0),
-      JobNextSlot.get_or(job, 0),
-      JobCronIntervalSlots.get_or(job, 0),
-      JobMaxRetries.get_or(job, 0),
-      JobRetryDelaySlots.get_or(job, 0),
-      JobLastRunSlot.get_or(job, 0),
-      JobRunCount.get_or(job, 0)
-    );
-  }
+
+    fn mark_running_impl(Name job) {
+        assert_job_runner(job: job);
+        let current_slot = context::block_height();
+        require(JobStatus.get_or(key: job, default: 0) == 1, JobQueueError::JobNotQueued);
+        require(
+            current_slot >= JobNextSlot.get_or(key: job, default: 0),
+            JobQueueError::JobNotReady,
+        );
+        JobStatus[job] = 2;
+        JobLastRunSlot[job] = current_slot;
+        JobRunCount[job] = JobRunCount.get_or(key: job, default: 0) + 1;
+    }
+
+    fn retry_impl(Name job) {
+        assert_job_owner(job: job);
+        let current_slot = context::block_height();
+        let status = JobStatus.get_or(key: job, default: 0);
+        require(status == 1 || status == 2 || status == 4, JobQueueError::JobNotRetryable);
+        let retries = RetryCount.get_or(key: job, default: 0);
+        let max_retries = JobMaxRetries.get_or(key: job, default: 0);
+        if max_retries > 0 {
+            require(retries < max_retries, JobQueueError::RetryLimitReached);
+        }
+        JobStatus[job] = 1;
+        RetryCount[job] = retries + 1;
+        JobNextSlot[job] = current_slot + JobRetryDelaySlots.get_or(key: job, default: 0);
+    }
+
+    view fn main() -> int {
+        return 1;
+    }
+
+    kotoage fn enqueue(Name job, int payload_hash) authorize("Entry") {
+        require(!JobOwner.contains(key: job), JobQueueError::JobAlreadyExists);
+        JobOwner[job] = context::authority();
+        JobPayloadHash[job] = payload_hash;
+        JobStatus[job] = 1;
+        RetryCount[job] = 0;
+        JobNextSlot[job] = 0;
+        JobCronIntervalSlots[job] = 0;
+        JobMaxRetries[job] = 0;
+        JobRetryDelaySlots[job] = 0;
+        JobLastRunSlot[job] = 0;
+        JobRunCount[job] = 0;
+    }
+
+    kotoage fn assign_executor(Name job, AccountId executor) authorize("Entry") {
+        assert_job_owner(job: job);
+        assert_job_configurable(job: job);
+        JobExecutor[job] = executor;
+    }
+
+    kotoage fn configure_job(Name job, int next_slot, int max_retries, int retry_delay_slots, ) authorize(
+        "Entry"
+    ) {
+        assert_job_owner(job: job);
+        assert_job_configurable(job: job);
+        require(next_slot >= 0, JobQueueError::InvalidNextSlot);
+        require(max_retries >= 0, JobQueueError::InvalidMaxRetries);
+        require(retry_delay_slots >= 0, JobQueueError::InvalidRetryDelay);
+        JobNextSlot[job] = next_slot;
+        JobMaxRetries[job] = max_retries;
+        JobRetryDelaySlots[job] = retry_delay_slots;
+    }
+
+    kotoage fn configure_cron(Name job, int interval_slots) authorize("Entry") {
+        assert_job_owner(job: job);
+        assert_job_configurable(job: job);
+        require(interval_slots >= 0, JobQueueError::InvalidCronInterval);
+        JobCronIntervalSlots[job] = interval_slots;
+    }
+
+    kotoage fn mark_running(Name job) authorize("Entry") {
+        mark_running_impl(job: job);
+    }
+
+    kotoage fn dispatch_job(Name job) authorize("Entry") {
+        mark_running_impl(job: job);
+    }
+
+    kotoage fn mark_done(Name job) authorize("Entry") {
+        assert_job_runner(job: job);
+        require(JobStatus.get_or(key: job, default: 0) == 2, JobQueueError::JobNotRunning);
+        JobStatus[job] = 3;
+    }
+
+    kotoage fn complete_run(Name job) authorize("Entry") {
+        assert_job_runner(job: job);
+        let current_slot = context::block_height();
+        require(JobStatus.get_or(key: job, default: 0) == 2, JobQueueError::JobNotRunning);
+        require(
+            current_slot >= JobLastRunSlot.get_or(key: job, default: 0),
+            JobQueueError::InvalidCurrentSlot,
+        );
+        let interval_slots = JobCronIntervalSlots.get_or(key: job, default: 0);
+        if interval_slots > 0 {
+            JobStatus[job] = 1;
+            JobNextSlot[job] = current_slot + interval_slots;
+        } else {
+            JobStatus[job] = 3;
+        }
+    }
+
+    kotoage fn retry(Name job) authorize("Entry") {
+        retry_impl(job: job);
+    }
+
+    kotoage fn pause_job(Name job) authorize("Entry") {
+        assert_job_owner(job: job);
+        let status = JobStatus.get_or(key: job, default: 0);
+        require(status == 1 || status == 2, JobQueueError::JobNotActive);
+        JobStatus[job] = 4;
+    }
+
+    kotoage fn resume_job(Name job) authorize("Entry") {
+        assert_job_owner(job: job);
+        require(JobStatus.get_or(key: job, default: 0) == 4, JobQueueError::JobNotPaused);
+        JobStatus[job] = 1;
+        JobNextSlot[job] = context::block_height();
+    }
+
+    kotoage fn cancel_job(Name job) authorize("Entry") {
+        assert_job_owner(job: job);
+        let status = JobStatus.get_or(key: job, default: 0);
+        require(status != 3, JobQueueError::JobAlreadyDone);
+        require(status != 5, JobQueueError::JobAlreadyCancelled);
+        JobStatus[job] = 5;
+    }
+
+    view fn mirror_job(Name job) -> (int, int, int, int, int, int, int, int, int, int, int) {
+        var int job_registered = 0;
+        var int executor_bound = 0;
+        if JobOwner.contains(key: job) {
+            job_registered = 1;
+        }
+        if JobExecutor.contains(key: job) {
+            executor_bound = 1;
+        }
+        return (job_registered, executor_bound, JobPayloadHash.get_or(key: job, default: 0), JobStatus.get_or(
+            key: job,
+            default: 0,
+        ), RetryCount.get_or(key: job, default: 0), JobNextSlot.get_or(key: job, default: 0), JobCronIntervalSlots.get_or(
+            key: job,
+            default: 0,
+        ), JobMaxRetries.get_or(key: job, default: 0), JobRetryDelaySlots.get_or(
+            key: job,
+            default: 0,
+        ), JobLastRunSlot.get_or(key: job, default: 0), JobRunCount.get_or(key: job, default: 0));
+    }
 }

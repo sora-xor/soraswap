@@ -1,4 +1,4 @@
-chain = "809574f5-fee7-5e69-bfcf-52451e42d50f"
+chain = "fc56984b-2be7-431d-840e-21514d1883f0"
 torii_url = "https://taira.sora.org/"
 
 # Fill these with your public testnet credentials and keep the copied file

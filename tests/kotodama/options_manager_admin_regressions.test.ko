@@ -1,0 +1,36 @@
+koto_test { target: "../../contracts/options/manager.ko" }
+
+fixture options_manager_actors {
+  actor("owner", AccountId::parse("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+}
+
+fn seed_options_manager(AccountId owner) {
+  OptMgrInitialized = 1;
+  OptMgrOwner = owner;
+  OptMgrController = owner;
+  OptMgrOracleStaleSlots = 4;
+  OptMgrTemplateKind[1] = 1;
+  OptMgrTemplateStrikeBps[1] = 10_000;
+  OptMgrTemplateCollateralMultiplierBps[1] = 10_000;
+  OptMgrTemplateBasePremiumBps[1] = 500;
+  OptMgrTemplateActive[1] = 1;
+}
+
+#[test(fixture="options_manager_actors")]
+fn manager_oracle_stale_slots_are_owner_configured() {
+  let owner = actor_account("owner");
+  seed_options_manager(owner);
+
+  invoke_entrypoint_as("owner", "configure_oracle_stale_slots", json("{\"oracle_stale_slots\":8}"));
+
+  assert(OptMgrOracleStaleSlots == 8, "manager stale slots");
+  expect_reject_as("owner", "configure_oracle_stale_slots", json("{\"oracle_stale_slots\":-1}"));
+}
+
+#[test(fixture="options_manager_actors")]
+fn update_template_rejects_invalid_active_flag() {
+  let owner = actor_account("owner");
+  seed_options_manager(owner);
+
+  expect_reject_as("owner", "update_template", json("{\"template_id\":1,\"strike_bps\":10000,\"collateral_multiplier_bps\":10000,\"base_premium_bps\":500,\"active\":2}"));
+}

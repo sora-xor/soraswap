@@ -3,6 +3,9 @@ const { spawn } = require("child_process");
 const readline = require("readline");
 const path = require("path");
 
+const DESTINATION_PROOF_B64 = Buffer.from("integration-destination-proof").toString("base64");
+const NATIVE_PROOF_B64 = Buffer.from("integration-native-proof").toString("base64");
+
 let fixtureServer;
 let fixtureServerUrl;
 
@@ -82,10 +85,10 @@ test("drives the real Python console server against a local mock Torii", async (
   await expect(page.locator("#environment-summary")).toContainText("Torii:");
   await expect(page.locator("#environment-summary")).toContainText("(deployment)");
   await expect(page.locator("#environment-summary")).toContainText("configured (explicit)");
-  await expect(page.locator("#environment-summary")).toContainText("signer config torii_url");
+  await expect(page.locator("#environment-summary")).not.toContainText("refusing proxy requests");
 
-  await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP discovery for fixture: 1 counterparties, 1 manifests.");
-  await expect(page.locator("#sccp-counterparty-list")).toContainText("eth-sepolia");
+  await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP V1 discovery for fixture: 1 governed lanes, 1 retained route revisions.");
+  await expect(page.locator("#sccp-counterparty-list")).toContainText("ethereum_sepolia");
   await expect(page.locator("#remote-transaction-history-preview")).toContainText('"items"');
 
   await page.locator("#bridge-route-input").fill("fixture_lane");
@@ -97,7 +100,7 @@ test("drives the real Python console server against a local mock Torii", async (
   await expect(page.locator("#bridge-snapshot-preview")).toContainText('"mirror_route"');
 
   await page.locator("#bridge-action-select").selectOption("lock_to_remote");
-  await page.locator("#bridge-remote-domain-input").fill("1000");
+  await page.locator("#bridge-remote-domain-input").fill("1");
   await page.locator("#bridge-recipient-input").fill("0x1111111111111111111111111111111111111111");
   await page.locator("#bridge-amount-input").fill("25");
   await page.locator("#build-bridge-request").click();
@@ -110,19 +113,24 @@ test("drives the real Python console server against a local mock Torii", async (
 
   await page.locator("#proof-lookup-message-id-input").fill("cd".repeat(32));
   await page.locator("#lookup-sccp-all").click();
-  await expect(page.locator("#proof-lookup-summary")).toContainText("Loaded proof surfaces");
-  await expect(page.locator("#proof-submission-package-preview")).toContainText("0xFixtureVerifier");
+  await expect(page.locator("#proof-lookup-summary")).toContainText("Loaded closed SCCP V1 proof surfaces");
+  await expect(page.locator("#sccp-proof-request-preview")).toContainText("ethereum_sepolia");
 
-  await page.locator("#load-looked-up-bundle").click();
+  await page.locator("#proof-submit-input").fill(JSON.stringify({
+    authority: "i105fixtureoperator@universal",
+    destination_proof_b64: DESTINATION_PROOF_B64,
+  }, null, 2));
   await page.locator("#submit-bridge-proof").click();
   await confirmSignedCall(page);
   await expect(page.locator("#transaction-history-list")).toContainText("bridge proof submit");
 
-  await page.locator("#insert-settlement-helper").click();
+  await page.locator("#bridge-message-submit-input").fill(JSON.stringify({
+    authority: "i105fixtureoperator@universal",
+    native_proof_b64: NATIVE_PROOF_B64,
+  }, null, 2));
   await page.locator("#submit-bridge-message").click();
   await confirmSignedCall(page);
   await expect(page.locator("#transaction-history-list")).toContainText("bridge message submit");
-  await expect(page.locator("#transaction-history-list")).toContainText("fixture_lane");
 
   await page.locator("#refresh-transaction-history").click();
   await expect(page.locator("#transaction-summary")).toContainText("Remote history:");

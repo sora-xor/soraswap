@@ -15,9 +15,17 @@ export function writeTelemetrySnapshot<T>(name: string, payload: T): TelemetryWr
   const dir = join(process.cwd(), "artifacts", "telemetry");
   mkdirSync(dir, { recursive: true });
 
+  const generatedAt = new Date().toISOString();
+  const snapshotPayload = (
+    payload !== null
+    && typeof payload === "object"
+    && !Array.isArray(payload)
+  )
+    ? { ...payload, generated_at: generatedAt }
+    : { payload, generated_at: generatedAt };
   const latestPath = join(dir, `${name}_latest.json`);
   const timestampedPath = join(dir, `${name}_${timestampId()}.json`);
-  const serialized = `${JSON.stringify(payload, null, 2)}\n`;
+  const serialized = `${JSON.stringify(snapshotPayload, null, 2)}\n`;
 
   writeFileSync(latestPath, serialized, "utf8");
   writeFileSync(timestampedPath, serialized, "utf8");

@@ -1,0 +1,388 @@
+module DlmmPoolV1Regressions {
+  koto_test { target: "../../contracts/dlmm/dlmm_pool.ko" }
+
+  fixture pool_actor {
+    actor(
+      "owner",
+      AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX"),
+      "0x0909090909090909090909090909090909090909090909090909090909090909"
+    );
+    actor(
+      "public_trader",
+      AccountId::parse("sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV")
+    );
+    caller(
+      AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX")
+    );
+    grant_permission("owner", "AssetOps");
+    grant_permission("owner", "Admin");
+    grant_seiyaku_kotoage_permission("owner", "add_position_liquidity");
+    grant_seiyaku_kotoage_permission("owner", "seed_bin");
+    grant_seiyaku_kotoage_permission("owner", "renounce_admin");
+    grant_seiyaku_kotoage_permission("public_trader", "swap_exact_in_quote_public");
+    grant_permission(
+      "owner",
+      "read_assets:sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"
+    );
+    grant_seiyaku_transfer_effect_permission(
+      "public_trader",
+      AssetDefinitionId::parse("6pEP9RjNoZ7beWkT3pLfKoM1dyfi"),
+      0
+    );
+    grant_seiyaku_transfer_effect_permission(
+      "owner",
+      AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM"),
+      0
+    );
+    set_balance(
+      AccountId::parse("sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"),
+      AssetDefinitionId::parse("6pEP9RjNoZ7beWkT3pLfKoM1dyfi"),
+      100000
+    );
+    set_balance(
+      AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX"),
+      AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM"),
+      100000
+    );
+  }
+
+  fn owner_account() -> AccountId {
+    return AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX");
+  }
+
+  fn base_asset() -> AssetDefinitionId {
+    return AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+  }
+
+  fn quote_asset() -> AssetDefinitionId {
+    return AssetDefinitionId::parse("6pEP9RjNoZ7beWkT3pLfKoM1dyfi");
+  }
+
+  fn standard_hajimari_arguments() -> Json {
+    return Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"fee_pips\":\"3000\",\"bin_step\":\"1\",\"active_bin\":\"0\",\"impact_cap_bps\":\"10000\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"0\",\"max_bins_per_swap\":\"32\",\"bin_liquidity_cap\":\"0\"}");
+  }
+
+  fn arm_range_governor_for_renounce_test() {
+    RangeGovernorEnabled = 1;
+    RangeGovernorNextSlot = 100;
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn hajimari_rejects_identical_assets() {
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"fee_pips\":\"3000\",\"bin_step\":\"1\",\"active_bin\":\"0\",\"impact_cap_bps\":\"10000\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"0\",\"max_bins_per_swap\":\"32\",\"bin_liquidity_cap\":\"0\"}")
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn hajimari_rejects_more_than_compiler_bounded_bins() {
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"fee_pips\":\"3000\",\"bin_step\":\"1\",\"active_bin\":\"0\",\"impact_cap_bps\":\"10000\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"0\",\"max_bins_per_swap\":\"65\",\"bin_liquidity_cap\":\"0\"}")
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn out_of_order_bins_form_a_strict_sorted_index() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    ensure_bin_indexed(100_000);
+    ensure_bin_indexed(-100_000);
+    ensure_bin_indexed(7);
+    ensure_bin_indexed(0);
+
+    test::assert(IndexedBinCount == 4);
+    test::assert(FirstIndexedBin == -100_000);
+    test::assert(LastIndexedBin == 100_000);
+    test::assert(NextIndexedBin.get(-100_000).unwrap_or(-100_000) == 0);
+    test::assert(NextIndexedBin.get(0).unwrap_or(0) == 7);
+    test::assert(NextIndexedBin.get(7).unwrap_or(7) == 100_000);
+    test::assert(PreviousIndexedBin.get(100_000).unwrap_or(100_000) == 7);
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn bin_index_hard_cap_rejects_sixty_fifth_bin() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    // The cap guard precedes all index traversal and writes. Seeding the
+    // authoritative count exercises that boundary without exhausting the
+    // standalone test VM on 64 full StateMap insertions.
+    IndexedBinCount = 64;
+    test::assert(IndexedBinCount == 64);
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"overflow\",\"bin_id\":\"64\",\"base_amount\":\"1\",\"quote_amount\":\"1\"}")
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn seeding_creates_owned_redeemable_shares() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    let minted = test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"bootstrap\",\"bin_id\":\"0\",\"base_amount\":\"1000\",\"quote_amount\":\"1000\"}")
+    );
+    let position = Name::parse("bootstrap");
+    test::assert(minted == 2000);
+    test::assert(position_owner_value(position) == owner_account());
+    test::assert(position_shares_value(position) == minted);
+    test::assert(bin_share_supply_value(0) == minted);
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn a_position_cannot_move_between_bins() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"fixed\",\"bin_id\":\"0\",\"base_amount\":\"10\",\"quote_amount\":\"10\"}")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"fixed\",\"bin_id\":\"1\",\"base_amount\":\"10\",\"quote_amount\":\"10\"}")
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn base_swap_accrues_collectable_fee_growth() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"lp\",\"bin_id\":\"0\",\"base_amount\":\"10000\",\"quote_amount\":\"10000\"}")
+    );
+    let output = test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "swap_exact_in_base",
+      arguments: Json::parse("{\"amount_in\":\"1000\",\"min_out\":\"990\"}")
+    );
+    test::assert(output == 997);
+    let pending = test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "quote_position_fees",
+      arguments: Json::parse("{\"position_id\":\"lp\"}")
+    );
+    test::assert(pending.0 > zero_quantity());
+    test::assert(pending.1 == zero_quantity());
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn public_quote_swap_is_caller_funded_and_requires_full_fill() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"public-liquidity\",\"bin_id\":\"0\",\"base_amount\":\"10000\",\"quote_amount\":\"10000\"}")
+    );
+    let public_trader = AccountId::parse(
+      "sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"
+    );
+    let quote_before = ledger::asset::balance(public_trader, quote_asset());
+    let base_before = ledger::asset::balance(public_trader, base_asset());
+    let vault_quote_before = ledger::asset::balance(owner_account(), quote_asset());
+    let vault_base_before = ledger::asset::balance(owner_account(), base_asset());
+    let output = test::invoke_kotoage_as(
+      actor: "public_trader",
+      kotoage: "swap_exact_in_quote_public",
+      arguments: Json::parse("{\"amount_in\":\"1000\",\"min_out\":\"990\"}")
+    );
+    test::assert(output == 997);
+    test::assert(
+      ledger::asset::balance(public_trader, quote_asset()) + 1000 == quote_before
+    );
+    test::assert(
+      ledger::asset::balance(public_trader, base_asset()) == base_before + output
+    );
+    test::assert(
+      ledger::asset::balance(owner_account(), quote_asset()) == vault_quote_before + 1000
+    );
+    test::assert(
+      ledger::asset::balance(owner_account(), base_asset()) + output == vault_base_before
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn public_quote_swap_rejects_a_partial_fill_atomically() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"public-small\",\"bin_id\":\"0\",\"base_amount\":\"10\",\"quote_amount\":\"1\"}")
+    );
+    let base_before = bin_reserve_base_value(0);
+    let quote_before = bin_reserve_quote_value(0);
+    let public_trader = AccountId::parse(
+      "sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"
+    );
+    let trader_quote_before = ledger::asset::balance(public_trader, quote_asset());
+    let trader_base_before = ledger::asset::balance(public_trader, base_asset());
+    let vault_quote_before = ledger::asset::balance(owner_account(), quote_asset());
+    let vault_base_before = ledger::asset::balance(owner_account(), base_asset());
+    test::expect_reject_as(
+      actor: "public_trader",
+      kotoage: "swap_exact_in_quote_public",
+      arguments: Json::parse("{\"amount_in\":\"1000\",\"min_out\":\"1\"}")
+    );
+    test::assert(bin_reserve_base_value(0) == base_before);
+    test::assert(bin_reserve_quote_value(0) == quote_before);
+    test::assert(
+      ledger::asset::balance(public_trader, quote_asset()) == trader_quote_before
+    );
+    test::assert(
+      ledger::asset::balance(public_trader, base_asset()) == trader_base_before
+    );
+    test::assert(
+      ledger::asset::balance(owner_account(), quote_asset()) == vault_quote_before
+    );
+    test::assert(
+      ledger::asset::balance(owner_account(), base_asset()) == vault_base_before
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn admin_renunciation_is_irreversible_and_disables_governor() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    arm_range_governor_for_renounce_test();
+    renounce_admin_impl();
+    test::assert_eq(actual: AdminRenounced, expected: 1);
+    test::assert_eq(actual: RangeGovernorEnabled, expected: 0);
+    test::assert_eq(actual: RangeGovernorNextSlot, expected: 0);
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "bind_custody_account",
+      arguments: Json::parse("{\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\"}")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "configure_range_governor",
+      arguments: Json::parse("{\"cadence_slots\":\"1\",\"max_fee_pips\":\"3000\",\"target_active_bin\":\"0\",\"max_active_bin_drift\":\"0\",\"enabled\":\"0\"}")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "renounce_admin",
+      arguments: Json::parse("{}")
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn slippage_rejection_rolls_back_reserves_and_fee_growth() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"rollback\",\"bin_id\":\"0\",\"base_amount\":\"10000\",\"quote_amount\":\"10000\"}")
+    );
+    let base_before = bin_reserve_base_value(0);
+    let quote_before = bin_reserve_quote_value(0);
+    let growth_before = bin_fee_growth_base_value(0);
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "swap_exact_in_base",
+      arguments: Json::parse("{\"amount_in\":\"1000\",\"min_out\":\"998\"}")
+    );
+    test::assert(bin_reserve_base_value(0) == base_before);
+    test::assert(bin_reserve_quote_value(0) == quote_before);
+    test::assert(bin_fee_growth_base_value(0) == growth_before);
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn full_fill_rejection_rolls_back_partial_multi_bin_execution() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"small\",\"bin_id\":\"0\",\"base_amount\":\"1\",\"quote_amount\":\"10\"}")
+    );
+    let base_before = bin_reserve_base_value(0);
+    let quote_before = bin_reserve_quote_value(0);
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "swap_exact_in_base_for",
+      arguments: Json::parse("{\"recipient\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"amount_in\":\"1000\",\"min_out\":\"1\"}")
+    );
+    test::assert(bin_reserve_base_value(0) == base_before);
+    test::assert(bin_reserve_quote_value(0) == quote_before);
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn corrupted_link_is_rejected_before_unbounded_traversal() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    ensure_bin_indexed(0);
+    ensure_bin_indexed(1);
+    BinReserveQuote[1] = 1000;
+    NextIndexedBin[0] = 0;
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "swap_exact_in_base",
+      arguments: Json::parse("{\"amount_in\":\"10\",\"min_out\":\"1\"}")
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn no_quote_liquidity_rejects_without_moving_active_bin() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    ensure_bin_indexed(-200_000);
+    ensure_bin_indexed(200_000);
+    BinReserveBase[-200_000] = 1000;
+    BinReserveBase[200_000] = 1000;
+    let active_before = ActiveBin;
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "swap_exact_in_base",
+      arguments: Json::parse("{\"amount_in\":\"10\",\"min_out\":\"1\"}")
+    );
+    test::assert(ActiveBin == active_before);
+  }
+}

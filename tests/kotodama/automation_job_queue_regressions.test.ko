@@ -1,0 +1,185 @@
+module AutomationJobQueueRegressions {
+    koto_test {
+        target: "../../contracts/automation/job_queue.ko"
+    }
+
+    const string OWNER_ACCOUNT = "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX";
+    const string EXECUTOR_ACCOUNT = "sorauﾛ1NfｷgﾉﾓﾉBｦKﾌﾘﾒoﾇﾂﾛrG81ﾋjWﾎﾕVncwﾌSｱ3pﾘﾋﾉhUS9Q76";
+    const string ATTACKER_ACCOUNT = "sorauﾛ1Npﾃﾕヱﾇq11pｳﾘ2ｱ5ﾇｦiCJKjRﾔzｷNMNﾆｹﾕPCｳﾙFvｵE9LBLB";
+    fixture automation_actors {
+        actor("owner", AccountId::parse(OWNER_ACCOUNT));
+        actor("executor", AccountId::parse(EXECUTOR_ACCOUNT));
+        actor("attacker", AccountId::parse(ATTACKER_ACCOUNT));
+    }
+
+    fn seed_queued_job(Name job, AccountId owner) {
+        JobOwner[job] = owner;
+        JobPayloadHash[job] = 123456;
+        JobStatus[job] = 1;
+        RetryCount[job] = 0;
+        JobNextSlot[job] = 0;
+        JobCronIntervalSlots[job] = 0;
+        JobMaxRetries[job] = 0;
+        JobRetryDelaySlots[job] = 0;
+        JobLastRunSlot[job] = 0;
+        JobRunCount[job] = 0;
+    }
+
+    #[test(fixture = "automation_actors")]
+    fn job_cannot_complete_without_running_dispatch() {
+        let owner = test::actor_account(actor: "owner");
+        let job = Name::parse("queued");
+        seed_queued_job(job: job, owner: owner);
+        test::expect_reject_as(
+            actor: "owner",
+            entrypoint: "mark_done",
+            arguments: Json::parse("{\"job\":\"queued\"}"),
+        );
+        test::invoke_entrypoint_as(
+            actor: "owner",
+            entrypoint: "dispatch_job",
+            arguments: Json::parse("{\"job\":\"queued\"}"),
+        );
+        test::invoke_entrypoint_as(
+            actor: "owner",
+            entrypoint: "mark_done",
+            arguments: Json::parse("{\"job\":\"queued\"}"),
+        );
+        test::assert(JobStatus.get_or(key: job, default: 0) == 3);
+        test::assert(JobRunCount.get_or(key: job, default: 0) == 1);
+    }
+
+    #[test(fixture = "automation_actors")]
+    fn executor_can_run_but_cannot_reconfigure_owner_job() {
+        let owner = test::actor_account(actor: "owner");
+        let job = Name::parse("execjob");
+        seed_queued_job(job: job, owner: owner);
+        test::invoke_entrypoint_as(
+            actor: "owner",
+            entrypoint: "assign_executor",
+            arguments: Json::parse(
+                "{\"job\":\"execjob\",\"executor\":\"sorauﾛ1NfｷgﾉﾓﾉBｦKﾌﾘﾒoﾇﾂﾛrG81ﾋjWﾎﾕVncwﾌSｱ3pﾘﾋﾉhUS9Q76\"}",
+            ),
+        );
+        test::expect_reject_as(
+            actor: "executor",
+            entrypoint: "configure_job",
+            arguments: Json::parse(
+                "{\"job\":\"execjob\",\"next_slot\":0,\"max_retries\":1,\"retry_delay_slots\":1}",
+            ),
+        );
+        test::expect_reject_as(
+            actor: "owner",
+            entrypoint: "dispatch_job",
+            arguments: Json::parse("{\"job\":\"execjob\"}"),
+        );
+        test::invoke_entrypoint_as(
+            actor: "executor",
+            entrypoint: "dispatch_job",
+            arguments: Json::parse("{\"job\":\"execjob\"}"),
+        );
+        test::invoke_entrypoint_as(
+            actor: "executor",
+            entrypoint: "complete_run",
+            arguments: Json::parse("{\"job\":\"execjob\"}"),
+        );
+        test::assert(JobStatus.get_or(key: job, default: 0) == 3);
+        test::assert(JobRunCount.get_or(key: job, default: 0) == 1);
+    }
+
+    #[test(fixture = "automation_actors")]
+    fn unrelated_account_cannot_mutate_job_lifecycle() {
+        let owner = test::actor_account(actor: "owner");
+        let job = Name::parse("owned");
+        seed_queued_job(job: job, owner: owner);
+        test::expect_reject_as(
+            actor: "attacker",
+            entrypoint: "configure_cron",
+            arguments: Json::parse("{\"job\":\"owned\",\"interval_slots\":4}"),
+        );
+        test::expect_reject_as(
+            actor: "attacker",
+            entrypoint: "assign_executor",
+            arguments: Json::parse(
+                "{\"job\":\"owned\",\"executor\":\"sorauﾛ1Npﾃﾕヱﾇq11pｳﾘ2ｱ5ﾇｦiCJKjRﾔzｷNMNﾆｹﾕPCｳﾙFvｵE9LBLB\"}",
+            ),
+        );
+        test::expect_reject_as(
+            actor: "attacker",
+            entrypoint: "dispatch_job",
+            arguments: Json::parse("{\"job\":\"owned\"}"),
+        );
+        test::expect_reject_as(
+            actor: "attacker",
+            entrypoint: "retry",
+            arguments: Json::parse("{\"job\":\"owned\"}"),
+        );
+        test::expect_reject_as(
+            actor: "attacker",
+            entrypoint: "cancel_job",
+            arguments: Json::parse("{\"job\":\"owned\"}"),
+        );
+        test::assert(JobStatus.get_or(key: job, default: 0) == 1);
+        test::assert(RetryCount.get_or(key: job, default: 0) == 0);
+    }
+
+    #[test(fixture = "automation_actors")]
+    fn invalid_configuration_is_atomic_and_terminal_jobs_cannot_reopen() {
+        let owner = test::actor_account(actor: "owner");
+        let job = Name::parse("terminal");
+        seed_queued_job(job: job, owner: owner);
+        test::expect_reject_as(
+            actor: "owner",
+            entrypoint: "configure_job",
+            arguments: Json::parse(
+                "{\"job\":\"terminal\",\"next_slot\":-1,\"max_retries\":-1,\"retry_delay_slots\":-1}",
+            ),
+        );
+        test::assert(JobNextSlot.get_or(key: job, default: 0) == 0);
+        test::assert(JobMaxRetries.get_or(key: job, default: 0) == 0);
+        test::invoke_entrypoint_as(
+            actor: "owner",
+            entrypoint: "dispatch_job",
+            arguments: Json::parse("{\"job\":\"terminal\"}"),
+        );
+        test::invoke_entrypoint_as(
+            actor: "owner",
+            entrypoint: "mark_done",
+            arguments: Json::parse("{\"job\":\"terminal\"}"),
+        );
+        test::expect_reject_as(
+            actor: "owner",
+            entrypoint: "retry",
+            arguments: Json::parse("{\"job\":\"terminal\"}"),
+        );
+        test::expect_reject_as(
+            actor: "owner",
+            entrypoint: "cancel_job",
+            arguments: Json::parse("{\"job\":\"terminal\"}"),
+        );
+        test::expect_reject_as(
+            actor: "owner",
+            entrypoint: "configure_cron",
+            arguments: Json::parse("{\"job\":\"terminal\",\"interval_slots\":2}"),
+        );
+        test::assert(JobStatus.get_or(key: job, default: 0) == 3);
+    }
+
+    #[test(fixture = "automation_actors")]
+    fn duplicate_enqueue_cannot_overwrite_existing_owner_or_payload() {
+        test::invoke_entrypoint_as(
+            actor: "owner",
+            entrypoint: "enqueue",
+            arguments: Json::parse("{\"job\":\"unique\",\"payload_hash\":111}"),
+        );
+        test::expect_reject_as(
+            actor: "attacker",
+            entrypoint: "enqueue",
+            arguments: Json::parse("{\"job\":\"unique\",\"payload_hash\":999}"),
+        );
+        let owner = test::actor_account(actor: "owner");
+        let stored_owner = JobOwner.get_or(key: Name::parse("unique"), default: owner);
+        test::assert(stored_owner == owner);
+        test::assert(JobPayloadHash.get_or(key: Name::parse("unique"), default: 0) == 111);
+    }
+}

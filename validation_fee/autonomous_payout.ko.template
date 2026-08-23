@@ -1,0 +1,141 @@
+// Generated validation-fee payout wrapper.
+//
+// Do not deploy this template. `scripts/render_validation_fee_payout.py`
+// replaces every source marker with reviewed public ledger identifiers and
+// emits a source-pinned `autonomous_payout.ko`.
+seiyaku AutonomousValidationFeePayout {
+    error enum AutonomousPayoutError {
+        InvalidInvocationAuthority = 1, InvalidContractSubject = 2, InvalidSbdDebit = 3, InvalidXorCredit = 4, XorOutputBelowBound = 5, XorOutputAboveBound = 6, UnequalValidatorShares = 7,
+    }
+
+    trigger validation_fee_autonomous_payout -> autonomous_validation_fee_tick {
+        on time pre_commit;
+        repeats indefinitely;
+        authority "@@PAYOUT_VAULT_ACCOUNT_ID@@";
+        metadata {
+            "tag": "cbsi-validation-fee";
+            "module": "validation_fee.autonomous_payout";
+            "schema_version": 1;
+        }
+    }
+
+    fn zero_quantity() -> quantity {
+        let quantity zero = 0;
+        return zero;
+    }
+
+    fn pool_contract() -> bytes {
+        return b"@@POOL_CONTRACT_ADDRESS@@";
+    }
+
+    fn payout_vault() -> AccountId {
+        return AccountId::parse("@@PAYOUT_VAULT_ACCOUNT_ID@@");
+    }
+
+    fn pool_vault() -> AccountId {
+        return AccountId::parse("@@POOL_VAULT_ACCOUNT_ID@@");
+    }
+
+    fn recipient_one() -> AccountId {
+        return AccountId::parse(
+            // Source-pinned by the deterministic renderer.
+            "@@RECIPIENT_ACCOUNT_ID_1@@",
+        );
+    }
+
+    fn recipient_two() -> AccountId {
+        return AccountId::parse(
+            // Source-pinned by the deterministic renderer.
+            "@@RECIPIENT_ACCOUNT_ID_2@@",
+        );
+    }
+
+    fn recipient_three() -> AccountId {
+        return AccountId::parse(
+            // Source-pinned by the deterministic renderer.
+            "@@RECIPIENT_ACCOUNT_ID_3@@",
+        );
+    }
+
+    fn recipient_four() -> AccountId {
+        return AccountId::parse(
+            // Source-pinned by the deterministic renderer.
+            "@@RECIPIENT_ACCOUNT_ID_4@@",
+        );
+    }
+
+    fn sbd_asset() -> AssetDefinitionId {
+        return AssetDefinitionId::parse("7ZepsJTHCVLKsrFFNZGSRGZgvBhv");
+    }
+
+    fn xor_asset() -> AssetDefinitionId {
+        return AssetDefinitionId::parse("6TEAJqbb8oEPmLncoNiMRbLEK6tw");
+    }
+
+    fn batch_sbd() -> quantity {
+        let quantity amount = 10;
+        return amount;
+    }
+
+    fn min_xor_out() -> quantity {
+        let quantity amount = 4;
+        return amount;
+    }
+
+    fn max_xor_out() -> quantity {
+        let quantity amount = 100;
+        return amount;
+    }
+
+    // This is the wrapper's only public mutating entrypoint. The authority is
+    // the source-pinned contract subject, which has no signing key; deployment
+    // lifecycle derives its selector permission only for that same subject.
+    kotoage fn autonomous_validation_fee_tick() -> quantity authorize("CanInvokeContractEntrypoint") {
+        let vault = payout_vault();
+        require(context::authority() == vault, AutonomousPayoutError::InvalidInvocationAuthority);
+        require(context::seiyaku_subject() == vault, AutonomousPayoutError::InvalidContractSubject);
+        let sbd = sbd_asset();
+        let xor = xor_asset();
+        let sbd_before = ledger::asset::balance(vault, sbd);
+        if sbd_before < batch_sbd() {
+            return zero_quantity();
+        }
+        // A conservative liquidity precheck avoids a nested call when the pinned
+        // pool vault cannot satisfy even the minimum output. The pool remains the
+        // authoritative reserve/slippage checker.
+        if ledger::asset::balance(pool_vault(), xor) < min_xor_out() {
+            return zero_quantity();
+        }
+        let xor_before = ledger::asset::balance(vault, xor);
+        let amount_out = contract::invoke(
+            contract: pool_contract(),
+            entrypoint: "swap_exact_in_quote_public",
+            returns: "quantity",
+            amount_in: batch_sbd(),
+            min_out: min_xor_out(),
+        );
+        require(amount_out >= min_xor_out(), AutonomousPayoutError::XorOutputBelowBound);
+        require(amount_out <= max_xor_out(), AutonomousPayoutError::XorOutputAboveBound);
+        require(
+            ledger::asset::balance(vault, sbd) + batch_sbd() == sbd_before,
+            AutonomousPayoutError::InvalidSbdDebit,
+        );
+        require(
+            ledger::asset::balance(vault, xor) == xor_before + amount_out,
+            AutonomousPayoutError::InvalidXorCredit,
+        );
+        let share = amount_out / 4;
+        require(share * 4 == amount_out, AutonomousPayoutError::UnequalValidatorShares);
+        ledger::asset::transfer_batch(
+            (vault, recipient_one(), xor, share),
+            (vault, recipient_two(), xor, share),
+            (vault, recipient_three(), xor, share),
+            (vault, recipient_four(), xor, share),
+        );
+        require(
+            ledger::asset::balance(vault, xor) == xor_before,
+            AutonomousPayoutError::InvalidXorCredit,
+        );
+        return amount_out;
+    }
+}

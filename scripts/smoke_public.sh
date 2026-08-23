@@ -13,12 +13,42 @@ case "$public_env" in
     ;;
 esac
 
+require_positive_json_number_setting() {
+  local name="$1"
+  local value="$2"
+  if ! jq -en --argjson value "$value" '$value | type == "number" and . > 0' >/dev/null 2>&1; then
+    echo "$name must be a positive JSON number; got '$value'" >&2
+    exit 1
+  fi
+}
+
+pool_smoke_swap_in="${SORASWAP_POOL_SMOKE_SWAP_IN:-1500}"
+assert_bootstrap_state="${SORASWAP_ASSERT_BOOTSTRAP_STATE:-0}"
+rwa_release_enabled="$(soraswap_rwa_release_enabled_setting_for_env "$public_env")" || exit 1
+rwa_release_enabled_json="$(soraswap_rwa_release_enabled_json_for_env "$public_env")" || exit 1
+require_positive_json_number_setting "SORASWAP_POOL_SMOKE_SWAP_IN" "$pool_smoke_swap_in"
+soraswap_require_binary_integer_setting "SORASWAP_ASSERT_BOOTSTRAP_STATE" "$assert_bootstrap_state" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_SMOKE_GAS_LIMIT" "$SORASWAP_SMOKE_GAS_LIMIT" || exit 1
+
 config="$(client_config_or_default "$public_env")"
 ensure_client "$config"
 ensure_authority "$config"
 prepare_env_chain_state "$public_env" "$config"
+chain_fingerprint_json="$(chain_fingerprint_json_or_null)"
 ensure_public_signer_ready "$config" "$SORASWAP_AUTHORITY" readonly
+snapshot_check_json="$(public_current_deploy_snapshot_check_json "$public_env" "$chain_fingerprint_json")"
+if [[ "$(jq -r '.status // empty' <<<"$snapshot_check_json")" != "completed" ]]; then
+  echo "$public_env readonly smoke blocked: deploy snapshot evidence is stale" >&2
+  jq -r '.output // empty' <<<"$snapshot_check_json" | soraswap_redact_sensitive_text >&2
+  exit 1
+fi
 ensure_deployment_records_current "$public_env" "$config"
+snapshot_check_json="$(public_current_deploy_snapshot_check_json "$public_env" "$chain_fingerprint_json")"
+if [[ "$(jq -r '.status // empty' <<<"$snapshot_check_json")" != "completed" ]]; then
+  echo "$public_env readonly smoke blocked: deploy snapshot evidence is stale" >&2
+  jq -r '.output // empty' <<<"$snapshot_check_json" | soraswap_redact_sensitive_text >&2
+  exit 1
+fi
 
 n3x_hub_contract="$(deployed_contract_id_for_env "$public_env" n3x.n3x_hub)"
 n3x_hub_dataspace="$(deployed_contract_dataspace_for_env "$public_env" n3x.n3x_hub)"
@@ -27,6 +57,7 @@ dlmm_pool_dataspace="$(deployed_contract_dataspace_for_env "$public_env" dlmm.dl
 dlmm_router_contract="$(deployed_contract_id_for_env "$public_env" dlmm.dlmm_router)"
 dlmm_router_dataspace="$(deployed_contract_dataspace_for_env "$public_env" dlmm.dlmm_router)"
 batch_epoch_auction_contract="$(deployed_contract_id_for_env "$public_env" batch_amm.epoch_auction)"
+launchpad_sale_factory_contract="$(deployed_contract_id_for_env "$public_env" launchpad.sale_factory)"
 risk_vault_contract="$(deployed_contract_id_for_env "$public_env" risk.risk_vault)"
 perps_engine_contract="$(deployed_contract_id_for_env "$public_env" perps.perps_engine)"
 options_manager_contract="$(deployed_contract_id_for_env "$public_env" options.manager)"
@@ -45,11 +76,26 @@ escrow_conditional_escrow_contract="$(deployed_contract_id_for_env "$public_env"
 
 report_dir="$(deployments_dir_for_env "$public_env")"
 timestamp="$(env TZ=UTC date '+%Y%m%dT%H%M%SZ')"
-latest_report="$report_dir/smoke.latest.json"
-timestamped_report="$report_dir/smoke.${timestamp}.json"
-mkdir -p "$report_dir"
+latest_report="${SORASWAP_SMOKE_LATEST_REPORT:-$report_dir/smoke.latest.json}"
+timestamped_report="${SORASWAP_SMOKE_TIMESTAMPED_REPORT:-$report_dir/smoke.${timestamp}.json}"
+mkdir -p "$report_dir" "$(dirname "$latest_report")" "$(dirname "$timestamped_report")"
+report_json_tmp_dir=""
+
+cleanup_report_json_tmp_dir() {
+  [[ -z "${report_json_tmp_dir:-}" ]] || rm -rf "$report_json_tmp_dir"
+}
+
+trap cleanup_report_json_tmp_dir EXIT
 
 contracts_json="$(deployment_records_json_for_env "$public_env")"
+contracts_snapshot_json='null'
+deploy_snapshot_json='null'
+if [[ -f "$report_dir/contracts.latest.json" ]]; then
+  contracts_snapshot_json="$(cat "$report_dir/contracts.latest.json")"
+fi
+if [[ -f "$report_dir/deploy.latest.json" ]]; then
+  deploy_snapshot_json="$(cat "$report_dir/deploy.latest.json")"
+fi
 
 xor_id="$SORASWAP_XOR_ASSET_DEFINITION_ID"
 if resolved_xor_id="$(asset_definition_id_for_alias "$config" "$SORASWAP_BASE_ASSET_ALIAS" 2>/dev/null)"; then
@@ -98,8 +144,12 @@ for contract_key in "${contract_keys[@]}"; do
     manifest_verified=$(( manifest_verified + 1 ))
   fi
 
-  if ! live_contract_deployment_from_record "$config" "$record_path" "$expected_hash" >/dev/null; then
+  validation_error=""
+  if ! validation_error="$(live_contract_deployment_from_record "$config" "$record_path" "$expected_hash" "$public_env" 2>&1 >/dev/null)"; then
     echo "deployment record could not be revalidated on current chain: $contract_key" >&2
+    if [[ -n "$validation_error" ]]; then
+      printf '%s\n' "$(soraswap_redact_sensitive_text "$validation_error")" >&2
+    fi
     exit 1
   fi
 done
@@ -115,7 +165,7 @@ pool_bin_liquidity_cap="${SORASWAP_POOL_BIN_LIQUIDITY_CAP:-0}"
 pool_position_base="${SORASWAP_POOL_POSITION_BASE:-500}"
 pool_position_quote="${SORASWAP_POOL_POSITION_QUOTE:-500}"
 router_bin_quote_in="${SORASWAP_ROUTER_BIN_QUOTE_IN:-10}"
-pool_quote_amount_in="${SORASWAP_POOL_SMOKE_SWAP_IN:-1500}"
+pool_quote_amount_in="$pool_smoke_swap_in"
 soraswap_launch_vault_id="${SORASWAP_LAUNCH_VAULT_ID:-n3x_savings}"
 soraswap_launch_operator_service="${SORASWAP_LAUNCH_OPERATOR_SERVICE:-solver}"
 soraswap_launch_margin_market_id="${SORASWAP_LAUNCH_MARGIN_MARKET_ID:-portfolio}"
@@ -261,7 +311,7 @@ decoded_state_ints="$(jq -c '. + $add' \
     soraswap_dlmm_pool_bin_liquidity_cap)" \
   <<<"$decoded_state_ints")"
 
-if [[ "${SORASWAP_ASSERT_BOOTSTRAP_STATE:-0}" == "1" ]]; then
+if [[ "$assert_bootstrap_state" == "1" ]]; then
   expected_active_bin="${SORASWAP_POOL_ACTIVE_BIN:-0}"
   expected_seed_base=$(( ${SORASWAP_POOL_SEED_BASE:-1000} + pool_position_base ))
   expected_seed_quote=$(( ${SORASWAP_POOL_SEED_QUOTE:-1000} + pool_position_quote ))
@@ -308,16 +358,32 @@ if [[ "${SORASWAP_ASSERT_BOOTSTRAP_STATE:-0}" == "1" ]]; then
   fi
 fi
 
+# Preserve application-level view failures as JSON evidence in public reports.
+contract_view_result_json() {
+  contract_view_report_result_json "$@"
+}
+
+report_json_tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/soraswap-smoke-readonly-report-json.XXXXXX")"
+contracts_snapshot_json_path="$report_json_tmp_dir/contracts_snapshot.json"
+deploy_snapshot_json_path="$report_json_tmp_dir/deploy_snapshot.json"
+printf '%s' "$contracts_snapshot_json" >"$contracts_snapshot_json_path"
+printf '%s' "$deploy_snapshot_json" >"$deploy_snapshot_json_path"
+
 report_json="$(jq -n \
   --arg generated_at "$timestamp" \
+  --arg environment "$public_env" \
   --arg authority "$SORASWAP_AUTHORITY" \
-  --arg client_config "$config" \
+  --arg client_config "$(soraswap_display_path "$config")" \
   --arg base_asset_alias "$SORASWAP_BASE_ASSET_ALIAS" \
   --arg xor_asset_id "$xor_id" \
   --arg usdt_asset_id "$usdt_id" \
-  --argjson chain_fingerprint "${SORASWAP_CHAIN_FINGERPRINT_JSON:-null}" \
+  --argjson chain_fingerprint "$chain_fingerprint_json" \
+  --argjson rwa_release_enabled "$rwa_release_enabled_json" \
+  --argjson snapshot_check "$snapshot_check_json" \
   --argjson manifest_verified "$manifest_verified" \
   --argjson contracts "$contracts_json" \
+  --slurpfile contracts_snapshot_file "$contracts_snapshot_json_path" \
+  --slurpfile deploy_snapshot_file "$deploy_snapshot_json_path" \
   --argjson n3x_quote_result "$(contract_view_result_json "$n3x_quote_view_json")" \
   --argjson router_quote_result "$(contract_view_result_json "$router_quote_view_json")" \
   --argjson router_select_result "$(contract_view_result_json "$router_select_view_json")" \
@@ -369,16 +435,36 @@ report_json="$(jq -n \
   --argjson conditional_escrow_state_result "$(contract_view_result_json "$conditional_escrow_state_view_json")" \
   --argjson decoded_state_ints "$decoded_state_ints" \
   --argjson trigger_completion_probe "$trigger_completion_probe_json" \
-  '{
+  '($contracts_snapshot_file[0] // {}) as $contracts_snapshot
+  | ($deploy_snapshot_file[0] // {}) as $deploy_snapshot
+  | {
+    status: "completed",
     generated_at: $generated_at,
+    environment: $environment,
     authority: $authority,
     client_config: $client_config,
     base_asset_alias: $base_asset_alias,
     xor_asset_id: $xor_asset_id,
     usdt_asset_id: $usdt_asset_id,
+    release_modes: {
+      rwa: $rwa_release_enabled
+    },
     chain_fingerprint: $chain_fingerprint,
+    snapshot_check: $snapshot_check,
     manifest_verified_count: $manifest_verified,
     contracts: $contracts,
+    contracts_snapshot: {
+      generated_at: ($contracts_snapshot.generated_at // null),
+      status: ($contracts_snapshot.status // null),
+      environment: ($contracts_snapshot.environment // null),
+      chain_fingerprint: ($contracts_snapshot.chain_fingerprint // null)
+    },
+    deploy_snapshot: {
+      generated_at: ($deploy_snapshot.generated_at // null),
+      environment: ($deploy_snapshot.environment // null),
+      chain_fingerprint: ($deploy_snapshot.chain_fingerprint // null),
+      status: ($deploy_snapshot.status // null)
+    },
     trigger_evidence: ($trigger_registration_evidence + {
       completion_probe: $trigger_completion_probe
     }),
@@ -435,7 +521,8 @@ report_json="$(jq -n \
     decoded_state_ints: $decoded_state_ints
   }')"
 
-printf '%s\n' "$report_json" > "$latest_report"
-printf '%s\n' "$report_json" > "$timestamped_report"
+soraswap_write_json_report_pair "$report_json" "$latest_report" "$timestamped_report"
+cleanup_report_json_tmp_dir
+report_json_tmp_dir=""
 
-echo "$public_env smoke report: $timestamped_report"
+echo "$public_env smoke report: $(soraswap_display_path "$timestamped_report")"

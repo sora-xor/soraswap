@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import base64
 import json
 import os
 import signal
@@ -27,6 +28,12 @@ spec.loader.exec_module(contract_console)
 
 
 BRIDGE_ADDRESS = "tairac1fixturebridge00000000000000000000000000000000000"
+FIXTURE_GENERATED_AT = "20260407T000000Z"
+BRIDGE_CODE_HASH = "1" * 64
+BRIDGE_ABI_HASH = "2" * 64
+BRIDGE_DEPLOY_NONCE = 1
+BRIDGE_TEST_PRIVATE_KEY = "8026209d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
+BRIDGE_TEST_PUBLIC_KEY = "ed0120d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
@@ -47,34 +54,46 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
     (root / "ui").mkdir(parents=True, exist_ok=True)
     os.symlink(REPO_ROOT / "ui" / "contract_console", root / "ui" / "contract_console", target_is_directory=True)
 
+    bridge_source = root / "contracts" / "bridge" / "sccp_bridge.ko"
+    bridge_source.parent.mkdir(parents=True, exist_ok=True)
+    bridge_source.write_text("// fixture bridge contract\n", encoding="utf-8")
+
     environment_root = root / "deployments" / "fixture"
+    chain_fingerprint = {
+        "generated_at": FIXTURE_GENERATED_AT,
+        "environment": "fixture",
+        "torii_url": torii_url,
+        "chain": "fixture-chain",
+        "block_1_hash": "fixture-block-1",
+    }
     write_json(
         environment_root / "chain.latest.json",
-        {
-            "torii_url": torii_url,
-            "chain": "fixture-chain",
-            "block_1_hash": "fixture-block-1",
-        },
+        chain_fingerprint,
     )
     write_json(
         environment_root / "contracts.latest.json",
         {
-            "generated_at": "20260407T000000Z",
-            "chain_fingerprint": {
-                "torii_url": torii_url,
-                "chain": "fixture-chain",
-                "block_1_hash": "fixture-block-1",
-            },
+            "generated_at": FIXTURE_GENERATED_AT,
+            "status": "completed",
+            "environment": "fixture",
+            "chain_fingerprint": chain_fingerprint,
             "contracts": [
                 {
                     "contract_key": "bridge.sccp_bridge",
+                    "environment": "fixture",
                     "contract_source": "contracts/bridge/sccp_bridge.ko",
                     "dataspace": "universal",
                     "contract_address": BRIDGE_ADDRESS,
-                    "deploy_nonce": 1,
+                    "deploy_nonce": BRIDGE_DEPLOY_NONCE,
+                    "code_hash_hex": BRIDGE_CODE_HASH,
+                    "abi_hash_hex": BRIDGE_ABI_HASH,
                     "instance": {
                         "verification": "transaction_and_manifest",
                         "tx_hash_hex": "11" * 32,
+                        "contract_address": BRIDGE_ADDRESS,
+                        "deploy_nonce": BRIDGE_DEPLOY_NONCE,
+                        "code_hash_hex": BRIDGE_CODE_HASH,
+                        "abi_hash_hex": BRIDGE_ABI_HASH,
                     },
                 }
             ],
@@ -83,6 +102,11 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
     write_json(
         environment_root / "bridge.sccp_bridge.manifest.json",
         {
+            "generated_at": FIXTURE_GENERATED_AT,
+            "environment": "fixture",
+            "contract_key": "bridge.sccp_bridge",
+            "code_hash": "hash:" + BRIDGE_CODE_HASH,
+            "abi_hash": "hash:" + BRIDGE_ABI_HASH,
             "entrypoints": [
                 {"name": "listing_config", "kind": {"kind": "View"}, "params": [], "return_type": "tuple"},
                 {"name": "mirror_asset", "kind": {"kind": "View"}, "params": [{"name": "asset_key", "type_name": "String"}], "return_type": "tuple"},
@@ -130,7 +154,7 @@ class MockToriiState:
             {"hash": "aa" * 32, "status": "Committed", "kind": "seeded"},
         ]
         self.status_by_hash: dict[str, dict[str, Any]] = {
-            "aa" * 32: {"status": {"kind": "Committed"}},
+            "aa" * 32: {"status": {"kind": "Committed"}, "summary": "Committed", "diagnostics": []},
         }
 
     def register_submission(self, kind: str, request: dict[str, Any], *, terminal: bool = True) -> str:
@@ -139,7 +163,7 @@ class MockToriiState:
             tx_hash_hex = f"{self.submission_counter:064x}"
             self.history_items.insert(0, {
                 "hash": tx_hash_hex,
-                "status": "Committed" if terminal else "Pending",
+                "status": "Committed" if terminal else "Queued",
                 "kind": kind,
                 "entrypoint": request.get("entrypoint"),
             })
@@ -148,13 +172,17 @@ class MockToriiState:
                 self.status_by_hash[tx_hash_hex] = {
                     "status": {
                         "kind": "Committed",
-                    }
+                    },
+                    "summary": "Committed",
+                    "diagnostics": [],
                 }
             else:
                 self.status_by_hash[tx_hash_hex] = {
                     "status": {
-                        "kind": "Pending",
-                    }
+                        "kind": "Queued",
+                    },
+                    "summary": "Queued",
+                    "diagnostics": [],
                 }
             return tx_hash_hex
 
@@ -182,33 +210,87 @@ class MockToriiHandler(BaseHTTPRequestHandler):
                 self,
                 HTTPStatus.OK,
                 {
-                    "counterparties": [
+                    "version": 1,
+                    "registry_revision": "0x" + ("11" * 32),
+                    "registry_path": "/v1/sccp/registry",
+                    "message_bundle_path": "/v1/sccp/proofs/message/{message_id}",
+                    "proof_request_path": "/v1/sccp/proof-requests/{message_id}",
+                    "recent_messages_path": "/v1/sccp/messages/recent",
+                    "registry_limits": {
+                        "max_governed_lanes": 16,
+                        "max_live_governed_routes": 64,
+                        "max_live_routes_per_lane": 8,
+                        "max_retained_routes_per_lane": 64,
+                        "max_retained_native_trust_anchors_per_lane": 4096,
+                    },
+                    "resource_limits": {
+                        "max_proofs_per_transaction": 1,
+                        "max_proofs_per_block": 4,
+                    },
+                    "proof_submit_path": "/v1/bridge/proofs/submit",
+                    "native_message_submit_path": "/v1/bridge/messages",
+                },
+            )
+            return
+        if parsed.path == "/v1/sccp/registry":
+            json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "version": 1,
+                    "lanes": [
                         {
-                            "domain": 1000,
-                            "chain": "eth-sepolia",
-                            "counterparty_account_codec_key": "evm_hex",
-                            "message_backend": "sccp",
-                            "registry_backend": "sccp",
+                            "lane_id": {"source": "ethereum_sepolia", "target": "sora_taira"},
+                            "native_trust_anchors": [],
+                            "current_native_trust_anchor_hash": None,
+                            "routes": [{
+                                "lane_id": {"source": "ethereum_sepolia", "target": "sora_taira"},
+                                "route_id": "fixture_lane",
+                                "asset_key": "xor",
+                                "revision": 1,
+                                "activation": "bidirectional",
+                            }],
                         }
                     ]
                 },
             )
             return
-        if parsed.path == "/v1/sccp/manifests":
+        if parsed.path == "/v1/sccp/messages/recent":
+            message_id = "67" * 32
             json_response(
                 self,
                 HTTPStatus.OK,
                 {
-                    "manifests": [
-                        {
-                            "counterparty_domain": 1000,
-                            "verifier_target": "0xFixtureVerifier",
-                            "finality_model": "safe_block_depth",
-                            "submission_template": {
-                                "encoding": "abi_json",
-                            },
-                        }
-                    ]
+                    "items": [{
+                        "height": 42,
+                        "message_id_hex": message_id,
+                        "kind": "transfer",
+                        "source_profile": "sora-taira",
+                        "target_profile": "ethereum-sepolia",
+                        "destination_binding_hash": "0x" + ("56" * 32),
+                        "route_configuration_hash": "0x" + ("34" * 32),
+                        "target_domain": 2,
+                        "asset_id": "xor",
+                        "route_id": "fixture_lane",
+                        "amount": "10",
+                        "payload_projection": {"Transfer": {
+                            "version": 1,
+                            "source_domain": 0,
+                            "dest_domain": 2,
+                            "nonce": 7,
+                            "route_revision": 1,
+                            "asset_home_domain": 0,
+                            "asset_id": {"CanonicalText": {"value": "xor"}},
+                            "amount": 10,
+                            "sender": {"CanonicalText": {"value": "fixture"}},
+                            "recipient": {"EvmAddress20": {"bytes": [17] * 20}},
+                            "route_id": {"CanonicalText": {"value": "fixture_lane"}},
+                        }},
+                        "links": {
+                            "bundle_path": f"/v1/sccp/proofs/message/{message_id}",
+                            "proof_request_path": f"/v1/sccp/proof-requests/{message_id}",
+                        },
+                    }]
                 },
             )
             return
@@ -223,7 +305,7 @@ class MockToriiHandler(BaseHTTPRequestHandler):
                     "commitment": {
                         "version": 1,
                         "kind": "Transfer",
-                        "target_domain": 1000,
+                        "target_domain": 1,
                         "message_id": message_id,
                         "payload_hash": "02" * 32,
                         "parliament_certificate_hash": None,
@@ -233,7 +315,7 @@ class MockToriiHandler(BaseHTTPRequestHandler):
                         "Transfer": {
                             "version": 1,
                             "source_domain": 0,
-                            "dest_domain": 1000,
+                            "dest_domain": 1,
                             "nonce": 7,
                             "asset_home_domain": 0,
                             "asset_id_codec": 1,
@@ -251,45 +333,30 @@ class MockToriiHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        if parsed.path.startswith("/v1/sccp/artifacts/message/"):
+        if parsed.path.startswith("/v1/sccp/proof-requests/"):
             json_response(
                 self,
                 HTTPStatus.OK,
                 {
-                    "counterparty_domain": 1000,
-                    "submission_package": {
-                        "verifier_target": "0xFixtureVerifier",
-                        "finality_checkpoint": "777",
-                    },
-                    "bundle": {
-                        "payload": {
-                            "chain": "eth-sepolia",
-                        }
-                    },
-                },
-            )
-            return
-        if parsed.path.startswith("/v1/sccp/jobs/message/"):
-            json_response(
-                self,
-                HTTPStatus.OK,
-                {
-                    "counterparty_domain": 1000,
-                    "chain": "eth-sepolia",
-                    "payload_kind": "Transfer",
-                    "submission_package": {
-                        "verifier_target": "0xFixtureVerifier",
-                        "finality_checkpoint": "888",
-                    },
-                    "submission_template": {
-                        "encoding": "abi_json",
-                    },
+                    "version": 1,
+                    "backend": "ethereum_groth16_bn254",
+                    "source_network": "sora_taira",
+                    "target_network": "ethereum_sepolia",
+                    "verifier_key_hash": "03" * 32,
+                    "statement_hash": "04" * 32,
+                    "request_hash": "05" * 32,
                 },
             )
             return
         if parsed.path == "/v1/pipeline/transactions/status":
             tx_hash_hex = str((query.get("hash") or [""])[0])
-            payload = self.state.status_by_hash.get(tx_hash_hex, {"status": {"kind": "Committed"}})
+            requested_scope = str((query.get("scope") or ["auto"])[0])
+            scope = "global" if requested_scope == "auto" else requested_scope
+            payload = dict(self.state.status_by_hash.get(
+                tx_hash_hex,
+                {"status": {"kind": "Committed"}, "summary": "Committed", "diagnostics": []},
+            ))
+            payload.update({"hash": tx_hash_hex, "scope": scope, "resolved_from": "state"})
             json_response(self, HTTPStatus.OK, payload)
             return
         if parsed.path == "/v1/transactions/history":
@@ -320,15 +387,95 @@ class MockToriiHandler(BaseHTTPRequestHandler):
             payload = request.get("payload") if isinstance(request, dict) else {}
             terminal = not (isinstance(payload, dict) and payload.get("route") == "timeout_route")
             tx_hash_hex = self.state.register_submission("contract_call", request, terminal=terminal)
-            json_response(self, HTTPStatus.OK, {"submitted": True, "tx_hash_hex": tx_hash_hex, "status": "Pending"})
+            json_response(self, HTTPStatus.OK, {"submitted": True, "tx_hash_hex": tx_hash_hex})
             return
-        if parsed.path == "/v1/bridge/proofs/submit":
-            tx_hash_hex = self.state.register_submission("bridge_proof_submit", request)
-            json_response(self, HTTPStatus.OK, {"submitted": True, "tx_hash_hex": tx_hash_hex, "status": "Pending"})
-            return
-        if parsed.path == "/v1/bridge/messages":
-            tx_hash_hex = self.state.register_submission("bridge_message_submit", request)
-            json_response(self, HTTPStatus.OK, {"submitted": True, "tx_hash_hex": tx_hash_hex, "status": "Pending"})
+        if parsed.path in {"/v1/bridge/proofs/submit", "/v1/bridge/messages"}:
+            proof_field = (
+                "destination_proof_b64"
+                if parsed.path == "/v1/bridge/proofs/submit"
+                else "native_proof_b64"
+            )
+            preparation_keys = {"authority", proof_field}
+            submission_keys = preparation_keys | {
+                "transaction_payload_b64",
+                "signature_b64",
+                "creation_time_ms",
+            }
+            request_keys = frozenset(request)
+            if request_keys not in {frozenset(preparation_keys), frozenset(submission_keys)}:
+                json_response(self, HTTPStatus.BAD_REQUEST, {"code": "closed_dto_violation"})
+                return
+            transaction = json.dumps(
+                {
+                    "path": parsed.path,
+                    "authority": request["authority"],
+                    proof_field: request[proof_field],
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            transaction_payload_b64 = base64.b64encode(transaction).decode("ascii")
+            signing_message_b64 = base64.b64encode(
+                contract_console.iroha_transaction_signing_message(transaction)
+            ).decode("ascii")
+            creation_time_ms = 1_750_000_000_001
+            response_metadata = {
+                "payload_kind": "transfer",
+                "message_id_hex": "12" * 32,
+                "backend": (
+                    "bridge/sccp/groth16-bn254-v1"
+                    if proof_field == "destination_proof_b64"
+                    else "bridge/sccp/native/ethereum-pos-v1"
+                ),
+                "counterparty_domain": 2,
+                "counterparty_chain": "ethereum-sepolia",
+                "route_configuration_hash_hex": "34" * 32,
+                "range_start_height": 91,
+                "range_end_height": 91,
+                "creation_time_ms": creation_time_ms,
+            }
+            if request_keys == frozenset(preparation_keys):
+                json_response(
+                    self,
+                    HTTPStatus.OK,
+                    {
+                        **response_metadata,
+                        "submitted": False,
+                        "tx_hash_hex": None,
+                        "transaction_payload_b64": transaction_payload_b64,
+                        "signing_message_b64": signing_message_b64,
+                    },
+                )
+                return
+            try:
+                signature = contract_console.decode_canonical_base64(
+                    request["signature_b64"],
+                    "signature_b64",
+                    maximum=64,
+                )
+            except ValueError:
+                json_response(self, HTTPStatus.BAD_REQUEST, {"code": "invalid_signature"})
+                return
+            if (
+                request["transaction_payload_b64"] != transaction_payload_b64
+                or request["creation_time_ms"] != creation_time_ms
+                or len(signature) != 64
+            ):
+                json_response(self, HTTPStatus.BAD_REQUEST, {"code": "detached_payload_mismatch"})
+                return
+            kind = "bridge_proof_submit" if proof_field == "destination_proof_b64" else "bridge_message_submit"
+            tx_hash_hex = self.state.register_submission(kind, request)
+            json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    **response_metadata,
+                    "submitted": True,
+                    "tx_hash_hex": tx_hash_hex,
+                    "transaction_payload_b64": None,
+                    "signing_message_b64": None,
+                },
+            )
             return
 
         json_response(self, HTTPStatus.NOT_FOUND, {"code": "not_found"})
@@ -357,9 +504,9 @@ def main() -> int:
         environment="fixture",
         config_path=fixture_root / "config" / "fixture.client.toml",
         authority="i105fixtureoperator@universal",
-        torii_url="http://ignored-by-deployment.invalid",
-        private_key="802620fixture",
-        public_key="ed0120fixture",
+        torii_url=upstream_url,
+        private_key=BRIDGE_TEST_PRIVATE_KEY,
+        public_key=BRIDGE_TEST_PUBLIC_KEY,
         basic_auth=None,
         warnings=[],
         source="explicit",

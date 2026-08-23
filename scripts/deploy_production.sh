@@ -1,5 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
+SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
 export SORASWAP_PUBLIC_ENV=production
-exec "$(cd "$(dirname "$0")" && pwd)/deploy_public.sh" "$@"
+0="$SCRIPT_ROOT/deploy_public.sh"
+source "$SCRIPT_ROOT/deploy_public.sh" "$@"

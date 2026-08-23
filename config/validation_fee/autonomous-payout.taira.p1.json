@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "pool_contract_address": "tairac1qyqqqqqqqqqqqqymmv4lktrp3r7xyq3jmzk89sy7hyvzdwssatnvg",
+  "pool_vault_account_id": "testuﾛ1PcﾀkｼﾉpﾔﾖｸPUCヰrｻjSUzﾕhZGSAｳJﾐｹﾜrﾄﾗﾓｿxS8QRALXF",
+  "payout_vault_account_id": "testuﾛ1NvVﾚｼLsﾏbﾓ3Hcｳｿ5ｳﾑﾛsｾﾑﾀTDyEｼUtQKｼｾﾀｱﾇx8UYV397",
+  "sbd_asset_definition_id": "7ZepsJTHCVLKsrFFNZGSRGZgvBhv",
+  "xor_asset_definition_id": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+  "batch_sbd": "10",
+  "min_xor_out": "4",
+  "max_xor_out": "100",
+  "recipient_account_ids": [
+    "testﾜヰ8ｽuimdh9FﾂｦUｸﾈbﾕﾆヱMUYｴGｷﾙｹﾐRヱbﾐｷwﾄ6ﾃdDLPQﾋW496uﾙﾜFpﾈtHd4Hﾙﾎ45M1L5",
+    "testﾜヰ8ｽﾙAQAｴﾆﾋﾍﾈﾋuﾙx1YｳBeﾌヱGﾕrﾔﾉｼｷU2ﾄｶUﾋdﾇｶiｻﾘヱnﾎﾀｦhﾛ6KApﾄｹtﾌmfWUGVEJ8",
+    "testﾜヰ8ｽXﾌﾊﾑﾄxｴｴｷvﾚbWﾅ8Vﾄヱ6odｦvｸﾋm5xﾉｿBFkwｸｺrﾍtﾖﾐヰQﾚTヱYﾏﾂYGGdHNkP9H4CNY",
+    "testﾜヰ8ｽWﾔA8ﾋNbXﾀKﾛﾏﾐﾘrﾗWｱhﾁRNZLﾅAEiQｹﾎJﾈWzUﾛh2vﾑazﾎ4ﾑﾇﾄWﾋﾖ7ﾐﾎﾂｺ7M9A88H"
+  ]
+}

@@ -7,8 +7,12 @@ const CALL_TX_HASH = "c0".repeat(32);
 const PROOF_TX_HASH = "d1".repeat(32);
 const MESSAGE_TX_HASH = "e2".repeat(32);
 const LOOKUP_MESSAGE_ID = "ab".repeat(32);
+const DESTINATION_PROOF_B64 = Buffer.from("destination-proof-fixture").toString("base64");
+const NATIVE_PROOF_B64 = Buffer.from("native-proof-fixture").toString("base64");
 const RECENT_REQUESTS_KEY = "soraswap.contractConsole.recentRequests.v1";
 const TRANSACTION_STATUSES_KEY = "soraswap.contractConsole.transactionStatuses.v1";
+const BRIDGE_BOOKMARKS_KEY = "soraswap.contractConsole.bridgeBookmarks.v1";
+const PROOF_LOOKUPS_KEY = "soraswap.contractConsole.proofLookups.v1";
 
 function bridgeEntrypoints() {
   return [
@@ -124,7 +128,8 @@ function makeBridgeContract(address, manifestPath) {
 
 function createCatalog() {
   return {
-    repo_root: "/Users/takemiyamakoto/dev/soraswap",
+    repo_name: "soraswap",
+    repo_root: "soraswap",
     environments: [
       {
         name: "local",
@@ -173,7 +178,7 @@ function createCatalog() {
         },
         signer: {
           configured: true,
-          source: "cli:/tmp/taira.client.toml",
+          source: "cli:taira.client.toml",
           call_enabled: true,
           authority: "i105testnetbridgeoperator@universal",
           warnings: [],
@@ -191,7 +196,7 @@ function createCatalog() {
         },
         signer: {
           configured: true,
-          source: "cli:/tmp/production.client.toml",
+          source: "cli:production.client.toml",
           call_enabled: true,
           authority: "i105productionbridgeoperator@universal",
           warnings: [],
@@ -207,12 +212,13 @@ function createCatalog() {
 function createAdversarialCatalog() {
   const catalog = createCatalog();
   const longToken = "x".repeat(420);
-  catalog.repo_root = `/Users/takemiyamakoto/dev/soraswap/${longToken}`;
+  catalog.repo_name = `soraswap-${longToken}`;
+  catalog.repo_root = `soraswap-${longToken}`;
   const local = catalog.environments[0];
   local.name = `local-${longToken}`;
   local.torii_url = `https://${longToken}.example.invalid/${longToken}`;
   local.chain_fingerprint.chain = `chain-${longToken}`;
-  local.signer.source = `cli:/tmp/${longToken}.client.toml`;
+  local.signer.source = `cli:${longToken}.client.toml`;
   local.signer.authority = `i105${longToken}@universal`;
   local.signer.warnings = [`warning-${longToken}`];
   local.mutation_policy = {
@@ -229,85 +235,53 @@ function createAdversarialCatalog() {
 }
 
 function capabilitiesByEnvironment() {
+  const capabilities = {
+    ok: true,
+    upstream_status: 200,
+    response_json: {
+      version: 1,
+      registry_path: "/v1/sccp/registry",
+      message_bundle_path: "/v1/sccp/proofs/message/{message_id}",
+      proof_request_path: "/v1/sccp/proof-requests/{message_id}",
+      recent_messages_path: "/v1/sccp/messages/recent",
+      proof_submit_path: "/v1/bridge/proofs/submit",
+      native_message_submit_path: "/v1/bridge/messages",
+    },
+  };
   return {
-    local: {
-      ok: true,
-      upstream_status: 200,
-      response_json: {
-        counterparties: [
-          {
-            domain: 1000,
-            chain: "eth-sepolia",
-            counterparty_account_codec_key: "evm_hex",
-            message_backend: "sccp",
-            registry_backend: "sccp",
-          },
-          {
-            domain: 2000,
-            chain: "ton-testnet",
-            counterparty_account_codec_key: "ton_raw",
-            message_backend: "sccp",
-            registry_backend: "sccp",
-          },
-        ],
-      },
-    },
-    testnet: {
-      ok: true,
-      upstream_status: 200,
-      response_json: {
-        counterparties: [
-          {
-            domain: 3000,
-            chain: "solana-devnet",
-            counterparty_account_codec_key: "solana_base58",
-            message_backend: "sccp",
-            registry_backend: "sccp",
-          },
-        ],
-      },
-    },
-    production: {
-      ok: true,
-      upstream_status: 200,
-      response_json: {
-        counterparties: [
-          {
-            domain: 4000,
-            chain: "ethereum-mainnet",
-            counterparty_account_codec_key: "evm_hex",
-            message_backend: "sccp",
-            registry_backend: "sccp",
-          },
-        ],
-      },
-    },
+    local: structuredClone(capabilities),
+    testnet: structuredClone(capabilities),
+    production: structuredClone(capabilities),
   };
 }
 
-function manifestsByEnvironment() {
+function registryLane(target, routeId) {
+  return {
+    lane_id: { source: "sora_taira", target },
+    native_trust_anchors: [],
+    current_native_trust_anchor_hash: null,
+    routes: [
+      {
+        lane_id: { source: "sora_taira", target },
+        route_id: routeId,
+        asset_key: "xor",
+        revision: 1,
+        activation: "bidirectional",
+      },
+    ],
+  };
+}
+
+function registriesByEnvironment() {
   return {
     local: {
       ok: true,
       upstream_status: 200,
       response_json: {
-        manifests: [
-          {
-            counterparty_domain: 1000,
-            verifier_target: "0xVerifierETH",
-            finality_model: "safe_block_depth",
-            submission_template: {
-              encoding: "abi_json",
-            },
-          },
-          {
-            counterparty_domain: 2000,
-            verifier_target: "ton:verifier",
-            finality_model: "light_client",
-            submission_template: {
-              encoding: "boc_json",
-            },
-          },
+        version: 1,
+        lanes: [
+          registryLane("ethereum_sepolia", "eth_lane"),
+          registryLane("tron_nile", "tron_lane"),
         ],
       },
     },
@@ -315,32 +289,16 @@ function manifestsByEnvironment() {
       ok: true,
       upstream_status: 200,
       response_json: {
-        manifests: [
-          {
-            counterparty_domain: 3000,
-            verifier_target: "solana-program:bridge",
-            finality_model: "slot_depth",
-            submission_template: {
-              encoding: "json",
-            },
-          },
-        ],
+        version: 1,
+        lanes: [registryLane("ethereum_sepolia", "eth_testnet_lane")],
       },
     },
     production: {
       ok: true,
       upstream_status: 200,
       response_json: {
-        manifests: [
-          {
-            counterparty_domain: 4000,
-            verifier_target: "0xVerifierMainnet",
-            finality_model: "finalized_block_depth",
-            submission_template: {
-              encoding: "abi_json",
-            },
-          },
-        ],
+        version: 1,
+        lanes: [registryLane("ethereum_mainnet", "eth_mainnet_lane")],
       },
     },
   };
@@ -400,7 +358,7 @@ function proofBundle(messageId) {
       commitment: {
         version: 1,
         kind: "Transfer",
-        target_domain: 1000,
+        target_domain: 1,
         message_id: messageId,
         payload_hash: "02".repeat(32),
         parliament_certificate_hash: null,
@@ -417,7 +375,7 @@ function proofBundle(messageId) {
         Transfer: {
           version: 1,
           source_domain: 0,
-          dest_domain: 1000,
+          dest_domain: 1,
           nonce: 42,
           asset_home_domain: 0,
           asset_id_codec: 1,
@@ -436,42 +394,18 @@ function proofBundle(messageId) {
   };
 }
 
-function proofArtifact() {
+function proofRequest() {
   return {
     ok: true,
     upstream_status: 200,
     response_json: {
-      counterparty_domain: 1000,
-      bundle: {
-        payload: {
-          chain: "eth-sepolia",
-        },
-      },
-      submission_package: {
-        verifier_target: "0xVerifierETH",
-        expected_finality: "safe",
-      },
-    },
-  };
-}
-
-function proofJob() {
-  return {
-    ok: true,
-    upstream_status: 200,
-    response_json: {
-      counterparty_domain: 1000,
-      chain: "eth-sepolia",
-      payload_kind: "Transfer",
-      submission_package: {
-        verifier_target: "0xVerifierETH",
-        finality_checkpoint: "12345",
-      },
-      submission_template: {
-        encoding: "abi_json",
-        verifier_target: "0xVerifierETH",
-        fields: ["commitment_root", "merkle_proof", "finality_proof"],
-      },
+      version: 1,
+      backend: "ethereum_groth16_bn254",
+      source_network: "sora_taira",
+      target_network: "ethereum_sepolia",
+      verifier_key_hash: "04".repeat(32),
+      statement_hash: "05".repeat(32),
+      request_hash: "06".repeat(32),
     },
   };
 }
@@ -496,7 +430,7 @@ async function fulfillJson(route, body, status = 200) {
 async function installApiMocks(page, apiState, overrides = {}) {
   const catalog = overrides.catalog || createCatalog();
   const capabilityMap = overrides.capabilityMap || capabilitiesByEnvironment();
-  const manifestMap = overrides.manifestMap || manifestsByEnvironment();
+  const registryMap = overrides.registryMap || registriesByEnvironment();
   const historyMap = overrides.historyMap || historyByEnvironment();
 
   await page.route("**/api/**", async (route) => {
@@ -520,30 +454,26 @@ async function installApiMocks(page, apiState, overrides = {}) {
       return;
     }
 
-    if (path === "/api/sccp/manifests") {
-      await fulfillJson(route, manifestMap[environment] || manifestMap.local);
+    if (path === "/api/sccp/registry") {
+      await fulfillJson(route, registryMap[environment] || registryMap.local);
       return;
     }
 
-    if (/^\/api\/sccp\/proofs\/message\/[0-9a-f]+$/.test(path)) {
+    if (/^\/api\/sccp\/proofs\/message\/[0-9a-f]{64}$/.test(path)) {
       const messageId = path.split("/").pop();
       await fulfillJson(route, proofBundle(messageId));
       return;
     }
 
-    if (/^\/api\/sccp\/artifacts\/message\/[0-9a-f]+$/.test(path)) {
-      await fulfillJson(route, proofArtifact());
-      return;
-    }
-
-    if (/^\/api\/sccp\/jobs\/message\/[0-9a-f]+$/.test(path)) {
-      await fulfillJson(route, proofJob());
+    if (/^\/api\/sccp\/proof-requests\/[0-9a-f]{64}$/.test(path)) {
+      await fulfillJson(route, proofRequest());
       return;
     }
 
     if (path === "/api/pipeline/transactions/status") {
       const hash = url.searchParams.get("hash");
-      apiState.statusLookups.push({ environment, hash });
+      const scope = url.searchParams.get("scope");
+      apiState.statusLookups.push({ environment, hash, scope });
       if (typeof overrides.statusResponseFactory === "function") {
         await fulfillJson(route, overrides.statusResponseFactory({
           environment,
@@ -556,10 +486,18 @@ async function installApiMocks(page, apiState, overrides = {}) {
         ok: true,
         upstream_status: 200,
         status_kind: "Committed",
+        status_scope: scope,
+        status_summary: "Committed",
+        status_diagnostics: [],
         response_json: {
+          hash,
           status: {
             kind: "Committed",
           },
+          summary: "Committed",
+          diagnostics: [],
+          scope,
+          resolved_from: "state",
         },
       });
       return;
@@ -586,7 +524,7 @@ async function installApiMocks(page, apiState, overrides = {}) {
         views: [
           {
             entrypoint: "mirror_route",
-            response_json: [body.route || "eth_lane", 1000],
+            response_json: [body.route || "eth_lane", 1],
           },
           {
             entrypoint: "route_config",
@@ -611,7 +549,7 @@ async function installApiMocks(page, apiState, overrides = {}) {
         upstream_status: 200,
         submitted: true,
         tx_hash_hex: CALL_TX_HASH,
-        status_kind: "Pending",
+        status_kind: "Queued",
         response_json: {
           accepted: true,
         },
@@ -630,7 +568,14 @@ async function installApiMocks(page, apiState, overrides = {}) {
         upstream_status: 200,
         submitted: true,
         tx_hash_hex: PROOF_TX_HASH,
-        status_kind: "Pending",
+        status_kind: "Queued",
+        detached_signing: {
+          prepared: true,
+          locally_signed: true,
+          submitted: true,
+          private_key_forwarded: false,
+          fallback_used: false,
+        },
         response_json: {
           accepted: true,
         },
@@ -649,7 +594,14 @@ async function installApiMocks(page, apiState, overrides = {}) {
         upstream_status: 200,
         submitted: true,
         tx_hash_hex: MESSAGE_TX_HASH,
-        status_kind: "Pending",
+        status_kind: "Queued",
+        detached_signing: {
+          prepared: true,
+          locally_signed: true,
+          submitted: true,
+          private_key_forwarded: false,
+          fallback_used: false,
+        },
         response_json: {
           accepted: true,
         },
@@ -718,22 +670,22 @@ test("loads catalog, SCCP discovery, and environment-specific history state", as
   await expect(page.locator("#environment-summary")).toContainText("Torii: http://127.0.0.1:8080 (deployment)");
   await expect(page.locator("#environment-summary")).toContainText("Signer: configured (auto:tmp/iroha-localnet/client.toml)");
   await expect(page.locator("#bridge-summary")).toContainText(`Bridge: ${LOCAL_BRIDGE_ADDRESS}`);
-  await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP discovery for local: 2 counterparties, 2 manifests.");
-  await expect(page.locator("#sccp-counterparty-list")).toContainText("eth-sepolia");
+  await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP V1 discovery for local: 2 governed lanes, 2 retained route revisions.");
+  await expect(page.locator("#sccp-counterparty-list")).toContainText("ethereum_sepolia");
   await expect(page.locator("#sccp-counterparty-list")).toContainText("Codec: evm_hex");
 
   await page.locator("#environment-select").selectOption("testnet");
 
   await expect(page.locator("#environment-summary")).toContainText("Torii: https://taira.sora.org (deployment)");
-  await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP discovery for testnet: 1 counterparties, 1 manifests.");
+  await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP V1 discovery for testnet: 1 governed lanes, 1 retained route revisions.");
   await expect(page.locator("#transaction-summary")).toContainText("Remote history unavailable: tx_history_auth_unavailable");
   await expect(page.locator("#bridge-summary")).toContainText(`Bridge: ${TESTNET_BRIDGE_ADDRESS}`);
 
   await page.locator("#environment-select").selectOption("production");
 
   await expect(page.locator("#environment-summary")).toContainText("Torii: https://production.example.invalid (deployment)");
-  await expect(page.locator("#environment-summary")).toContainText("Signer: configured (cli:/tmp/production.client.toml)");
-  await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP discovery for production: 1 counterparties, 1 manifests.");
+  await expect(page.locator("#environment-summary")).toContainText("Signer: configured (cli:production.client.toml)");
+  await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP V1 discovery for production: 1 governed lanes, 1 retained route revisions.");
   await expect(page.locator("#bridge-summary")).toContainText(`Bridge: ${PRODUCTION_BRIDGE_ADDRESS}`);
 });
 
@@ -796,7 +748,7 @@ test("rejects malformed generic and bridge advanced payloads before confirmation
 
   await page.locator("#proof-submit-input").fill("{}");
   await page.locator("#submit-bridge-proof").click();
-  await expect(page.locator("#submission-summary")).toContainText("must include exactly one");
+  await expect(page.locator("#submission-summary")).toContainText("destination_proof_b64 must be non-empty canonical padded base64");
   await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
   expect(apiState.requests).toHaveLength(0);
 
@@ -805,7 +757,7 @@ test("rejects malformed generic and bridge advanced payloads before confirmation
     settlement: "not-an-object",
   }));
   await page.locator("#submit-bridge-message").click();
-  await expect(page.locator("#submission-summary")).toContainText("settlement must be an object");
+  await expect(page.locator("#submission-summary")).toContainText("retired or unsupported fields: message_bundle, settlement");
   await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
   expect(apiState.requests).toHaveLength(0);
 });
@@ -821,8 +773,13 @@ test("sanitizes sensitive fields in signed confirmation payloads", async ({ page
     home_domain: 1,
     decimals: 18,
     private_key: "generic-secret-value",
+    "private-key": "dash-secret-value",
     nested: {
       secret: "nested-secret-value",
+      "private key": "space-secret-value",
+      apiKey: "api-key-secret-value",
+      authorization: "bearer-secret-value",
+      password: "password-secret-value",
       visible: "safe-visible-value",
     },
   }));
@@ -830,20 +787,23 @@ test("sanitizes sensitive fields in signed confirmation payloads", async ({ page
   await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
   await expect(page.locator("#confirmation-payload")).toContainText("safe-visible-value");
   await expect(page.locator("#confirmation-payload")).not.toContainText("generic-secret-value");
+  await expect(page.locator("#confirmation-payload")).not.toContainText("dash-secret-value");
+  await expect(page.locator("#confirmation-payload")).not.toContainText("space-secret-value");
   await expect(page.locator("#confirmation-payload")).not.toContainText("nested-secret-value");
+  await expect(page.locator("#confirmation-payload")).not.toContainText("api-key-secret-value");
+  await expect(page.locator("#confirmation-payload")).not.toContainText("bearer-secret-value");
+  await expect(page.locator("#confirmation-payload")).not.toContainText("password-secret-value");
   await page.locator("#signed-confirmation-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
   expect(apiState.requests).toHaveLength(0);
 
   await page.locator("#proof-submit-input").fill(prettyJsonForTest({
     authority: "i105localbridgeoperator@universal",
     private_key: "bridge-secret-value",
-    message_bundle: proofBundle(LOOKUP_MESSAGE_ID).response_json,
+    destination_proof_b64: DESTINATION_PROOF_B64,
   }));
   await page.locator("#submit-bridge-proof").click();
-  await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
-  await expect(page.locator("#confirmation-payload")).toContainText(LOOKUP_MESSAGE_ID);
-  await expect(page.locator("#confirmation-payload")).not.toContainText("bridge-secret-value");
-  await page.locator("#signed-confirmation-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.locator("#submission-summary")).toContainText("retired or unsupported fields: private_key");
+  await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
   expect(apiState.requests).toHaveLength(0);
 });
 
@@ -852,7 +812,7 @@ test("validates codec-specific recipients and builds bridge requests from labele
 
   await page.locator("#bridge-action-select").selectOption("lock_to_remote");
   await page.locator("#bridge-route-input").fill("eth_lane");
-  await page.locator("#bridge-remote-domain-input").fill("1000");
+  await page.locator("#bridge-remote-domain-input").fill("1");
   await page.locator("#build-bridge-request").click();
 
   await expect(page.locator("#bridge-validation-summary")).toContainText("Transfer Id is required for lock_to_remote.");
@@ -912,7 +872,47 @@ test("persists bridge bookmarks and signed transaction tracking across reloads",
   await expect(page.locator("#transaction-history-list")).toContainText("Committed");
 });
 
-test("renders proof lookups and submission helpers from mocked SCCP responses", async ({ page }) => {
+test("clears browser-local operator state in one action", async ({ page }) => {
+  await bootConsole(page);
+
+  await page.locator("#bridge-route-input").fill("eth_lane");
+  await page.locator("#bridge-message-id-input").fill(LOOKUP_MESSAGE_ID);
+  await page.locator("#bridge-transfer-input").fill("xor_eth_clear_0001");
+  await page.locator("#bridge-asset-key-input").fill("xor");
+  await page.locator("#bookmark-current-bridge").click();
+
+  await page.locator("#proof-lookup-message-id-input").fill(LOOKUP_MESSAGE_ID);
+  await page.locator("#lookup-sccp-all").click();
+  await expect(page.locator("#proof-lookup-summary")).toContainText(`Loaded closed SCCP V1 proof surfaces for ${LOOKUP_MESSAGE_ID}`);
+
+  await page.locator("#bridge-action-select").selectOption("pause_route");
+  await page.locator("#build-bridge-request").click();
+  await page.locator("#run-request").click();
+  await confirmSignedCall(page);
+  await expect(page.locator("#transaction-history-list")).toContainText(`tx_hash_hex: ${CALL_TX_HASH}`);
+  await expect(page.locator("#bookmark-route-select")).toContainText("eth_lane");
+  await expect(page.locator("#recent-proof-lookup-select")).toContainText(LOOKUP_MESSAGE_ID);
+
+  await page.locator("#clear-operator-state").click();
+
+  await expect(page.locator("#request-status")).toContainText("Cleared browser-local operator state.");
+  await expect(page.locator("#transaction-history-list")).toContainText("No signed actions have been recorded in this browser yet.");
+  await expect(page.locator("#bookmark-route-select")).not.toContainText("eth_lane");
+  await expect(page.locator("#recent-proof-lookup-select")).not.toContainText(LOOKUP_MESSAGE_ID);
+  await expect(page.locator("#proof-lookup-summary")).toContainText("Enter a 64-character lowercase nonzero message id");
+
+  await expect.poll(() => readLocalStorageJson(page, RECENT_REQUESTS_KEY)).toEqual([]);
+  await expect.poll(() => readLocalStorageJson(page, TRANSACTION_STATUSES_KEY)).toEqual({});
+  await expect.poll(() => readLocalStorageJson(page, BRIDGE_BOOKMARKS_KEY)).toEqual({
+    assetKeys: [],
+    routes: [],
+    transfers: [],
+    messageIds: [],
+  });
+  await expect.poll(() => readLocalStorageJson(page, PROOF_LOOKUPS_KEY)).toEqual([]);
+});
+
+test("renders canonical bundle and state-derived proof request from mocked SCCP responses", async ({ page }) => {
   await bootConsole(page);
 
   await page.locator("#bridge-route-input").fill("eth_lane");
@@ -920,30 +920,31 @@ test("renders proof lookups and submission helpers from mocked SCCP responses", 
   await page.locator("#proof-lookup-message-id-input").fill(LOOKUP_MESSAGE_ID);
   await page.locator("#lookup-sccp-all").click();
 
-  await expect(page.locator("#proof-lookup-summary")).toContainText(`Loaded proof surfaces for ${LOOKUP_MESSAGE_ID}`);
+  await expect(page.locator("#proof-lookup-summary")).toContainText(`Loaded closed SCCP V1 proof surfaces for ${LOOKUP_MESSAGE_ID}`);
   await expect(page.locator("#sccp-bundle-preview")).toContainText('"message_id":');
-  await expect(page.locator("#sccp-artifact-preview")).toContainText("0xVerifierETH");
-  await expect(page.locator("#sccp-job-preview")).toContainText('"payload_kind": "Transfer"');
-  await expect(page.locator("#proof-submission-package-preview")).toContainText('"finality_checkpoint": "12345"');
+  await expect(page.locator("#sccp-proof-request-preview")).toContainText('"target_network": "ethereum_sepolia"');
+  await expect(page.locator("#sccp-proof-request-preview")).toContainText('"request_hash":');
   await expect(page.locator("#recent-proof-lookup-select")).toContainText(LOOKUP_MESSAGE_ID);
 
-  await page.locator("#load-looked-up-bundle").click();
-  await expect(page.locator("#proof-submit-input")).toHaveValue(new RegExp(LOOKUP_MESSAGE_ID));
-  await expect(page.locator("#bridge-message-submit-input")).toHaveValue(new RegExp(LOOKUP_MESSAGE_ID));
-
-  await page.locator("#insert-settlement-helper").click();
-  await expect(page.locator("#bridge-message-submit-input")).toHaveValue(/"entrypoint": "finalize_inbound"/);
-  await expect(page.locator("#bridge-message-submit-input")).toHaveValue(new RegExp(LOCAL_BRIDGE_ADDRESS));
+  await page.locator("#build-proof-submit-template").click();
+  await expect(page.locator("#proof-submit-input")).toHaveValue(/"destination_proof_b64":/);
+  await expect(page.locator("#proof-submit-input")).not.toHaveValue(/message_bundle/);
+  await page.locator("#build-bridge-message-template").click();
+  await expect(page.locator("#bridge-message-submit-input")).toHaveValue(/"native_proof_b64":/);
+  await expect(page.locator("#bridge-message-submit-input")).not.toHaveValue(/settlement/);
 });
 
 test("submits proof and bridge message payloads and persists request metadata", async ({ page }) => {
   const apiState = await bootConsole(page);
 
-  await page.locator("#bridge-route-input").fill("eth_lane");
-  await page.locator("#bridge-message-id-input").fill(LOOKUP_MESSAGE_ID);
-  await page.locator("#proof-lookup-message-id-input").fill(LOOKUP_MESSAGE_ID);
-  await page.locator("#lookup-sccp-all").click();
-  await page.locator("#load-looked-up-bundle").click();
+  await page.locator("#proof-submit-input").fill(prettyJsonForTest({
+    authority: "i105localbridgeoperator@universal",
+    destination_proof_b64: DESTINATION_PROOF_B64,
+  }));
+  await page.locator("#bridge-message-submit-input").fill(prettyJsonForTest({
+    authority: "i105localbridgeoperator@universal",
+    native_proof_b64: NATIVE_PROOF_B64,
+  }));
 
   await page.locator("#submit-bridge-proof").click();
   await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
@@ -955,7 +956,6 @@ test("submits proof and bridge message payloads and persists request metadata", 
   await confirmSignedCall(page);
   await expect(page.locator("#transaction-history-list")).toContainText(PROOF_TX_HASH);
 
-  await page.locator("#insert-settlement-helper").click();
   await page.locator("#submit-bridge-message").click();
   await confirmSignedCall(page);
   await expect(page.locator("#transaction-history-list")).toContainText(MESSAGE_TX_HASH);
@@ -965,18 +965,16 @@ test("submits proof and bridge message payloads and persists request metadata", 
     "/api/bridge/proofs/submit",
     "/api/bridge/messages",
   ]);
-  expect(apiState.requests[1].body.settlement.route).toBe("eth_lane");
-  expect(apiState.requests[1].body.message_bundle.commitment.message_id).toBe(LOOKUP_MESSAGE_ID);
-
-  await expect(page.locator("#bookmark-route-select")).toContainText("eth_lane");
-  await expect(page.locator("#bookmark-message-id-select")).toContainText(LOOKUP_MESSAGE_ID);
+  expect(apiState.requests[0].body.destination_proof_b64).toBe(DESTINATION_PROOF_B64);
+  expect(apiState.requests[1].body.native_proof_b64).toBe(NATIVE_PROOF_B64);
+  expect(apiState.requests[0].body).not.toHaveProperty("private_key");
+  expect(apiState.requests[1].body).not.toHaveProperty("private_key");
 
   const recentRequests = await readLocalStorageJson(page, RECENT_REQUESTS_KEY);
   expect(recentRequests[0].requestPath).toBe("/api/bridge/messages");
-  expect(recentRequests[0].requestMetadata.bridgeIds.routes[0]).toBe("eth_lane");
-  expect(recentRequests[0].requestMetadata.bridgeIds.messageIds[0]).toBe(LOOKUP_MESSAGE_ID);
-  expect(recentRequests[0].requestMetadata.topLevelKeys).toContain("message_bundle");
-  expect(recentRequests[0].requestMetadata.topLevelKeys).toContain("settlement");
+  expect(recentRequests[0].requestMetadata.topLevelKeys).toContain("native_proof_b64");
+  expect(recentRequests[0].requestMetadata.topLevelKeys).not.toContain("message_bundle");
+  expect(recentRequests[0].requestMetadata.topLevelKeys).not.toContain("settlement");
 });
 
 test("marks tracked transactions as timed out when no terminal status arrives", async ({ page }) => {
@@ -991,9 +989,16 @@ test("marks tracked transactions as timed out when no terminal status arrives", 
     statusResponseFactory: () => ({
       ok: true,
       upstream_status: 200,
-      status_kind: "Pending",
+      status_kind: "Queued",
+      status_scope: "auto",
+      status_summary: "Queued",
+      status_diagnostics: [],
       response_json: {
-        status: "Pending",
+        status: { kind: "Queued" },
+        summary: "Queued",
+        diagnostics: [],
+        scope: "auto",
+        resolved_from: "queue",
       },
     }),
   });

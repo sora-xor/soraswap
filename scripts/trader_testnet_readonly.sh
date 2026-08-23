@@ -1,5 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
+SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
 export SORASWAP_PUBLIC_ENV=testnet
-exec "$(cd "$(dirname "$0")" && pwd)/trader_public.sh" readonly "$@"
+0="$SCRIPT_ROOT/trader_public.sh"
+source "$SCRIPT_ROOT/trader_public.sh" readonly "$@"

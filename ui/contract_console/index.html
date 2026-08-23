@@ -94,7 +94,7 @@
             </label>
             <label class="field">
               <span>Gas Limit</span>
-              <input id="gas-limit-input" type="number" min="1" step="1" value="100000">
+              <input id="gas-limit-input" type="number" min="1" max="50000000" step="1" value="100000">
             </label>
           </div>
 
@@ -138,6 +138,7 @@
         <div class="button-row">
           <button id="refresh-transaction-history" class="secondary-button" type="button">Refresh Remote History</button>
           <button id="clear-local-history" class="secondary-button" type="button">Clear Local History</button>
+          <button id="clear-operator-state" class="secondary-button" type="button">Clear Operator State</button>
         </div>
 
         <div class="output-grid">
@@ -298,7 +299,7 @@
       <section class="panel stack">
         <div class="panel-heading">
           <h2>Proof And Status</h2>
-          <p>Inspect live SCCP discovery, verifier manifests, raw bundles, typed artifacts, and normalized proof jobs for the selected environment.</p>
+          <p>Inspect the closed SCCP V1 capability document, authoritative typed registry, canonical message bundles, and state-derived prover requests.</p>
         </div>
 
         <div id="proof-status-summary" class="banner muted"></div>
@@ -318,16 +319,16 @@
           </div>
           <div class="output-pane">
             <div class="output-header">
-              <h3>Manifests</h3>
+              <h3>Typed Route Registry</h3>
             </div>
-            <pre id="sccp-manifests-preview">{}</pre>
+            <pre id="sccp-registry-preview">{}</pre>
           </div>
         </div>
 
         <div class="panel-subsection">
           <div class="panel-heading compact">
             <h3>Proof Lookup</h3>
-            <p>Look up a message id and inspect the raw bundle, typed artifact, normalized proof job, and submission-package metadata.</p>
+            <p>Look up an exact 64-character lowercase nonzero message id and inspect its canonical bundle plus immutable Groth16 prover request.</p>
           </div>
 
           <div class="lookup-grid">
@@ -342,16 +343,15 @@
           </div>
 
           <div class="button-row">
-            <button id="lookup-sccp-all" class="primary-button" type="button">Lookup Bundle, Artifact, And Job</button>
+            <button id="lookup-sccp-all" class="primary-button" type="button">Lookup Bundle And Proof Request</button>
             <button id="lookup-sccp-bundle" class="secondary-button" type="button">Bundle</button>
-            <button id="lookup-sccp-artifact" class="secondary-button" type="button">Artifact</button>
-            <button id="lookup-sccp-job" class="secondary-button" type="button">Job</button>
+            <button id="lookup-sccp-proof-request" class="secondary-button" type="button">Proof Request</button>
           </div>
 
           <div id="proof-lookup-summary" class="banner muted"></div>
         </div>
 
-        <div class="triple-output-grid">
+        <div class="output-grid">
           <div class="output-pane">
             <div class="output-header">
               <h3>Raw Message Bundle</h3>
@@ -360,76 +360,30 @@
           </div>
           <div class="output-pane">
             <div class="output-header">
-              <h3>Typed Artifact</h3>
+              <h3>State-derived Proof Request</h3>
             </div>
-            <pre id="sccp-artifact-preview">{}</pre>
+            <pre id="sccp-proof-request-preview">{}</pre>
           </div>
-          <div class="output-pane">
-            <div class="output-header">
-              <h3>Normalized Proof Job</h3>
-            </div>
-            <pre id="sccp-job-preview">{}</pre>
-          </div>
-        </div>
-
-        <div class="output-pane">
-          <div class="output-header">
-            <h3>Submission Package Metadata</h3>
-          </div>
-          <pre id="proof-submission-package-preview">{}</pre>
         </div>
       </section>
 
       <section class="panel stack">
         <div class="panel-heading">
           <h2>Proof And Message Submission</h2>
-          <p>Use guided builders for SCCP message bundles and inbound bridge message settlement requests, then submit the advanced JSON body through the local proxy.</p>
+          <p>Submit only a canonical destination-proof or native-proof artifact. The local proxy prepares the exact transaction, signs Torii's verified 32-byte signing message locally, and resubmits the unchanged payload without forwarding the private key.</p>
         </div>
 
         <div id="submission-summary" class="banner muted"></div>
 
-        <div class="submission-builder-grid">
-          <label class="field">
-            <span>Message Payload Kind</span>
-            <select id="sccp-message-kind-select">
-              <option value="transfer">transfer</option>
-              <option value="asset_register">asset_register</option>
-              <option value="route_activate">route_activate</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Source Domain</span>
-            <input id="sccp-source-domain-input" type="number" step="1" value="0">
-          </label>
-          <label class="field">
-            <span>Destination Domain</span>
-            <input id="sccp-dest-domain-input" type="number" step="1" value="4">
-          </label>
-          <label class="field">
-            <span>Nonce</span>
-            <input id="sccp-nonce-input" type="number" step="1" value="1">
-          </label>
-          <label class="field">
-            <span>Message Sender</span>
-            <input id="sccp-message-sender-input" type="text" placeholder="nexus:soraswap">
-          </label>
-          <label class="field">
-            <span>Finality Height</span>
-            <input id="sccp-finality-height-input" type="number" step="1" value="0">
-          </label>
-        </div>
-
         <div class="button-row wrap-row">
-          <button id="load-looked-up-bundle" class="secondary-button" type="button">Load Looked-up Bundle</button>
           <button id="build-proof-submit-template" class="secondary-button" type="button">Build Proof Submit Template</button>
-          <button id="build-bridge-message-template" class="secondary-button" type="button">Build Bridge Message Template</button>
-          <button id="insert-settlement-helper" class="secondary-button" type="button">Insert Settlement Helper</button>
+          <button id="build-bridge-message-template" class="secondary-button" type="button">Build Native Message Template</button>
         </div>
 
         <div class="output-grid">
           <div class="output-pane">
             <div class="output-header">
-              <h3>Bridge Proof Submit JSON</h3>
+              <h3>Destination Proof Submit JSON</h3>
             </div>
             <textarea id="proof-submit-input" rows="18" spellcheck="false"></textarea>
             <div class="sticky-action-footer compact">
@@ -439,7 +393,7 @@
 
           <div class="output-pane">
             <div class="output-header">
-              <h3>Bridge Message Submit JSON</h3>
+              <h3>Native Message Submit JSON</h3>
             </div>
             <textarea id="bridge-message-submit-input" rows="18" spellcheck="false"></textarea>
             <div class="sticky-action-footer compact">

@@ -1,211 +1,231 @@
 seiyaku Farm {
-  state int FarmInitialized;
-  state AccountId FarmOwner;
-  state AssetDefinitionId StakeAsset;
-  state AssetDefinitionId RewardAsset;
-  state AccountId Treasury;
-  state int RewardRate;
-  state int TotalStaked;
-  state int RewardBudget;
-  state int RewardDistributed;
-  state int CurrentSlot;
-  state int LastAccrualSlot;
-  state int GlobalRewardIndex;
-  state int RewardIndexRemainder;
-  state PositionOwner: Map<Name, AccountId>;
-  state StakeOf: Map<Name, int>;
-  state Accrued: Map<Name, int>;
-  state RewardDebt: Map<Name, int>;
-  state PositionClaimed: Map<Name, int>;
-
-  fn reward_index_scale() -> int {
-    return 1_000_000_000;
-  }
-
-  fn assert_initialized() {
-    assert(FarmInitialized == 1, "farm not initialized");
-  }
-
-  fn assert_position_owner(position: Name, staker: AccountId) {
-    assert(PositionOwner.contains(position), "position missing");
-    assert(PositionOwner[position] == staker, "staker mismatch");
-  }
-
-  fn move_asset_if_needed(from: AccountId,
-                          to: AccountId,
-                          asset: AssetDefinitionId,
-                          amount: int) {
-    if amount > 0 {
-      if from != to {
-        transfer_asset(from, to, asset, amount);
-      }
-    }
-  }
-
-  fn accrue_position(position: Name) {
-    let stake = StakeOf.get_or(position, 0);
-    let debt = RewardDebt.get_or(position, 0);
-    let delta = GlobalRewardIndex - debt;
-    if stake > 0 && delta > 0 {
-      Accrued[position] = Accrued.get_or(position, 0) +
-        ((stake * delta) / reward_index_scale());
-    }
-    RewardDebt[position] = GlobalRewardIndex;
-  }
-
-  fn sync_slot_impl(next_slot: int) -> int {
-    let emitted = 0;
-    assert_initialized();
-    assert(next_slot >= CurrentSlot, "slot rewind");
-
-    if next_slot == CurrentSlot {
-      LastAccrualSlot = next_slot;
-      return 0;
+    error enum FarmError {
+        PositionMissing = 1, StakerMismatch = 2, SlotRewind = 3, InvalidRewardAmount = 4, InvalidStakeAmount = 5, InsufficientStake = 6, NoReward = 7, InvalidQuantityConversion = 8,
     }
 
-    if TotalStaked > 0 && RewardRate > 0 && RewardBudget > 0 {
-      let elapsed = next_slot - CurrentSlot;
-      emitted = elapsed * RewardRate;
-      if emitted > RewardBudget {
-        emitted = RewardBudget;
-      }
-      if emitted > 0 {
-        let scaled_emission = emitted * reward_index_scale() + RewardIndexRemainder;
-        let index_delta = scaled_emission / TotalStaked;
-        RewardIndexRemainder = scaled_emission - (index_delta * TotalStaked);
-        GlobalRewardIndex = GlobalRewardIndex + index_delta;
-        RewardBudget = RewardBudget - emitted;
-      }
+    state AssetDefinitionId StakeAsset;
+    state AssetDefinitionId RewardAsset;
+    state AccountId Treasury;
+    state quantity RewardRate;
+    state quantity TotalStaked;
+    state quantity RewardBudget;
+    state quantity RewardDistributed;
+    state int CurrentSlot;
+    state int LastAccrualSlot;
+    state int GlobalRewardIndex;
+    state decimal RewardIndexRemainder;
+    state StateMap<Name, AccountId> PositionOwner;
+    state StateMap<Name, quantity> StakeOf;
+    state StateMap<Name, quantity> Accrued;
+    state StateMap<Name, int> RewardDebt;
+    state StateMap<Name, quantity> PositionClaimed;
+    fn reward_index_scale() -> int {
+        return 1_000_000_000;
     }
 
-    CurrentSlot = next_slot;
-    LastAccrualSlot = next_slot;
-    return emitted;
-  }
-
-  kotoage fn main() -> int {
-    return FarmInitialized;
-  }
-
-  kotoage fn init_farm(stake_asset: AssetDefinitionId,
-                       reward_asset: AssetDefinitionId,
-                       treasury: AccountId,
-                       reward_rate: int) {
-    assert(FarmInitialized == 0, "farm initialized");
-    assert(reward_rate >= 0, "invalid reward rate");
-    FarmInitialized = 1;
-    FarmOwner = authority();
-    StakeAsset = stake_asset;
-    RewardAsset = reward_asset;
-    Treasury = treasury;
-    RewardRate = reward_rate;
-    TotalStaked = 0;
-    RewardBudget = 0;
-    RewardDistributed = 0;
-    CurrentSlot = 0;
-    LastAccrualSlot = 0;
-    GlobalRewardIndex = 0;
-    RewardIndexRemainder = 0;
-  }
-
-  kotoage fn sync_slot(current_slot: int) -> int {
-    assert(current_slot >= 0, "invalid slot");
-    return sync_slot_impl(current_slot);
-  }
-
-  kotoage fn fund_rewards(amount: int) -> int permission(AssetOps) {
-    assert_initialized();
-    assert(amount > 0, "invalid reward amount");
-    let funder = authority();
-    move_asset_if_needed(funder, Treasury, RewardAsset, amount);
-    RewardBudget = RewardBudget + amount;
-    return amount;
-  }
-
-  kotoage fn stake(position: Name, amount: int) permission(AssetOps) {
-    assert_initialized();
-    let staker = authority();
-    assert(amount > 0, "invalid amount");
-    sync_slot_impl(CurrentSlot);
-    if PositionOwner.contains(position) {
-      assert(PositionOwner[position] == staker, "staker mismatch");
-    } else {
-      PositionOwner[position] = staker;
-      Accrued[position] = 0;
-      PositionClaimed[position] = 0;
-      RewardDebt[position] = GlobalRewardIndex;
+    fn checked_quantity(decimal value) -> quantity {
+        return match quantity::try_from_decimal(value: value) {
+            Result::ok(amount) => amount,
+            Result::err(_) => {
+                require(false, FarmError::InvalidQuantityConversion);
+                0
+            },
+        };
     }
-    accrue_position(position);
-    move_asset_if_needed(staker, Treasury, StakeAsset, amount);
-    StakeOf[position] = StakeOf.ensure(position, 0) + amount;
-    TotalStaked = TotalStaked + amount;
-    RewardDebt[position] = GlobalRewardIndex;
-  }
 
-  kotoage fn unstake(position: Name, amount: int) permission(AssetOps) {
-    assert_initialized();
-    let staker = authority();
-    assert_position_owner(position, staker);
-    assert(amount > 0, "invalid amount");
-    sync_slot_impl(CurrentSlot);
-    accrue_position(position);
-    let staked = StakeOf.ensure(position, 0);
-    assert(staked >= amount, "insufficient stake");
-    move_asset_if_needed(Treasury, staker, StakeAsset, amount);
-    StakeOf[position] = staked - amount;
-    TotalStaked = TotalStaked - amount;
-    RewardDebt[position] = GlobalRewardIndex;
-  }
-
-  kotoage fn claim(position: Name) permission(AssetOps) {
-    assert_initialized();
-    let staker = authority();
-    assert_position_owner(position, staker);
-    sync_slot_impl(CurrentSlot);
-    accrue_position(position);
-    let reward = Accrued.ensure(position, 0);
-    assert(reward > 0, "no reward");
-    move_asset_if_needed(Treasury, staker, RewardAsset, reward);
-    Accrued[position] = 0;
-    RewardDistributed = RewardDistributed + reward;
-    PositionClaimed[position] = PositionClaimed.ensure(position, 0) + reward;
-    RewardDebt[position] = GlobalRewardIndex;
-  }
-
-  view fn farm_config() -> (AssetDefinitionId, AssetDefinitionId, AccountId, int) {
-    assert_initialized();
-    return (
-      StakeAsset,
-      RewardAsset,
-      Treasury,
-      RewardRate
-    );
-  }
-
-  view fn farm_state() -> (int, int, int, int) {
-    assert_initialized();
-    return (
-      CurrentSlot,
-      LastAccrualSlot,
-      GlobalRewardIndex,
-      RewardIndexRemainder
-    );
-  }
-
-  view fn mirror_position(position: Name) -> (int, int, int, int, int, int, int, int) {
-    let position_registered = 0;
-    if PositionOwner.contains(position) {
-      position_registered = 1;
+    fn assert_position_owner(Name position, AccountId staker) {
+        require(PositionOwner.contains(key: position), FarmError::PositionMissing);
+        let owner = PositionOwner.get(key: position).unwrap_or(default: staker);
+        require(owner == staker, FarmError::StakerMismatch);
     }
-    return (
-      position_registered,
-      StakeOf.get_or(position, 0),
-      Accrued.get_or(position, 0),
-      PositionClaimed.get_or(position, 0),
-      TotalStaked,
-      RewardBudget,
-      RewardDistributed,
-      RewardRate
-    );
-  }
+
+    fn move_asset_if_needed(
+        AccountId source,
+        AccountId destination,
+        AssetDefinitionId asset,
+        quantity amount,
+    ) {
+        if amount > 0 && source != destination {
+            ledger::asset::transfer(
+                source: source,
+                destination: destination,
+                asset_definition: asset,
+                amount: amount,
+                dataspace: DataSpaceId::parse("0"),
+            );
+        }
+    }
+
+    fn accrue_position(Name position) {
+        let stake_amount = StakeOf.get_or(key: position, default: 0);
+        let debt = RewardDebt.get_or(key: position, default: 0);
+        let delta = GlobalRewardIndex - debt;
+        if stake_amount > 0 && delta > 0 {
+            let pending = checked_quantity(
+                value: (decimal::from_quantity(value: stake_amount) * decimal::from_int(
+                    value: delta,
+                )) / decimal::from_int(value: reward_index_scale()),
+            );
+            Accrued[position] = Accrued.get_or(key: position, default: 0) + pending;
+        }
+        RewardDebt[position] = GlobalRewardIndex;
+    }
+
+    fn sync_slot_impl(int next_slot) -> quantity {
+        var quantity emitted = 0;
+        require(next_slot >= CurrentSlot, FarmError::SlotRewind);
+        if next_slot == CurrentSlot {
+            LastAccrualSlot = next_slot;
+            return 0;
+        }
+        if TotalStaked > 0 && RewardRate > 0 && RewardBudget > 0 {
+            let elapsed = next_slot - CurrentSlot;
+            emitted = checked_quantity(
+                value: decimal::from_quantity(value: RewardRate) * decimal::from_int(value: elapsed),
+            );
+            if emitted > RewardBudget {
+                emitted = RewardBudget;
+            }
+            if emitted > 0 {
+                let scaled_emission = decimal::from_quantity(value: emitted) * decimal::from_int(
+                    value: reward_index_scale(),
+                ) + RewardIndexRemainder;
+                let rounded_index_delta = scaled_emission.div_round(
+                    divisor: decimal::from_quantity(value: TotalStaked),
+                    scale: 0,
+                    mode: Rounding::toward_zero,
+                );
+                let index_delta = decimal::to_int_exact(value: rounded_index_delta);
+                RewardIndexRemainder = scaled_emission - (decimal::from_int(value: index_delta) * decimal::from_quantity(
+                    value: TotalStaked,
+                ));
+                GlobalRewardIndex = GlobalRewardIndex + index_delta;
+                RewardBudget = RewardBudget - emitted;
+            }
+        }
+        CurrentSlot = next_slot;
+        LastAccrualSlot = next_slot;
+        return emitted;
+    }
+
+    hajimari(
+        AssetDefinitionId stake_asset,
+        AssetDefinitionId reward_asset,
+        AccountId treasury,
+        quantity reward_rate,
+    ) {
+        StakeAsset = stake_asset;
+        RewardAsset = reward_asset;
+        Treasury = treasury;
+        RewardRate = reward_rate;
+        TotalStaked = 0;
+        RewardBudget = 0;
+        RewardDistributed = 0;
+        CurrentSlot = context::block_height();
+        LastAccrualSlot = context::block_height();
+        GlobalRewardIndex = 0;
+        RewardIndexRemainder = 0;
+    }
+
+    view fn main() -> int {
+        return 1;
+    }
+
+    kotoage fn sync_slot() -> quantity authorize("Entry") {
+        return sync_slot_impl(next_slot: context::block_height());
+    }
+
+    kotoage fn fund_rewards(quantity amount) -> quantity authorize("AssetOps") {
+        require(amount > 0, FarmError::InvalidRewardAmount);
+        move_asset_if_needed(
+            source: context::authority(),
+            destination: Treasury,
+            asset: RewardAsset,
+            amount: amount,
+        );
+        RewardBudget = RewardBudget + amount;
+        return amount;
+    }
+
+    kotoage fn stake(Name position, quantity amount) authorize("AssetOps") {
+        let staker = context::authority();
+        require(amount > 0, FarmError::InvalidStakeAmount);
+        sync_slot_impl(next_slot: context::block_height());
+        if PositionOwner.contains(key: position) {
+            assert_position_owner(position: position, staker: staker);
+        } else {
+            PositionOwner[position] = staker;
+            Accrued[position] = 0;
+            PositionClaimed[position] = 0;
+            RewardDebt[position] = GlobalRewardIndex;
+            StakeOf[position] = 0;
+        }
+        accrue_position(position: position);
+        move_asset_if_needed(
+            source: staker,
+            destination: Treasury,
+            asset: StakeAsset,
+            amount: amount,
+        );
+        StakeOf[position] = StakeOf.get_or(key: position, default: 0) + amount;
+        TotalStaked = TotalStaked + amount;
+        RewardDebt[position] = GlobalRewardIndex;
+    }
+
+    kotoage fn unstake(Name position, quantity amount) authorize("AssetOps") {
+        let staker = context::authority();
+        assert_position_owner(position: position, staker: staker);
+        require(amount > 0, FarmError::InvalidStakeAmount);
+        sync_slot_impl(next_slot: context::block_height());
+        accrue_position(position: position);
+        let staked = StakeOf.get_or(key: position, default: 0);
+        require(staked >= amount, FarmError::InsufficientStake);
+        move_asset_if_needed(
+            source: Treasury,
+            destination: staker,
+            asset: StakeAsset,
+            amount: amount,
+        );
+        StakeOf[position] = staked - amount;
+        TotalStaked = TotalStaked - amount;
+        RewardDebt[position] = GlobalRewardIndex;
+    }
+
+    kotoage fn claim(Name position) authorize("AssetOps") {
+        let staker = context::authority();
+        assert_position_owner(position: position, staker: staker);
+        sync_slot_impl(next_slot: context::block_height());
+        accrue_position(position: position);
+        let reward = Accrued.get_or(key: position, default: 0);
+        require(reward > 0, FarmError::NoReward);
+        move_asset_if_needed(
+            source: Treasury,
+            destination: staker,
+            asset: RewardAsset,
+            amount: reward,
+        );
+        Accrued[position] = 0;
+        RewardDistributed = RewardDistributed + reward;
+        PositionClaimed[position] = PositionClaimed.get_or(key: position, default: 0) + reward;
+        RewardDebt[position] = GlobalRewardIndex;
+    }
+
+    view fn farm_config() -> (AssetDefinitionId, AssetDefinitionId, AccountId, quantity) {
+        return (StakeAsset, RewardAsset, Treasury, RewardRate);
+    }
+
+    view fn farm_state() -> (int, int, int, decimal) {
+        return (CurrentSlot, LastAccrualSlot, GlobalRewardIndex, RewardIndexRemainder);
+    }
+
+    view fn mirror_position(Name position, ) -> (int, quantity, quantity, quantity, quantity, quantity, quantity, quantity) {
+        var int position_registered = 0;
+        if PositionOwner.contains(key: position) {
+            position_registered = 1;
+        }
+        return (position_registered, StakeOf.get_or(key: position, default: 0), Accrued.get_or(
+            key: position,
+            default: 0,
+        ), PositionClaimed.get_or(key: position, default: 0), TotalStaked, RewardBudget, RewardDistributed, RewardRate);
+    }
 }

@@ -1,0 +1,34 @@
+{
+  "schema": "soraswap-production-cutover-trust-policy/v1",
+  "environment": "production",
+  "policy_id": "REPLACE_WITH_REVIEWED_POLICY_ID",
+  "signature_namespace": "soraswap-production-cutover-v1",
+  "required_signature_count": 2,
+  "required_roles": ["security", "operations"],
+  "trusted_approvers": [
+    {
+      "id": "REPLACE_WITH_SECURITY_APPROVER_ID",
+      "role": "security",
+      "public_key": "REPLACE_WITH_SSH_ED25519_PUBLIC_KEY",
+      "independent": true
+    },
+    {
+      "id": "REPLACE_WITH_OPERATIONS_APPROVER_ID",
+      "role": "operations",
+      "public_key": "REPLACE_WITH_SSH_ED25519_PUBLIC_KEY",
+      "independent": true
+    }
+  ],
+  "allowed_monitoring_origins": ["https://REPLACE_WITH_MONITORING_ORIGIN"],
+  "approval_max_age_seconds": 86400,
+  "observation": {
+    "duration_seconds": 1800,
+    "interval_seconds": 30,
+    "minimum_samples": 61,
+    "maximum_monitoring_sample_age_seconds": 30,
+    "minimum_validator_count": 4,
+    "maximum_canonical_lead": 1,
+    "maximum_finality_age_ms": 30000,
+    "derivatives_pause_mode": "external_fail_closed"
+  }
+}
