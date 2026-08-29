@@ -107,7 +107,7 @@ except (OSError, subprocess.CalledProcessError):
 
 manifest_path = bundle / "rollout.manifest.json"
 checksums_path = bundle / "sha256sums.txt"
-irohad_path = bundle / "bin" / "irohad"
+iroha3d_path = bundle / "bin" / "iroha3d"
 iroha_path = bundle / "bin" / "iroha"
 kagami_path = root / "target" / "release" / "kagami"
 archive_path = bundle.parent / f"{bundle.name}.tar.gz"
@@ -115,7 +115,7 @@ archive_sidecar_path = bundle.parent / f"{bundle.name}.tar.gz.sha256"
 
 manifest_bytes, _ = read_regular(manifest_path, "rollout manifest")
 checksums_bytes, _ = read_regular(checksums_path, "bundle checksum manifest")
-irohad_bytes, _ = read_regular(irohad_path, "bundle bin/irohad", executable=True)
+iroha3d_bytes, _ = read_regular(iroha3d_path, "bundle bin/iroha3d", executable=True)
 iroha_bytes, _ = read_regular(iroha_path, "bundle bin/iroha", executable=True)
 kagami_bytes, kagami_metadata = read_regular(kagami_path, "candidate target/release/kagami", executable=True)
 archive_bytes, archive_metadata = read_regular(archive_path, "rollout archive")
@@ -136,7 +136,7 @@ completed_checks = {
     for item in manifest.get("prebundle_checks", [])
     if isinstance(item, dict) and item.get("skipped") is False
 }
-features = manifest.get("irohad_features")
+features = manifest.get("iroha3d_features")
 if not (
     manifest.get("git_head") == expected_git_sha
     and manifest.get("git_signature_verified") is True
@@ -149,15 +149,15 @@ if not (
     and len(set(features)) == 2
     and sorted(features) == ["embedded-soracloud-runtime", "sccp-test-fixtures"]
     and isinstance(manifest.get("binaries"), list)
-    and "bin/irohad" in manifest["binaries"]
+    and "bin/iroha3d" in manifest["binaries"]
     and "bin/iroha" in manifest["binaries"]
     and required_checks <= completed_checks
 ):
     fail("rollout manifest does not prove the signed clean release candidate, exact features, and required regressions")
 
 sha_bytes = expected_git_sha.encode("ascii")
-if sha_bytes not in irohad_bytes:
-    fail("bundle bin/irohad does not embed the expected Iroha Git SHA")
+if sha_bytes not in iroha3d_bytes:
+    fail("bundle bin/iroha3d does not embed the expected Iroha Git SHA")
 if sha_bytes not in iroha_bytes:
     fail("bundle bin/iroha does not embed the expected Iroha Git SHA")
 
@@ -213,7 +213,7 @@ for candidate in bundle.rglob("*"):
         fail(f"bundle entry has an unsupported type: {relative}")
 if set(listed) != set(actual_files):
     fail("bundle checksum manifest does not exactly cover every regular bundle file")
-if not {"bin/irohad", "bin/iroha", "rollout.manifest.json"} <= set(actual_files):
+if not {"bin/iroha3d", "bin/iroha", "rollout.manifest.json"} <= set(actual_files):
     fail("bundle checksum manifest omits a required release file")
 
 sidecar_match = re.fullmatch(
@@ -292,7 +292,7 @@ print(json.dumps({
     "bundle_name": bundle.name,
     "checksums_sha256": sha256_bytes(checksums_bytes),
     "manifest_sha256": sha256_bytes(manifest_bytes),
-    "irohad_sha256": sha256_bytes(irohad_bytes),
+    "iroha3d_sha256": sha256_bytes(iroha3d_bytes),
     "iroha_sha256": sha256_bytes(iroha_bytes),
     "kagami_sha256": sha256_bytes(kagami_bytes),
     "archive_sha256": archive_sha256,
@@ -1948,11 +1948,11 @@ release_phase_guard_require_release_ready_preflight_basics() {
       and ((.blockers // []) | length) == 0
       and ((.warnings // []) | length) == 0
       and (.environment.mutations_allowed // false) == true
-      and (.environment.oracle_public_key_present // false) == true
-      and (.environment.oracle_private_key_present // false) == true
-      and (.environment.oracle_keypair_verified // false) == true
-      and ((.environment.oracle_public_key_source // "") | type == "string" and length > 0)
-      and ((.environment.oracle_private_key_source // "") | type == "string" and length > 0)
+      and (.environment.oracle_client_config_present // false) == true
+      and (.environment.oracle_client_config_valid // false) == true
+      and (.environment.oracle_account_derivable // false) == true
+      and (.environment.oracle_account_distinct // false) == true
+      and ((.environment.oracle_client_config_source // "") | type == "string" and length > 0)
       and ((.endpoint.mcp_http_status // "") | tostring) == "200"
       and (.endpoint.mcp.enabled // false) == true
       and (.endpoint.mcp.metadata_valid // false) == true
@@ -2129,7 +2129,7 @@ release_phase_guard_print_nested_probe_recovery_hint() {
     case "$env" in
       testnet)
         echo "  next runtime check: roll public Taira with the sibling ../iroha router and nested-transfer runtime fixes, then run:" >&2
-        echo '    bash ../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh --public-root "$PUBLIC_TORII_ROOT" --write-config /run/secrets/taira-canary-client.toml --soraswap-client-config "$SORASWAP_CLIENT_CONFIG" --allow-testnet-mutations' >&2
+        echo '    iroha -c "$SORASWAP_CLIENT_CONFIG" taira doctor --public-root "$PUBLIC_TORII_ROOT" --json' >&2
         ;;
       production)
         echo "  next runtime check: roll the production public runtime with the sibling ../iroha router and nested-transfer runtime fixes, then rerun:" >&2
@@ -2348,6 +2348,12 @@ release_phase_guard_require_smoke_perps_liquidation() {
         | (($tx | type) == "string" and ($tx | test("^[0-9a-fA-F]{64}$")));
       def positive_number:
         type == "number" and . > 0;
+      def collateral_pool_state:
+        (.view_results.perps_collateral_pool // null) as $value
+        | (($value | type) == "array")
+          and (($value | length) >= 4)
+          and (($value[0] | type) == "string" and length > 0)
+          and all($value[1:][]; type == "number");
       def has_liquidated_pass:
         any([
           .view_results.perps_liquidation_state,
@@ -2360,7 +2366,6 @@ release_phase_guard_require_smoke_perps_liquidation() {
           ((.view_results.perps_liquidation_position_state[1] // null) == 4)
           and ((.view_results.perps_liquidation_position_liquidation_state[1] // null) | positive_number)
           and ((.view_results.perps_liquidation_position_liquidation_state[2] // null) | positive_number)
-          and ((.view_results.risk_bucket_1_liquidation_liability[3] // null) | positive_number)
         );
 
       has_tx("perps_liquidation_queue_pass")
@@ -2369,11 +2374,11 @@ release_phase_guard_require_smoke_perps_liquidation() {
       and has_tx("perps_liquidation_execute_pass")
       and has_tx("perps_pause_trigger_lifecycle")
       and has_tx("perps_restore_trigger_lifecycle")
+      and collateral_pool_state
       and has_liquidated_pass
       and ((.view_results.perps_liquidation_position_state[1] // null) == 4)
       and ((.view_results.perps_liquidation_position_liquidation_state[1] // null) | positive_number)
-      and ((.view_results.perps_liquidation_position_liquidation_state[2] // null) | positive_number)
-      and ((.view_results.risk_bucket_1_liquidation_liability[3] // null) | positive_number)'
+      and ((.view_results.perps_liquidation_position_liquidation_state[2] // null) | positive_number)'
 }
 
 release_phase_guard_require_smoke_first_release_mutations() {
@@ -2382,7 +2387,7 @@ release_phase_guard_require_smoke_first_release_mutations() {
   local artifact="$3"
 
   release_phase_guard_require_condition "$prefix" "$env" "$artifact" \
-    "mutating smoke must prove first-release module mutation, state, and risk-vault evidence" \
+    "mutating smoke must prove first-release module mutation/state and self-contained options oracle evidence" \
     'def has_tx($root; $key):
         ($root.tx_hashes[$key] // "") as $tx
         | (($tx | type) == "string" and ($tx | test("^[0-9a-fA-F]{64}$")));
@@ -2400,6 +2405,13 @@ release_phase_guard_require_smoke_first_release_mutations() {
         | (($value | type) == "array")
           and (($value | length) >= $min_len)
           and all($value[]; type == "number");
+      def options_factory_config($root):
+        ($root.view_results.options_factory_config // null) as $value
+        | (($value | type) == "array")
+          and (($value | length) >= 9)
+          and all($value[0:3][]; type == "string" and length > 0)
+          and ($value[1] != $value[2])
+          and all($value[3:][]; type == "number");
 
       . as $root
       | all([
@@ -2428,13 +2440,17 @@ release_phase_guard_require_smoke_first_release_mutations() {
         "perps_close_position",
         "perps_open_liquidation_position",
         "options_buy_shout",
-        "options_record_shout",
+        "options_publish_shout_mark",
+        "options_publish_shout_final_mark",
         "options_exercise_shout",
         "options_buy_outperformance",
         "options_settle_outperformance_series",
         "options_exercise_outperformance",
         "cover_register_policy",
-        "cover_stale_reset_observation",
+        "cover_trigger_1",
+        "cover_trigger_2",
+        "cover_trigger_3",
+        "cover_trigger_4",
         "cover_route_claim",
         "automation_enqueue",
         "automation_assign_executor",
@@ -2458,19 +2474,16 @@ release_phase_guard_require_smoke_first_release_mutations() {
       and numeric_array($root; "launchpad_activation_state"; 2)
       and numeric_array($root; "referral_mirror_member"; 4)
       and numeric_array($root; "farms_mirror_position"; 4)
-      and numeric_array($root; "options_shout_series"; 4)
-      and numeric_array($root; "options_outperformance_series"; 4)
+      and options_factory_config($root)
+      and numeric_array($root; "options_factory_shout_series"; 10)
+      and numeric_array($root; "options_factory_outperformance_series"; 10)
+      and numeric_array($root; "options_factory_automation"; 7)
+      and numeric_array($root; "options_factory_shout_position"; 9)
+      and numeric_array($root; "options_factory_outperformance_position"; 9)
       and numeric_array($root; "cover_policy_state"; 4)
       and numeric_array($root; "automation_mirror_job"; 4)
       and numeric_array($root; "conditional_escrow_state"; 4)
-      and numeric_array($root; "epoch_auction_state"; 4)
-      and numeric_array($root; "risk_bucket_1"; 4)
-      and numeric_array($root; "risk_bucket_2"; 4)
-      and numeric_array($root; "risk_bucket_3"; 4)
-      and numeric_array($root; "risk_vault_state"; 4)
-      and numeric_array($root; "risk_bucket_1_liability"; 4)
-      and numeric_array($root; "risk_bucket_2_shout_liability"; 4)
-      and numeric_array($root; "risk_bucket_3_liability"; 4)'
+      and numeric_array($root; "epoch_auction_state"; 4)'
 }
 
 release_phase_guard_require_smoke_primitive_mutations() {
@@ -2702,7 +2715,7 @@ release_phase_guard_require_deployment_records_proof() {
     [[ -n "$contract_key" ]] || continue
     contract_snapshot_key_map[$contract_key]=1
     contract_snapshot_key_count[$contract_key]=$(( ${contract_snapshot_key_count[$contract_key]:-0} + 1 ))
-  done < <(jq -r '(.contracts // [])[]? | select(type == "object") | (.contract_key? // .name? // empty)' "$contracts_artifact")
+  done < <(jq -r '(.contracts // [])[]? | select(type == "object") | (.contract_key // empty)' "$contracts_artifact")
 
   for contract_key in "${(@ko)contract_snapshot_key_count}"; do
     if (( ${contract_snapshot_key_count[$contract_key]:-0} > 1 )); then
@@ -2716,7 +2729,7 @@ release_phase_guard_require_deployment_records_proof() {
     [[ -n "$contract_key" ]] || continue
     if ! jq -e --arg key "$contract_key" --arg release_env "$env" '
       any((.contracts // [])[]?;
-        ((.contract_key? // .name? // empty) == $key)
+        (.contract_key == $key)
         and ((.environment // "") == $release_env)
       )
     ' "$contracts_artifact" >/dev/null 2>&1; then
@@ -2724,7 +2737,7 @@ release_phase_guard_require_deployment_records_proof() {
       release_phase_guard_print_details "$contracts_artifact"
       return 1
     fi
-  done < <(jq -r '(.contracts // [])[]? | select(type == "object") | (.contract_key? // .name? // empty)' "$contracts_artifact")
+  done < <(jq -r '(.contracts // [])[]? | select(type == "object") | (.contract_key // empty)' "$contracts_artifact")
 
   if (( $+functions[expected_contract_ids] )) && (( $+functions[deployments_dir_for_env] )); then
     expected_evidence_dir="$(deployments_dir_for_env "$env")"
@@ -2752,12 +2765,18 @@ release_phase_guard_require_deployment_records_proof() {
     fi
   fi
 
+  if ! deployment_records_snapshot_matches_current_schema "$contracts_artifact" "$env"; then
+    echo "$prefix: evidence guard failed for ${contracts_artifact:t}: contracts snapshot must match the closed current deployment-evidence schema" >&2
+    release_phase_guard_print_details "$contracts_artifact"
+    return 1
+  fi
+
   while IFS= read -r contract_entry; do
-    contract_key="$(jq -r '.contract_key? // .name? // empty' <<<"$contract_entry")"
-    expected_address="$(jq -r '.contract_address // .instance.contract_address // .instance.contract_id // empty' <<<"$contract_entry")"
-    expected_nonce="$(jq -r '(.deploy_nonce // .instance.deploy_nonce // empty) | tostring' <<<"$contract_entry")"
-    expected_code_hash="$(jq -r '(.code_hash_hex // .code_hash // .instance.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")' <<<"$contract_entry")"
-    expected_abi_hash="$(jq -r '(.abi_hash_hex // .abi_hash // .instance.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")' <<<"$contract_entry")"
+    contract_key="$(jq -r '.contract_key // empty' <<<"$contract_entry")"
+    expected_address="$(jq -r '.contract_address // empty' <<<"$contract_entry")"
+    expected_nonce="$(jq -r '(.deploy_nonce // empty) | tostring' <<<"$contract_entry")"
+    expected_code_hash="$(jq -r '(.code_hash_hex // "") | ascii_downcase' <<<"$contract_entry")"
+    expected_abi_hash="$(jq -r '(.abi_hash_hex // "") | ascii_downcase' <<<"$contract_entry")"
     if [[ -z "$contract_key" || -z "$expected_address" || -z "$expected_nonce" || "$expected_nonce" == "null" \
       || -z "$expected_code_hash" || "$expected_code_hash" == "null" \
       || -z "$expected_abi_hash" || "$expected_abi_hash" == "null" ]]; then
@@ -2768,6 +2787,11 @@ release_phase_guard_require_deployment_records_proof() {
 
     record_path="$evidence_dir/${contract_key}.deploy.json"
     manifest_path="$evidence_dir/${contract_key}.manifest.json"
+    if ! deployment_record_matches_current_schema "$record_path" "$env" "$contract_key"; then
+      echo "$prefix: evidence guard failed for ${record_path:t}: deploy record must match the closed current deployment-evidence schema" >&2
+      release_phase_guard_print_details "$record_path"
+      return 1
+    fi
     release_phase_guard_require_metadata "$prefix" "$env" "$record_path" environment || return 1
     release_phase_guard_require_current_chain "$prefix" "$evidence_dir" "$record_path" "$env" || return 1
     release_phase_guard_require_json "$prefix" "$manifest_path" || return 1
@@ -2792,44 +2816,34 @@ release_phase_guard_require_deployment_records_proof() {
       --arg expected_abi_hash "$expected_abi_hash" \
       '
         (.contract_key // "") == $key
-        and ((.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_code_hash
-        and ((.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_abi_hash
-        and (.response.ok // false) == true
-        and ((.response.contract_address // .response.contract_id // "") == $expected_address)
+        and (.deploy_strategy // "") == "ivm_contract_deploy"
+        and ((.code_hash_hex // "") | ascii_downcase) == $expected_code_hash
+        and ((.abi_hash_hex // "") | ascii_downcase) == $expected_abi_hash
+        and .response.ok == true
+        and .response.submitted == true
+        and .response.contract_address == $expected_address
         and (((.response.deploy_nonce // null) | tostring) == $expected_nonce)
-        and ((.response.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_code_hash
-        and ((.response.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_abi_hash
-        and ((.instance.contract_address // .instance.contract_id // "") == $expected_address)
-        and (((.instance.deploy_nonce // null) | tostring) == $expected_nonce)
-        and ((.instance.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_code_hash
-        and ((.instance.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_abi_hash
-        and (
-          (.deploy_strategy // "") != "bundle"
-          or (
-            (.bundle_receipt.status // "") == "deployed"
-            and ((.bundle_receipt.name // .bundle_receipt.contract_key // "") == $key)
-            and ((.bundle_receipt.contract_address // "") == $expected_address)
-            and (((.bundle_receipt.deploy_nonce // null) | tostring) == $expected_nonce)
-            and ((.bundle_receipt.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_code_hash
-            and ((.bundle_receipt.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_abi_hash
-          )
-        )
+        and ((.response.code_hash_hex // "") | ascii_downcase) == $expected_code_hash
+        and ((.response.commit_deployment_tx_hash // "") | type == "string" and length > 0)
+        and .response.final.kind == "Committed"
+        and .response.final.hash == .response.commit_deployment_tx_hash
       ' "$record_path" >/dev/null 2>&1; then
-      echo "$prefix: evidence guard failed for ${record_path:t}: deploy record must include successful response, instance, bundle receipt, and code/ABI hash evidence" >&2
+      echo "$prefix: evidence guard failed for ${record_path:t}: deploy record must include one successful current native response and code/ABI hash evidence" >&2
       release_phase_guard_print_details "$record_path"
       return 1
     fi
   done < <(jq -c '(.contracts // [])[]? | select(type == "object")' "$contracts_artifact")
 
   for record_path in "$evidence_dir"/*.deploy.json(N); do
-    if [[ "${record_path:t}" == "soraswap.bundle.deploy.json" \
-      || "${record_path:t}" == "soraswap.foundation.bundle.deploy.json" ]]; then
-      continue
-    fi
     release_phase_guard_require_json "$prefix" "$record_path" || return 1
     record_key="$(jq -r '.contract_key // empty' "$record_path" 2>/dev/null || true)"
     if [[ -z "$record_key" ]]; then
       echo "$prefix: evidence guard failed for ${record_path:t}: deploy record must identify contract_key" >&2
+      release_phase_guard_print_details "$record_path"
+      return 1
+    fi
+    if [[ "${record_path:t}" != "${record_key}.deploy.json" ]]; then
+      echo "$prefix: evidence guard failed for ${record_path:t}: contract_key must match filename" >&2
       release_phase_guard_print_details "$record_path"
       return 1
     fi
@@ -2860,71 +2874,6 @@ release_phase_guard_require_deployment_records_proof() {
       return 1
     fi
   done
-}
-
-release_phase_guard_require_bundle_receipt_proof() {
-  local prefix="$1"
-  local env="$2"
-  local evidence_dir="$3"
-  local contracts_artifact="$evidence_dir/contracts.latest.json"
-  local chain_artifact="$evidence_dir/chain.latest.json"
-  local receipt_artifact="$evidence_dir/soraswap.bundle.deploy.json"
-
-  [[ -e "$receipt_artifact" ]] || return 0
-
-  release_phase_guard_require_metadata "$prefix" "$env" "$receipt_artifact" environment || return 1
-  release_phase_guard_require_json "$prefix" "$chain_artifact" || return 1
-  release_phase_guard_require_json "$prefix" "$contracts_artifact" || return 1
-  if ! jq -n -e \
-    --arg release_env "$env" \
-    --slurpfile receipt "$receipt_artifact" \
-    --slurpfile chain "$chain_artifact" \
-    --slurpfile contracts "$contracts_artifact" \
-    '
-      def key_of:
-        .contract_key? // .name? // "";
-      def hash_norm:
-        tostring | sub("^hash:"; "") | sub("^0x"; "") | ascii_downcase;
-      def contract_key_set($items):
-        [($items // [])[]? | select(type == "object") | key_of | select(length > 0)] | sort;
-      def field_address($item):
-        $item.contract_address // $item.instance.contract_address // $item.instance.contract_id // "";
-      def field_nonce($item):
-        ($item.deploy_nonce // $item.instance.deploy_nonce // null) | tostring;
-      def field_code_hash($item):
-        ($item.code_hash_hex // $item.code_hash // $item.instance.code_hash_hex // "") | hash_norm;
-      def field_abi_hash($item):
-        ($item.abi_hash_hex // $item.abi_hash // $item.instance.abi_hash_hex // "") | hash_norm;
-
-      $receipt[0] as $bundle
-      | $contracts[0] as $snapshot
-      | ($snapshot.contracts // []) as $snapshot_contracts
-      | ($bundle.contracts // []) as $bundle_contracts
-      | ($bundle.ok == true)
-        and (($bundle.generated_at // "") | type == "string" and length > 0)
-        and (($bundle.environment // "") == $release_env)
-        and (($bundle.chain_fingerprint.torii_url // "") == ($chain[0].torii_url // ""))
-        and (($bundle.chain_fingerprint.chain // "") == ($chain[0].chain // ""))
-        and (($bundle.chain_fingerprint.block_1_hash // "") == ($chain[0].block_1_hash // ""))
-        and (($bundle_contracts | type) == "array")
-        and (($bundle_contracts | length) > 0)
-        and (contract_key_set($bundle_contracts) == contract_key_set($snapshot_contracts))
-        and all($snapshot_contracts[]?;
-          . as $expected
-          | (key_of) as $key
-          | [$bundle_contracts[]? | select(key_of == $key)] as $matches
-          | ($matches | length) == 1
-            and (($matches[0].status // "") == "deployed")
-            and (field_address($matches[0]) == field_address($expected))
-            and (field_nonce($matches[0]) == field_nonce($expected))
-            and (field_code_hash($matches[0]) == field_code_hash($expected))
-            and (field_abi_hash($matches[0]) == field_abi_hash($expected))
-        )
-    ' >/dev/null 2>&1; then
-    echo "$prefix: evidence guard failed for ${receipt_artifact:t}: bundle receipt must match current chain and contracts snapshot" >&2
-    release_phase_guard_print_details "$receipt_artifact"
-    return 1
-  fi
 }
 
 release_phase_guard_require_rwa_external_refs() {
@@ -3032,33 +2981,35 @@ release_phase_guard_require_trader_api_routes() {
         and has_required_routes($parsed.routes // [])'
 }
 
-release_phase_guard_require_trader_api_receipts() {
+release_phase_guard_require_trader_api_provider_preparation() {
   local prefix="$1"
   local env="$2"
   local artifact="$3"
 
   release_phase_guard_require_condition "$prefix" "$env" "$artifact" \
-    "trader API bundle must include matching SoraFS pin and registry receipts" \
-    '((.pin_summary.manifest_id_hex // "") | test("^[0-9a-fA-F]+$"))
-      and ((.manifest_id_hex // "") == (.pin_summary.manifest_id_hex // ""))
-      and ((.pin_summary.manifest_digest_hex // "") == (.manifest_digest_hex // ""))
-      and (((.pin_summary.status // "") | tostring) | test("^(200|201|202|204|409)$"))
+    "trader API bundle must include matching provider preparation and manifest registration evidence" \
+    '((.provider_ingest.state // "") == "awaiting_finalized_provider_assignment")
+      and (.provider_ingest.queued == false)
+      and (.provider_ingest.direct_http_ingest == false)
+      and ((.provider_ingest.prepare.manifest_id_hex // "") | test("^[0-9a-fA-F]+$"))
+      and ((.manifest_id_hex // "") == (.provider_ingest.prepare.manifest_id_hex // ""))
+      and ((.provider_ingest.prepare.manifest_digest_hex // "") == (.manifest_digest_hex // ""))
       and ((.registry_submit.manifest_digest_hex // "") == (.manifest_digest_hex // ""))
       and (((.registry_submit.status // "") | tostring) | test("^2"))'
 }
 
-release_phase_guard_require_trader_api_content_cid() {
+release_phase_guard_require_trader_api_prepared_content_cid() {
   local prefix="$1"
   local env="$2"
   local artifact="$3"
   local manifest_id_hex actual_cid expected_cid
 
   release_phase_guard_require_json "$prefix" "$artifact" || return 1
-  manifest_id_hex="$(jq -r '.pin_summary.manifest_id_hex // empty' "$artifact" 2>/dev/null || true)"
+  manifest_id_hex="$(jq -r '.provider_ingest.prepare.manifest_id_hex // empty' "$artifact" 2>/dev/null || true)"
   actual_cid="$(jq -r '.content_cid // empty' "$artifact" 2>/dev/null || true)"
   expected_cid="$(release_phase_guard_content_cid_from_hex "$manifest_id_hex" 2>/dev/null || true)"
   if [[ -z "$expected_cid" || "$actual_cid" != "$expected_cid" ]]; then
-    echo "$prefix: evidence guard failed for ${artifact:t}: content_cid must match the pinned SoraFS manifest id" >&2
+    echo "$prefix: evidence guard failed for ${artifact:t}: content_cid must match the prepared manifest id" >&2
     release_phase_guard_print_details "$artifact"
     return 1
   fi
@@ -3329,7 +3280,6 @@ release_phase_guard_verify_target() {
       release_phase_guard_require_completed_deploy_phases "$prefix" "$env" "$evidence_dir/deploy.latest.json" || return 1
       release_phase_guard_require_deploy_snapshot_current_contracts "$prefix" "$evidence_dir" || return 1
       release_phase_guard_require_deployment_records_proof "$prefix" "$env" "$evidence_dir" || return 1
-      release_phase_guard_require_bundle_receipt_proof "$prefix" "$env" "$evidence_dir" || return 1
       ;;
     smoke-*-trader-readonly)
       release_phase_guard_require_current_ready_preflight "$prefix" "$env" "$evidence_dir" || return 1
@@ -3435,8 +3385,8 @@ release_phase_guard_verify_target() {
         '(.cid_probe.status // "") == "completed"' || return 1
       release_phase_guard_require_trader_api_cid_probe "$prefix" "$env" "$evidence_dir/trader_api_bundle.latest.json" || return 1
       release_phase_guard_require_trader_api_routes "$prefix" "$env" "$evidence_dir/trader_api_bundle.latest.json" || return 1
-      release_phase_guard_require_trader_api_receipts "$prefix" "$env" "$evidence_dir/trader_api_bundle.latest.json" || return 1
-      release_phase_guard_require_trader_api_content_cid "$prefix" "$env" "$evidence_dir/trader_api_bundle.latest.json" || return 1
+      release_phase_guard_require_trader_api_provider_preparation "$prefix" "$env" "$evidence_dir/trader_api_bundle.latest.json" || return 1
+      release_phase_guard_require_trader_api_prepared_content_cid "$prefix" "$env" "$evidence_dir/trader_api_bundle.latest.json" || return 1
       ;;
     release-production-checklist)
       release_phase_guard_require_json "$prefix" "$evidence_dir/observation.latest.json" || return 1

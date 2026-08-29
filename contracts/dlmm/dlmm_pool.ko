@@ -44,6 +44,8 @@ seiyaku DlmmPool {
     InvalidAmount = 36,
     AdminAlreadyRenounced = 37,
     AdminRenounced = 38,
+    LaunchpadExecutorMismatch = 39,
+    InvalidAuthoritySeparation = 40,
   }
 
   state int PoolInitialized;
@@ -52,6 +54,8 @@ seiyaku DlmmPool {
   state AssetDefinitionId BaseAsset;
   state AssetDefinitionId QuoteAsset;
   state AccountId VaultAccount;
+  state AccountId LaunchpadExecutorAccount;
+  state int InitializationBin;
   state int FeePips;
   state int BinStep;
   state int ActiveBin;
@@ -110,6 +114,10 @@ seiyaku DlmmPool {
   fn universal_dataspace() -> DataSpaceId {
     let dataspace = DataSpaceId::parse("0");
     return dataspace;
+  }
+
+  fn launchpad_position_id() -> Name {
+    return Name::parse("launchpad_executor");
   }
 
   fn abs_int(int value) -> int {
@@ -477,6 +485,7 @@ seiyaku DlmmPool {
     AssetDefinitionId base_asset,
     AssetDefinitionId quote_asset,
     AccountId vault_account,
+    AccountId launchpad_executor,
     int fee_pips,
     int bin_step,
     int active_bin,
@@ -487,6 +496,11 @@ seiyaku DlmmPool {
     quantity bin_liquidity_cap
   ) {
     require(base_asset != quote_asset, DlmmPoolError::IdenticalAssets);
+    require(
+      launchpad_executor != context::authority() &&
+      launchpad_executor != vault_account,
+      DlmmPoolError::InvalidAuthoritySeparation
+    );
     assert_valid_fee(fee_pips);
     assert_valid_bin_step(bin_step);
     assert_valid_bin_id(active_bin);
@@ -504,6 +518,8 @@ seiyaku DlmmPool {
     BaseAsset = base_asset;
     QuoteAsset = quote_asset;
     VaultAccount = vault_account;
+    LaunchpadExecutorAccount = launchpad_executor;
+    InitializationBin = active_bin;
     FeePips = fee_pips;
     BinStep = bin_step;
     ActiveBin = active_bin;
@@ -515,6 +531,14 @@ seiyaku DlmmPool {
     IndexedBinCount = 0;
     FirstIndexedBin = active_bin;
     LastIndexedBin = active_bin;
+    let launchpad_position = launchpad_position_id();
+    PositionOwner[launchpad_position] = launchpad_executor;
+    PositionBinId[launchpad_position] = active_bin;
+    PositionShares[launchpad_position] = zero_quantity();
+    PositionFeeDebtBase[launchpad_position] = zero_decimal();
+    PositionFeeDebtQuote[launchpad_position] = zero_decimal();
+    PositionCreditBase[launchpad_position] = zero_quantity();
+    PositionCreditQuote[launchpad_position] = zero_quantity();
     RangeGovernorEnabled = 0;
     RangeGovernorCadenceSlots = 0;
     RangeGovernorNextSlot = 0;
@@ -561,19 +585,25 @@ seiyaku DlmmPool {
     );
   }
 
-  kotoage fn seed_bin_c2c(
-    Name position_id,
-    int bin_id,
-    quantity base_amount,
-    quantity quote_amount
+  // Current Iroha contract-to-contract calls have one exact Quantity2 ABI.
+  // The parameter names are prescribed by that ABI; for launchpad seeding,
+  // `amount_in` is the base-side deposit and `min_out` is the quote-side
+  // deposit. The caller, position, and bin are immutable pool bindings.
+  kotoage fn seed_launchpad_liquidity(
+    quantity amount_in,
+    quantity min_out
   ) -> quantity authorize("AssetOps") {
-    return add_position_liquidity_impl(
-      position_id: position_id,
-      provider: context::authority(),
-      bin_id: bin_id,
-      base_amount: base_amount,
-      quote_amount: quote_amount,
-      min_shares_out: zero_quantity()
+    require(
+      context::authority() == LaunchpadExecutorAccount,
+      DlmmPoolError::LaunchpadExecutorMismatch
+    );
+    require(
+      amount_in > zero_quantity() && min_out > zero_quantity(),
+      DlmmPoolError::ZeroLiquidity
+    );
+    return add_launchpad_liquidity_impl(
+      base_amount: amount_in,
+      quote_amount: min_out
     );
   }
 
@@ -628,6 +658,65 @@ seiyaku DlmmPool {
     );
     move_asset_if_needed(
       source: provider,
+      destination: VaultAccount,
+      asset: QuoteAsset,
+      amount: quote_amount
+    );
+    BinReserveBase[bin_id] = reserve_base + base_amount;
+    BinReserveQuote[bin_id] = reserve_quote + quote_amount;
+    BinShareSupply[bin_id] = bin_share_supply_value(bin_id) + minted;
+    PositionShares[position_id] = position_shares_value(position_id) + minted;
+    PositionFeeDebtBase[position_id] = bin_fee_growth_base_value(bin_id);
+    PositionFeeDebtQuote[position_id] = bin_fee_growth_quote_value(bin_id);
+    return minted;
+  }
+
+  // Keep the fixed launchpad path separate from the arbitrary-position path.
+  // Besides making the immutable binding explicit, this prevents a literal
+  // Name key from narrowing current Iroha's access analysis for dynamic LP
+  // position keys.
+  fn add_launchpad_liquidity_impl(
+    quantity base_amount,
+    quantity quote_amount
+  ) -> quantity {
+    let position_id = launchpad_position_id();
+    let bin_id = InitializationBin;
+    ensure_bin_indexed(bin_id);
+    let reserve_base = bin_reserve_base_value(bin_id);
+    let reserve_quote = bin_reserve_quote_value(bin_id);
+    if BinLiquidityCap > zero_quantity() {
+      require(
+        reserve_base + base_amount <= BinLiquidityCap,
+        DlmmPoolError::BaseReserveCap
+      );
+      require(
+        reserve_quote + quote_amount <= BinLiquidityCap,
+        DlmmPoolError::QuoteReserveCap
+      );
+    }
+    let minted = share_mint_for_deposit(
+      bin_id: bin_id,
+      base_amount: base_amount,
+      quote_amount: quote_amount
+    );
+    require(
+      position_owner_value(position_id) == LaunchpadExecutorAccount,
+      DlmmPoolError::PositionOwnerMismatch
+    );
+    require(
+      position_bin_value(position_id) == InitializationBin,
+      DlmmPoolError::PositionBinMismatch
+    );
+    accrue_position_fees(position_id);
+
+    move_asset_if_needed(
+      source: LaunchpadExecutorAccount,
+      destination: VaultAccount,
+      asset: BaseAsset,
+      amount: base_amount
+    );
+    move_asset_if_needed(
+      source: LaunchpadExecutorAccount,
       destination: VaultAccount,
       asset: QuoteAsset,
       amount: quote_amount
@@ -1026,7 +1115,7 @@ seiyaku DlmmPool {
       input_asset: BaseAsset,
       amount_in: amount_in,
       min_out: min_out,
-      require_full_fill: 0
+      require_full_fill: 1
     );
   }
 
@@ -1040,61 +1129,8 @@ seiyaku DlmmPool {
       input_asset: QuoteAsset,
       amount_in: amount_in,
       min_out: min_out,
-      require_full_fill: 0
-    );
-  }
-
-  // This exact selector is admitted through a direct
-  // `CanInvokeContractEntrypoint` token. The surface deliberately has no
-  // trader or recipient parameter: the caller funds the complete quote-asset
-  // input and receives the base-asset output.
-  kotoage fn swap_exact_in_quote_public(quantity amount_in, quantity min_out) -> quantity authorize(
-    "CanInvokeContractEntrypoint"
-  ) {
-    require(amount_in > zero_quantity(), DlmmPoolError::InvalidAmount);
-    return swap_exact_in_impl(
-      trader: context::authority(),
-      recipient: context::authority(),
-      input_asset: QuoteAsset,
-      amount_in: amount_in,
-      min_out: min_out,
-      require_full_fill: 1,
-    );
-  }
-
-  kotoage fn swap_exact_in_base_for(
-    AccountId recipient,
-    quantity amount_in,
-    quantity min_out
-  ) -> quantity authorize("AssetOps") {
-    return swap_exact_in_impl(
-      trader: context::authority(),
-      recipient: recipient,
-      input_asset: BaseAsset,
-      amount_in: amount_in,
-      min_out: min_out,
       require_full_fill: 1
     );
-  }
-
-  kotoage fn swap_exact_in_quote_for(
-    AccountId recipient,
-    quantity amount_in,
-    quantity min_out
-  ) -> quantity authorize("AssetOps") {
-    return swap_exact_in_impl(
-      trader: context::authority(),
-      recipient: recipient,
-      input_asset: QuoteAsset,
-      amount_in: amount_in,
-      min_out: min_out,
-      require_full_fill: 1
-    );
-  }
-
-  kotoage fn bind_custody_account(AccountId vault_account) authorize("Admin") {
-    assert_pool_owner();
-    VaultAccount = vault_account;
   }
 
   // Permanently freezes every owner-controlled pool setting. The pool has no
@@ -1206,6 +1242,10 @@ seiyaku DlmmPool {
 
   view fn configured_vault_account() -> AccountId {
     return VaultAccount;
+  }
+
+  view fn launchpad_binding() -> (AccountId, int) {
+    return (LaunchpadExecutorAccount, InitializationBin);
   }
 
   view fn custody_account() -> AccountId {

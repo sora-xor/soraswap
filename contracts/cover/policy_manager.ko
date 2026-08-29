@@ -1,9 +1,9 @@
-// Parametric cover manager backed by the shared risk vault.
+// Self-contained parametric cover manager.
 //
-// Oracle observations are applied by a private typed helper. A public mutation
-// path is deliberately withheld until Kotodama's schema-bound signed
-// attestation verifier is available; caller authority is not a substitute for
-// binding a signature to typed observation fields.
+// The current Kotodama ABI does not provide arbitrary cross-contract calls or
+// source-level decoding of signed JSON. Cover therefore keeps its own fully
+// backed reserve and accepts typed observations only from the configured oracle
+// account. The oracle transaction signature binds every typed argument.
 
 seiyaku PolicyManager {
   error enum PolicyManagerError {
@@ -17,7 +17,7 @@ seiyaku PolicyManager {
     InvalidPremium = 8,
     InvalidMonitoringWindow = 9,
     InvalidRequiredObservations = 10,
-    InvalidOracleScheme = 11,
+    OracleAuthorityMismatch = 11,
     InvalidOracleStaleSlots = 12,
     InvalidOracleSlot = 13,
     InvalidObservedPrice = 14,
@@ -39,9 +39,11 @@ seiyaku PolicyManager {
     InvalidSafeMode = 30,
     InvalidMaxItems = 31,
     InvalidEnabled = 32,
-    RiskVaultCallFailed = 33,
+    InsufficientReserve = 33,
     IndexCorrupt = 34,
     InvalidAuthoritySeparation = 35,
+    OracleStale = 36,
+    ReserveInvariant = 37,
   }
 
   state int CoverInitialized;
@@ -49,12 +51,13 @@ seiyaku PolicyManager {
   state AccountId CoverGuardian;
   state AccountId CoverAccount;
   state AssetDefinitionId CoverSettlementAsset;
-  state bytes CoverRiskVaultContract;
   state int CoverWithdrawalOnly;
-  state bytes CoverOraclePublicKey;
-  state int CoverOracleScheme;
+  state AccountId CoverOracleAuthority;
   state int CoverDefaultRequiredObservations;
   state int CoverOracleStaleSlots;
+  state quantity CoverReservedPayout;
+  state quantity CoverPremiumCollected;
+  state quantity CoverSettledPayouts;
 
   state AccountId CoverAutomationExecutor;
   state int CoverObservationJobId;
@@ -122,6 +125,13 @@ seiyaku PolicyManager {
     require(CoverGuardian == context::authority(), PolicyManagerError::GuardianMismatch);
   }
 
+  fn assert_oracle_authority() {
+    require(
+      CoverOracleAuthority == context::authority(),
+      PolicyManagerError::OracleAuthorityMismatch
+    );
+  }
+
   fn assert_risk_on() {
     require(CoverWithdrawalOnly == 0, PolicyManagerError::WithdrawalOnly);
     require(CoverAutomationSafeMode == 0, PolicyManagerError::AutomationUnsafe);
@@ -159,70 +169,35 @@ seiyaku PolicyManager {
     }
   }
 
-  fn risk_vault_deposit(quantity amount) -> quantity {
-    return contract::invoke(
-      contract: CoverRiskVaultContract,
-      entrypoint: "deposit",
-      returns: "quantity",
-      bucket_id: 3,
-      amount: amount
+  fn cover_balance() -> quantity {
+    return ledger::asset::balance(
+      account: CoverAccount,
+      asset_definition: CoverSettlementAsset
     );
   }
 
-  fn risk_vault_lock(
-    int policy_id,
-    quantity covered_notional,
-    quantity payout_amount
-  ) -> int {
-    return contract::invoke(
-      contract: CoverRiskVaultContract,
-      entrypoint: "lock_liability",
-      returns: "int",
-      bucket_id: 3,
-      exposure_id: policy_id,
-      notional: covered_notional,
-      collateral_locked: payout_amount,
-      backlog: CoverAutomationBacklog
-    );
+  fn reserve_after_premium(quantity premium) -> quantity {
+    let current_balance = cover_balance();
+    if context::authority() == CoverAccount {
+      return current_balance;
+    }
+    return current_balance + premium;
   }
 
-  fn risk_vault_release(int policy_id) -> int {
-    return contract::invoke(
-      contract: CoverRiskVaultContract,
-      entrypoint: "release_liability",
-      returns: "int",
-      bucket_id: 3,
-      exposure_id: policy_id,
-      backlog: CoverAutomationBacklog
+  fn release_policy_reserve(int policy_id) {
+    let payout = CoverPolicyPayoutAmount.get(policy_id).unwrap_or(zero_quantity());
+    require(
+      CoverReservedPayout >= payout,
+      PolicyManagerError::ReserveInvariant
     );
+    CoverReservedPayout = CoverReservedPayout - payout;
   }
 
-  fn risk_vault_payout(
-    int policy_id,
-    AccountId recipient,
-    quantity amount
-  ) -> quantity {
-    return contract::invoke(
-      contract: CoverRiskVaultContract,
-      entrypoint: "settle_payout",
-      returns: "quantity",
-      bucket_id: 3,
-      exposure_id: policy_id,
-      recipient: recipient,
-      amount: amount
+  fn assert_reserve_backed() {
+    require(
+      cover_balance() >= CoverReservedPayout,
+      PolicyManagerError::InsufficientReserve
     );
-  }
-
-  fn report_risk_bucket() {
-    let accepted = contract::invoke(
-      contract: CoverRiskVaultContract,
-      entrypoint: "report_bucket_c2c",
-      returns: "int",
-      bucket_id: 3,
-      backlog: CoverAutomationBacklog,
-      safe_mode: CoverAutomationSafeMode
-    );
-    require(accepted == 1, PolicyManagerError::RiskVaultCallFailed);
   }
 
   fn reset_breach(int policy_id) {
@@ -232,19 +207,23 @@ seiyaku PolicyManager {
     CoverPolicyObservationCount[policy_id] = 0;
   }
 
-  fn apply_verified_observation(
+  fn apply_oracle_observation(
     int policy_id,
     decimal observed_price,
     int oracle_slot,
     int status_flags,
     int attestation_hash
   ) {
+    assert_oracle_authority();
     assert_policy_exists(policy_id: policy_id);
     require(CoverPolicyStatus.get(policy_id).unwrap_or(0) == 1, PolicyManagerError::PolicyNotActive);
+    require(CoverAutomationSafeMode == 0, PolicyManagerError::AutomationUnsafe);
     require(observed_price >= zero_decimal(), PolicyManagerError::InvalidObservedPrice);
     require(status_flags == 0, PolicyManagerError::InvalidStatusFlags);
     require(attestation_hash > 0, PolicyManagerError::MissingAttestation);
-    require(oracle_slot >= 0 && context::block_height() >= oracle_slot, PolicyManagerError::InvalidOracleSlot);
+    let current_slot = context::block_height();
+    require(oracle_slot >= 0 && current_slot >= oracle_slot, PolicyManagerError::InvalidOracleSlot);
+    require(current_slot - oracle_slot <= CoverOracleStaleSlots, PolicyManagerError::OracleStale);
     let prior_slot = CoverPolicyLastOracleSlot.get(policy_id).unwrap_or(-1);
     require(oracle_slot > prior_slot, PolicyManagerError::OracleSlotReplay);
     let breached = observed_price < CoverPolicyLowerBound.get(policy_id).unwrap_or(zero_decimal()) ||
@@ -281,23 +260,26 @@ seiyaku PolicyManager {
     let expiry = CoverPolicyRegistrationSlot.get(policy_id).unwrap_or(0) +
       CoverPolicyMonitoringWindowSlots.get(policy_id).unwrap_or(0);
     require(context::block_height() >= expiry, PolicyManagerError::PolicyLive);
-    risk_vault_release(policy_id: policy_id);
+    release_policy_reserve(policy_id: policy_id);
     CoverPolicyStatus[policy_id] = 4;
   }
 
   hajimari(
     AssetDefinitionId settlement_asset,
     AccountId cover_account,
-    bytes risk_vault_contract,
     AccountId guardian,
-    bytes oracle_public_key,
-    int oracle_scheme,
+    AccountId oracle_authority,
     int default_required_observations,
     int oracle_stale_slots
   ) {
     require(cover_account != context::authority(), PolicyManagerError::InvalidAuthoritySeparation);
     require(guardian != context::authority() && guardian != cover_account, PolicyManagerError::InvalidAuthoritySeparation);
-    require(oracle_scheme > 0, PolicyManagerError::InvalidOracleScheme);
+    require(
+      oracle_authority != context::authority() &&
+      oracle_authority != guardian &&
+      oracle_authority != cover_account,
+      PolicyManagerError::InvalidAuthoritySeparation
+    );
     require(default_required_observations > 0, PolicyManagerError::InvalidRequiredObservations);
     require(oracle_stale_slots >= 0, PolicyManagerError::InvalidOracleStaleSlots);
     CoverInitialized = 1;
@@ -305,12 +287,13 @@ seiyaku PolicyManager {
     CoverGuardian = guardian;
     CoverAccount = cover_account;
     CoverSettlementAsset = settlement_asset;
-    CoverRiskVaultContract = risk_vault_contract;
     CoverWithdrawalOnly = 1;
-    CoverOraclePublicKey = oracle_public_key;
-    CoverOracleScheme = oracle_scheme;
+    CoverOracleAuthority = oracle_authority;
     CoverDefaultRequiredObservations = default_required_observations;
     CoverOracleStaleSlots = oracle_stale_slots;
+    CoverReservedPayout = zero_quantity();
+    CoverPremiumCollected = zero_quantity();
+    CoverSettledPayouts = zero_quantity();
     CoverAutomationExecutor = context::authority();
     CoverObservationJobId = 0;
     CoverAutomationCadence = 0;
@@ -339,6 +322,23 @@ seiyaku PolicyManager {
   kotoage fn exit_withdrawal_only() authorize("Admin") {
     assert_owner();
     CoverWithdrawalOnly = 0;
+  }
+
+  kotoage fn configure_oracle_authority(AccountId oracle_authority) authorize("Admin") {
+    assert_owner();
+    require(
+      oracle_authority != CoverOwner &&
+      oracle_authority != CoverGuardian &&
+      oracle_authority != CoverAccount,
+      PolicyManagerError::InvalidAuthoritySeparation
+    );
+    CoverOracleAuthority = oracle_authority;
+  }
+
+  kotoage fn configure_oracle_stale_slots(int stale_slots) authorize("Admin") {
+    assert_owner();
+    require(stale_slots >= 0, PolicyManagerError::InvalidOracleStaleSlots);
+    CoverOracleStaleSlots = stale_slots;
   }
 
   kotoage fn sync_automation(
@@ -370,7 +370,6 @@ seiyaku PolicyManager {
     require(safe_mode == 0 || safe_mode == 1, PolicyManagerError::InvalidSafeMode);
     CoverAutomationBacklog = current_backlog;
     CoverAutomationSafeMode = safe_mode;
-    report_risk_bucket();
   }
 
   kotoage fn configure_trigger_lifecycle(
@@ -387,6 +386,32 @@ seiyaku PolicyManager {
     CoverLifecycleEnabled = enabled;
     CoverLifecycleNextSlot = context::block_height() + cadence_slots;
     ledger::trigger::set_enabled(Name::parse("soraswap_cover_lifecycle_tick"), enabled);
+  }
+
+  kotoage fn fund_reserve(quantity amount) authorize("AssetOps") {
+    require(amount > zero_quantity(), PolicyManagerError::InvalidPayout);
+    move_asset_if_needed(
+      source: context::authority(),
+      destination: CoverAccount,
+      amount: amount
+    );
+  }
+
+  kotoage fn withdraw_surplus(
+    AccountId recipient,
+    quantity amount
+  ) authorize("AssetOps") {
+    assert_owner();
+    require(amount > zero_quantity(), PolicyManagerError::InvalidPayout);
+    require(
+      cover_balance() >= CoverReservedPayout + amount,
+      PolicyManagerError::InsufficientReserve
+    );
+    move_asset_if_needed(
+      source: CoverAccount,
+      destination: recipient,
+      amount: amount
+    );
   }
 
   kotoage fn register_policy(
@@ -406,6 +431,12 @@ seiyaku PolicyManager {
     require(monitoring_window_slots > 0, PolicyManagerError::InvalidMonitoringWindow);
     require(required_observations > 0 && required_observations <= 64, PolicyManagerError::InvalidRequiredObservations);
     require(CoverNextPolicyId >= 1 && CoverNextPolicyId <= 64, PolicyManagerError::PolicyLimit);
+    assert_reserve_backed();
+    let next_reserved = CoverReservedPayout + payout_amount;
+    require(
+      reserve_after_premium(premium: premium_paid) >= next_reserved,
+      PolicyManagerError::InsufficientReserve
+    );
     let policy_id = CoverNextPolicyId;
     CoverNextPolicyId = policy_id + 1;
     move_asset_if_needed(
@@ -413,12 +444,8 @@ seiyaku PolicyManager {
       destination: CoverAccount,
       amount: premium_paid
     );
-    require(risk_vault_deposit(amount: premium_paid) >= premium_paid, PolicyManagerError::RiskVaultCallFailed);
-    risk_vault_lock(
-      policy_id: policy_id,
-      covered_notional: covered_notional,
-      payout_amount: payout_amount
-    );
+    CoverReservedPayout = next_reserved;
+    CoverPremiumCollected = CoverPremiumCollected + premium_paid;
     CoverPolicyOwner[policy_id] = context::authority();
     CoverPolicyLowerBound[policy_id] = lower_bound;
     CoverPolicyUpperBound[policy_id] = upper_bound;
@@ -439,17 +466,37 @@ seiyaku PolicyManager {
     return policy_id;
   }
 
+  kotoage fn record_observation(
+    int policy_id,
+    decimal observed_price,
+    int oracle_slot,
+    int status_flags,
+    int attestation_hash
+  ) authorize("Entry") {
+    apply_oracle_observation(
+      policy_id: policy_id,
+      observed_price: observed_price,
+      oracle_slot: oracle_slot,
+      status_flags: status_flags,
+      attestation_hash: attestation_hash
+    );
+  }
+
   kotoage fn route_claim(int policy_id) -> quantity authorize("AssetOps") {
     assert_policy_owner(policy_id: policy_id);
     require(CoverPolicyStatus.get(policy_id).unwrap_or(0) == 2, PolicyManagerError::PolicyNotClaimable);
     require(CoverPolicyClaimPayout.get(policy_id).unwrap_or(zero_quantity()) == zero_quantity(), PolicyManagerError::PolicyAlreadyClaimed);
-    let payout = risk_vault_payout(
-      policy_id: policy_id,
-      recipient: context::authority(),
-      amount: CoverPolicyPayoutAmount.get(policy_id).unwrap_or(zero_quantity())
-    );
+    let payout = CoverPolicyPayoutAmount.get(policy_id).unwrap_or(zero_quantity());
     require(payout > zero_quantity(), PolicyManagerError::InvalidPayout);
-    risk_vault_release(policy_id: policy_id);
+    require(CoverReservedPayout >= payout, PolicyManagerError::ReserveInvariant);
+    require(cover_balance() >= payout, PolicyManagerError::InsufficientReserve);
+    move_asset_if_needed(
+      source: CoverAccount,
+      destination: context::authority(),
+      amount: payout
+    );
+    release_policy_reserve(policy_id: policy_id);
+    CoverSettledPayouts = CoverSettledPayouts + payout;
     CoverPolicyClaimPayout[policy_id] = payout;
     CoverPolicyStatus[policy_id] = 3;
     return payout;
@@ -478,7 +525,7 @@ seiyaku PolicyManager {
         if CoverPolicyStatus.get(cursor).unwrap_or(0) == 1 &&
           current_slot >= CoverPolicyRegistrationSlot.get(cursor).unwrap_or(0) +
             CoverPolicyMonitoringWindowSlots.get(cursor).unwrap_or(0) {
-          risk_vault_release(policy_id: cursor);
+          release_policy_reserve(policy_id: cursor);
           CoverPolicyStatus[cursor] = 4;
         }
         cursor = cursor + 1;
@@ -494,17 +541,42 @@ seiyaku PolicyManager {
     CoverLifecycleNextSlot = current_slot + CoverLifecycleCadenceSlots;
   }
 
-  view fn manager_config() -> (AssetDefinitionId, bytes, int, int, int, int, int, int, int) {
+  view fn manager_config() -> (
+    AssetDefinitionId,
+    AccountId,
+    AccountId,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int
+  ) {
     return (
       CoverSettlementAsset,
-      CoverRiskVaultContract,
-      CoverInitialized,
+      CoverAccount,
+      CoverOracleAuthority,
       CoverWithdrawalOnly,
       CoverDefaultRequiredObservations,
       CoverObservationJobId,
       CoverAutomationCadence,
       CoverAutomationBacklogCap,
       CoverOracleStaleSlots
+    );
+  }
+
+  view fn reserve_state() -> (quantity, quantity, quantity, quantity, quantity) {
+    let balance = cover_balance();
+    var surplus = zero_quantity();
+    if balance > CoverReservedPayout {
+      surplus = balance - CoverReservedPayout;
+    }
+    return (
+      balance,
+      CoverReservedPayout,
+      surplus,
+      CoverPremiumCollected,
+      CoverSettledPayouts
     );
   }
 

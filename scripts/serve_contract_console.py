@@ -10,11 +10,9 @@ import json
 import mimetypes
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -31,6 +29,22 @@ try:
 except ModuleNotFoundError:  # Python < 3.11
     import tomli as tomllib
 
+SCRIPT_ROOT = Path(__file__).resolve().parent
+if str(SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_ROOT))
+
+from iroha_canonical_request_auth import (
+    CANONICAL_ACCOUNT_AUTH_HEADERS,
+    build_account_request_headers,
+    canonical_account_request_message,
+    canonical_ed25519_account_header,
+    canonical_network_id_bytes,
+    canonical_request_query,
+    raw_ed25519_public_key_hex,
+    sign_ed25519_message,
+    verify_ed25519_signature_b64,
+)
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEPLOYMENTS_ROOT = REPO_ROOT / "deployments"
@@ -40,6 +54,7 @@ MAX_BROWSER_GAS_LIMIT = 50_000_000
 DEFAULT_NETWORK_PREFIX = "753"
 TESTNET_NETWORK_PREFIX = "369"
 TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0"
+TAIRA_NETWORK_ID = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 TAIRA_NETWORK_PREFIX = 369
 BRIDGE_CONTRACT_KEY = "bridge.sccp_bridge"
 PUBLIC_MUTATION_ENVIRONMENTS = {"testnet", "production"}
@@ -50,6 +65,7 @@ MAX_BROWSER_QUERY_STRING_CHARS = 4096
 MAX_BROWSER_QUERY_FIELDS = 32
 HASH_HEX_CHARS = 64
 MAX_HISTORY_ASSET_ID_CHARS = 512
+MAX_ASSET_DEFINITION_SELECTOR_CHARS = 512
 DEFAULT_UPSTREAM_TIMEOUT_SECONDS = 60
 ACCESS_LOG_QUERY_VALUE_CHARS = 256
 READ_PROXY_OFFSET_CAP = 10000
@@ -76,13 +92,14 @@ BRIDGE_PROOF_FIELD_BY_PATH = {
     "/v1/bridge/messages": "native_proof_b64",
 }
 PIPELINE_STATUS_KINDS = {"Queued", "Approved", "Committed", "Applied", "Rejected", "Expired"}
-PIPELINE_STATUS_SCOPES = {"local", "auto", "global"}
+PIPELINE_STATUS_SCOPES = {"local", "global"}
 PIPELINE_STATUS_SOURCES = {"cache", "queue", "state"}
 SCCP_EXTERNAL_PROFILES = {
     "ethereum-mainnet",
     "ethereum-sepolia",
     "bsc-mainnet",
     "bsc-testnet",
+    "solana-testnet",
     "tron-mainnet",
     "tron-nile",
     "tron-shasta",
@@ -102,10 +119,158 @@ BRIDGE_RESPONSE_FIELDS = {
     "transaction_payload_b64",
     "signing_message_b64",
 }
+CONTRACT_CALL_RESPONSE_FIELDS = {
+    "ok",
+    "submitted",
+    "dataspace",
+    "contract_address",
+    "code_hash_hex",
+    "abi_hash_hex",
+    "creation_time_ms",
+    "transaction_ttl_ms",
+    "tx_hash_hex",
+    "pipeline_status",
+    "entrypoint_hash_hex",
+    "transaction_payload_b64",
+    "signing_message_b64",
+    "entrypoint",
+    "operation_receipt",
+}
+CONTRACT_CALL_REQUIRED_RESPONSE_FIELDS = CONTRACT_CALL_RESPONSE_FIELDS - {
+    "transaction_ttl_ms",
+    "pipeline_status",
+}
+CONTRACT_CALL_RECEIPT_FIELDS = {
+    "operation_kind",
+    "status",
+    "transport",
+    "dataspace",
+    "contract_alias",
+    "contract_address",
+    "code_hash_hex",
+    "abi_hash_hex",
+    "tx_hash_hex",
+    "entrypoint",
+    "entrypoint_hash_hex",
+    "gas_limit",
+    "gas_used",
+    "fee_payment",
+    "payload_digest_hex",
+}
+CONTRACT_CALL_REQUIRED_RECEIPT_FIELDS = {
+    "operation_kind",
+    "status",
+    "transport",
+    "dataspace",
+    "contract_address",
+    "code_hash_hex",
+    "abi_hash_hex",
+    "entrypoint",
+    "gas_limit",
+    "fee_payment",
+    "payload_digest_hex",
+}
+CURRENT_DEPLOY_STRATEGY = "ivm_contract_deploy"
+DEPLOYMENT_DATASPACE_ALIAS = "universal"
+DEPLOYMENT_DATASPACE_ID = "0"
+CHAIN_FINGERPRINT_FIELDS = frozenset({"torii_url", "chain", "block_1_hash"})
+DEPLOYMENT_RECORD_FIELDS = frozenset(
+    {
+        "contract_key",
+        "generated_at",
+        "environment",
+        "contract_source",
+        "contract_alias",
+        "dataspace_alias",
+        "dataspace_id",
+        "contract_address",
+        "deploy_nonce",
+        "code_hash_hex",
+        "abi_hash_hex",
+        "deploy_strategy",
+        "chain_fingerprint",
+        "response",
+    }
+)
+CONTRACTS_SNAPSHOT_FIELDS = frozenset(
+    {"generated_at", "environment", "status", "chain_fingerprint", "contracts"}
+)
+CONTRACT_DEPLOY_RESPONSE_FIELDS = frozenset(
+    {
+        "authority",
+        "chain_discriminant",
+        "chain_id",
+        "code_hash_hex",
+        "commit_deployment_tx_hash",
+        "contract_address",
+        "contract_alias",
+        "contract_subject_account",
+        "dataspace",
+        "deploy_nonce",
+        "deployment_state",
+        "expected_previous_contract_address",
+        "fee_quotes",
+        "final",
+        "next_deploy_nonce",
+        "ok",
+        "operation_receipt",
+        "register_bytes_chunk_count",
+        "register_bytes_chunk_size",
+        "register_bytes_stage_tx_hashes",
+        "register_bytes_tx_hash",
+        "register_bytes_tx_strategy",
+        "register_manifest_tx_hash",
+        "submitted",
+        "terminal_kind",
+        "torii_url",
+    }
+)
+CONTRACT_DEPLOY_RECEIPT_FIELDS = frozenset(
+    {
+        "operation_kind",
+        "status",
+        "transport",
+        "torii_url",
+        "chain_id",
+        "authority",
+        "chain_discriminant",
+        "dataspace",
+        "contract_alias",
+        "contract_address",
+        "contract_subject_account",
+        "code_hash_hex",
+        "abi_hash_hex",
+        "tx_hash_hex",
+        "entrypoint",
+        "entrypoint_hash_hex",
+        "gas_limit",
+        "gas_used",
+        "fee_payment",
+        "fee_quotes",
+        "payload_digest_hex",
+        "deployment_state",
+    }
+)
 CANONICAL_BASE64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
 LOWER_NONZERO_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
-ED25519_PRIVATE_MULTIHASH_RE = re.compile(r"^802620([0-9A-Fa-f]{64})$")
-ED25519_PUBLIC_MULTIHASH_RE = re.compile(r"^ed0120([0-9A-Fa-f]{64})$", re.IGNORECASE)
+CANONICAL_HASH_LITERAL_RE = re.compile(r"^hash:([0-9A-F]{64})#([0-9A-F]{4})$")
+CANONICAL_DECIMAL_STRING_RE = re.compile(r"^(0|[1-9][0-9]*)$")
+CANONICAL_QUANTITY_RE = re.compile(r"^(0|[1-9][0-9]*)(?:\.([0-9]*[1-9]))?$")
+CANONICAL_INT_ARGUMENT_RE = re.compile(r"^(?:0|-?[1-9][0-9]*)$")
+CANONICAL_DECIMAL_ARGUMENT_RE = re.compile(
+    r"^-?(?:0|[1-9][0-9]*)(?:\.([0-9]*[1-9]))?$"
+)
+MANIFEST_NUMERIC_TYPES = frozenset({"int", "quantity", "decimal"})
+FEE_CHARGE_KIND_ORDER = {"nexus": 0, "pipeline_gas": 1}
+CANONICAL_ACCOUNT_AUTH_PATHS = frozenset(
+    {
+        "/v1/contracts/view",
+        "/v1/contracts/view/batch",
+        "/v1/contracts/call",
+        "/v1/bridge/proofs/submit",
+        "/v1/bridge/messages",
+    }
+)
 PLACEHOLDER_EXACT_VALUES = {"none", "null", "n/a", "na", "example"}
 PLACEHOLDER_TOKEN_RE = re.compile(
     r"change[_ -]?me|changeme|replace[_ -]?me|replaceme|todo|tbd|placeholder", re.IGNORECASE
@@ -335,93 +500,333 @@ def iroha_transaction_signing_message(transaction_payload: bytes) -> bytes:
     return bytes(digest)
 
 
-def _anonymous_regular_file(payload: bytes) -> int:
-    fd, path = tempfile.mkstemp(prefix="soraswap-bridge-sign-")
-    try:
-        os.fchmod(fd, 0o600)
-        view = memoryview(payload)
-        offset = 0
-        while offset < len(view):
-            written = os.write(fd, view[offset:])
-            if written <= 0:
-                raise OSError("short write while preparing detached signing input")
-            offset += written
-        os.lseek(fd, 0, os.SEEK_SET)
-        os.unlink(path)
-        return fd
-    except Exception:
-        os.close(fd)
-        try:
-            os.unlink(path)
-        except FileNotFoundError:
-            pass
-        raise
+def authority_fee_payment_intent(gas_limit: int) -> dict[str, Any]:
+    """Return the sole first-release fee intent used by browser-backed mutations."""
+
+    return {
+        "payer": "authority",
+        "value": {
+            "charge_limits": [],
+            "gas_limit": gas_limit,
+        },
+    }
 
 
-def _run_openssl_pkeyutl(arguments: list[str], inputs: list[bytes]) -> subprocess.CompletedProcess[bytes]:
-    openssl = shutil.which("openssl")
-    if not openssl:
-        raise ValueError("local detached bridge signing requires the openssl executable")
-    descriptors: list[int] = []
-    try:
-        descriptors = [_anonymous_regular_file(value) for value in inputs]
-        command = [openssl, "pkeyutl", *arguments]
-        command = [part.format(**{f"fd{index}": fd for index, fd in enumerate(descriptors)}) for part in command]
-        try:
-            return subprocess.run(
-                command,
-                capture_output=True,
-                check=False,
-                close_fds=True,
-                pass_fds=tuple(descriptors),
-                timeout=10,
+def validate_authority_fee_payment_intent(
+    value: Any,
+    *,
+    expected_gas_limit: int,
+    context: str,
+    allow_quoted_charge_limits: bool = False,
+) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"payer", "value"}:
+        raise ValueError(f"{context} must contain only payer and value")
+    if value.get("payer") != "authority":
+        raise ValueError(f"{context}.payer must be authority")
+    payment = value.get("value")
+    if not isinstance(payment, dict) or set(payment) != {"charge_limits", "gas_limit"}:
+        raise ValueError(f"{context}.value must contain only charge_limits and gas_limit")
+    charge_limits = payment.get("charge_limits")
+    if not isinstance(charge_limits, list) or len(charge_limits) > 2:
+        raise ValueError(f"{context}.value.charge_limits must be a bounded array")
+    if charge_limits and not allow_quoted_charge_limits:
+        raise ValueError(f"{context}.value.charge_limits must be empty before fee quotation")
+    previous_kind_order = -1
+    for index, limit in enumerate(charge_limits):
+        limit_context = f"{context}.value.charge_limits[{index}]"
+        if not isinstance(limit, dict) or set(limit) != {
+            "kind",
+            "asset_definition_id",
+            "max_amount",
+        }:
+            raise ValueError(
+                f"{limit_context} must contain only kind, asset_definition_id, and max_amount"
             )
-        except (OSError, subprocess.SubprocessError) as exc:
-            raise ValueError("local detached bridge signing failed to execute") from exc
-    finally:
-        for fd in descriptors:
-            os.close(fd)
+        tagged_kind = limit.get("kind")
+        if not isinstance(tagged_kind, dict) or set(tagged_kind) != {"kind", "value"}:
+            raise ValueError(f"{limit_context}.kind must be an exact tagged fee kind")
+        kind = tagged_kind.get("kind")
+        if kind not in FEE_CHARGE_KIND_ORDER or tagged_kind.get("value") is not None:
+            raise ValueError(f"{limit_context}.kind must be nexus or pipeline_gas with null value")
+        kind_order = FEE_CHARGE_KIND_ORDER[kind]
+        if kind_order <= previous_kind_order:
+            raise ValueError(
+                f"{context}.value.charge_limits must be unique and ordered nexus before pipeline_gas"
+            )
+        previous_kind_order = kind_order
+        asset_definition_id = limit.get("asset_definition_id")
+        if (
+            not isinstance(asset_definition_id, str)
+            or not asset_definition_id
+            or asset_definition_id != asset_definition_id.strip()
+            or any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in asset_definition_id)
+        ):
+            raise ValueError(f"{limit_context}.asset_definition_id must be an exact non-empty ID")
+        max_amount = limit.get("max_amount")
+        quantity_match = CANONICAL_QUANTITY_RE.fullmatch(
+            max_amount if isinstance(max_amount, str) else ""
+        )
+        if quantity_match is None:
+            raise ValueError(f"{limit_context}.max_amount must be a positive canonical Quantity")
+        integer, fraction = quantity_match.groups()
+        fraction = fraction or ""
+        digits = integer + fraction
+        if (
+            len(fraction) > 28
+            or len(digits) > 154
+            or int(digits) == 0
+            or int(digits) > (1 << 511) - 1
+        ):
+            raise ValueError(f"{limit_context}.max_amount must be a positive canonical Quantity")
+    gas_limit = payment.get("gas_limit")
+    if (
+        isinstance(gas_limit, bool)
+        or not isinstance(gas_limit, int)
+        or gas_limit != expected_gas_limit
+    ):
+        raise ValueError(f"{context}.value.gas_limit does not match the requested gas limit")
+    return value
 
 
-def sign_bridge_message_ed25519(private_key: str, public_key: str | None, message: bytes) -> str:
-    private_match = ED25519_PRIVATE_MULTIHASH_RE.fullmatch(private_key)
-    if private_match is None:
-        raise ValueError("bridge detached signing requires an Ed25519 private key")
+def sign_transaction_message_ed25519(private_key: str, public_key: str | None, message: bytes) -> str:
     if len(message) != 32:
-        raise ValueError("bridge signing message must be the exact 32-byte prepared transaction hash")
-
-    private_der = bytes.fromhex("302e020100300506032b657004220420") + bytes.fromhex(private_match.group(1))
-    signed = _run_openssl_pkeyutl(
-        ["-sign", "-rawin", "-inkey", "/dev/fd/{fd0}", "-keyform", "DER", "-in", "/dev/fd/{fd1}"],
-        [private_der, message],
+        raise ValueError("signing message must be the exact 32-byte prepared transaction hash")
+    return sign_ed25519_message(
+        private_key,
+        public_key,
+        message,
+        context="detached transaction signing",
     )
-    if signed.returncode != 0 or len(signed.stdout) != 64:
-        raise ValueError("local detached Ed25519 signing failed")
 
-    public_match = ED25519_PUBLIC_MULTIHASH_RE.fullmatch(public_key or "")
-    if public_match is None:
-        raise ValueError("bridge detached signing requires an Ed25519 public key")
-    public_der = bytes.fromhex("302a300506032b6570032100") + bytes.fromhex(public_match.group(1))
-    verified = _run_openssl_pkeyutl(
-        [
-            "-verify",
-            "-rawin",
-            "-pubin",
-            "-inkey",
-            "/dev/fd/{fd0}",
-            "-keyform",
-            "DER",
-            "-in",
-            "/dev/fd/{fd1}",
-            "-sigfile",
-            "/dev/fd/{fd2}",
-        ],
-        [public_der, message, signed.stdout],
+
+def validate_prepared_transaction(response_json: dict[str, Any], *, context: str) -> dict[str, Any]:
+    transaction_payload_b64 = response_json.get("transaction_payload_b64")
+    signing_message_b64 = response_json.get("signing_message_b64")
+    transaction_payload = decode_canonical_base64(
+        transaction_payload_b64,
+        "transaction_payload_b64",
+        maximum=16 * 1024 * 1024,
     )
-    if verified.returncode != 0:
-        raise ValueError("configured Ed25519 public and private keys do not form a signing pair")
+    signing_message = decode_canonical_base64(
+        signing_message_b64,
+        "signing_message_b64",
+        maximum=32,
+    )
+    if len(signing_message) != 32 or signing_message != iroha_transaction_signing_message(
+        transaction_payload
+    ):
+        raise ValueError(
+            f"{context} signing message does not match the exact canonical transaction payload"
+        )
+    return {
+        "transaction_payload_b64": transaction_payload_b64,
+        "signing_message": signing_message,
+        "signing_message_b64": signing_message_b64,
+    }
 
-    return base64.b64encode(signed.stdout).decode("ascii")
+
+def _required_lower_hash(value: Any, field_name: str) -> str:
+    if (
+        not isinstance(value, str)
+        or LOWER_NONZERO_HASH_RE.fullmatch(value) is None
+        or set(value) == {"0"}
+    ):
+        raise ValueError(f"{field_name} must be a nonzero lowercase 32-byte hash")
+    return value
+
+
+def validate_contract_call_response(
+    response_json: Any,
+    *,
+    expected_request: dict[str, Any],
+    submitted: bool,
+    expected_preparation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context = "contract call submission" if submitted else "contract call preparation"
+    if not isinstance(response_json, dict):
+        raise ValueError(f"{context} response must be a JSON object")
+    unknown = set(response_json) - CONTRACT_CALL_RESPONSE_FIELDS
+    missing = CONTRACT_CALL_REQUIRED_RESPONSE_FIELDS - set(response_json)
+    if unknown or missing:
+        raise ValueError(f"{context} response does not match the closed first-release DTO")
+    if response_json.get("ok") is not True or response_json.get("submitted") is not submitted:
+        raise ValueError(f"{context} response has an invalid ok/submitted state")
+
+    creation_time_ms = response_json.get("creation_time_ms")
+    if (
+        isinstance(creation_time_ms, bool)
+        or not isinstance(creation_time_ms, int)
+        or creation_time_ms <= 0
+    ):
+        raise ValueError(f"{context} response requires a positive creation_time_ms")
+    if submitted and creation_time_ms != expected_request.get("creation_time_ms"):
+        raise ValueError("contract call submission changed the prepared creation_time_ms")
+    if response_json.get("contract_address") != expected_request.get("contract_address"):
+        raise ValueError(f"{context} response changed the requested contract address")
+    if response_json.get("entrypoint") != expected_request.get("entrypoint"):
+        raise ValueError(f"{context} response changed the requested entrypoint")
+    dataspace = response_json.get("dataspace")
+    if not isinstance(dataspace, str) or not dataspace:
+        raise ValueError(f"{context} response requires a dataspace")
+    code_hash_hex = _required_lower_hash(response_json.get("code_hash_hex"), "code_hash_hex")
+    abi_hash_hex = _required_lower_hash(response_json.get("abi_hash_hex"), "abi_hash_hex")
+
+    receipt = response_json.get("operation_receipt")
+    if not isinstance(receipt, dict):
+        raise ValueError(f"{context} operation_receipt must be an object")
+    if set(receipt) - CONTRACT_CALL_RECEIPT_FIELDS or (
+        CONTRACT_CALL_REQUIRED_RECEIPT_FIELDS - set(receipt)
+    ):
+        raise ValueError(f"{context} operation_receipt does not match the closed first-release DTO")
+    expected_status = "submitted" if submitted else "pending_signature"
+    if (
+        receipt.get("operation_kind") != "contract_call"
+        or receipt.get("status") != expected_status
+        or receipt.get("transport") != "torii"
+        or receipt.get("dataspace") != dataspace
+        or receipt.get("contract_address") != expected_request.get("contract_address")
+        or receipt.get("code_hash_hex") != code_hash_hex
+        or receipt.get("abi_hash_hex") != abi_hash_hex
+        or receipt.get("entrypoint") != expected_request.get("entrypoint")
+    ):
+        raise ValueError(f"{context} operation_receipt is not bound to the requested call")
+    gas_limit = expected_request["fee_payment"]["value"]["gas_limit"]
+    if receipt.get("gas_limit") != gas_limit:
+        raise ValueError(f"{context} operation_receipt changed the requested gas limit")
+    fee_payment = validate_authority_fee_payment_intent(
+        receipt.get("fee_payment"),
+        expected_gas_limit=gas_limit,
+        context=f"{context} operation_receipt.fee_payment",
+        allow_quoted_charge_limits=True,
+    )
+    if receipt.get("gas_used") is not None:
+        raise ValueError(f"{context} operation_receipt.gas_used must be absent or null")
+    payload_digest_hex = _required_lower_hash(
+        receipt.get("payload_digest_hex"), "payload_digest_hex"
+    )
+
+    stable = {
+        "dataspace": dataspace,
+        "contract_address": response_json["contract_address"],
+        "code_hash_hex": code_hash_hex,
+        "abi_hash_hex": abi_hash_hex,
+        "creation_time_ms": creation_time_ms,
+        "transaction_ttl_ms": response_json.get("transaction_ttl_ms"),
+        "entrypoint": response_json["entrypoint"],
+        "contract_alias": receipt.get("contract_alias"),
+        "gas_limit": gas_limit,
+        "fee_payment": fee_payment,
+        "payload_digest_hex": payload_digest_hex,
+    }
+    if expected_preparation is not None and stable != expected_preparation["stable"]:
+        raise ValueError("contract call submission metadata does not match preparation")
+
+    if not submitted:
+        if any(
+            response_json.get(field) is not None
+            for field in ("tx_hash_hex", "entrypoint_hash_hex", "pipeline_status")
+        ):
+            raise ValueError("contract call preparation must not include submission state")
+        draft = validate_prepared_transaction(response_json, context=context)
+        return {**draft, "creation_time_ms": creation_time_ms, "stable": stable}
+
+    tx_hash_hex = _required_lower_hash(response_json.get("tx_hash_hex"), "tx_hash_hex")
+    entrypoint_hash_hex = _required_lower_hash(
+        response_json.get("entrypoint_hash_hex"), "entrypoint_hash_hex"
+    )
+    if response_json.get("transaction_payload_b64") is not None or response_json.get(
+        "signing_message_b64"
+    ) is not None:
+        raise ValueError("contract call submission must not return preparation material")
+    if receipt.get("tx_hash_hex") != tx_hash_hex or receipt.get("entrypoint_hash_hex") != entrypoint_hash_hex:
+        raise ValueError("contract call submission receipt hashes do not match the response")
+    return {"tx_hash_hex": tx_hash_hex, "entrypoint_hash_hex": entrypoint_hash_hex, "stable": stable}
+
+
+def execute_detached_contract_call(
+    execute_upstream_request: Any,
+    *,
+    environment: str,
+    signer: "SignerBinding",
+    torii_url: str,
+    request_payload: dict[str, Any],
+    timeout: int,
+) -> dict[str, Any]:
+    """Prepare, verify, sign locally, and submit one current Torii contract call."""
+
+    preparation_payload = execute_upstream_request(
+        environment=environment,
+        signer=signer,
+        torii_url=torii_url,
+        mode="call-prepare",
+        path="/v1/contracts/call",
+        request_payload=request_payload,
+        timeout=timeout,
+    )
+    if not preparation_payload.get("ok"):
+        return preparation_payload
+    try:
+        prepared = validate_contract_call_response(
+            preparation_payload.get("response_json"),
+            expected_request=request_payload,
+            submitted=False,
+        )
+        signature_b64 = sign_transaction_message_ed25519(
+            str(signer.private_key or ""),
+            signer.public_key,
+            prepared["signing_message"],
+        )
+        public_key_hex = raw_ed25519_public_key_hex(signer.public_key)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "error_code": "contract_call_detached_signing_failed",
+            "error": str(exc),
+            "preparation": preparation_payload,
+        }
+
+    submission_request = {
+        **request_payload,
+        "public_key_hex": public_key_hex,
+        "signature_b64": signature_b64,
+        "creation_time_ms": prepared["creation_time_ms"],
+    }
+    submission_payload = execute_upstream_request(
+        environment=environment,
+        signer=signer,
+        torii_url=torii_url,
+        mode="call-submit",
+        path="/v1/contracts/call",
+        request_payload=submission_request,
+        timeout=timeout,
+    )
+    if not submission_payload.get("ok"):
+        submission_payload["preparation"] = preparation_payload
+        return submission_payload
+    try:
+        submitted = validate_contract_call_response(
+            submission_payload.get("response_json"),
+            expected_request=submission_request,
+            submitted=True,
+            expected_preparation=prepared,
+        )
+    except ValueError as exc:
+        submission_payload["ok"] = False
+        submission_payload["error_code"] = "invalid_contract_call_submission_response"
+        submission_payload["error"] = str(exc)
+        submission_payload["preparation"] = preparation_payload
+        return submission_payload
+
+    submission_payload["tx_hash_hex"] = submitted["tx_hash_hex"]
+    submission_payload["detached_signing"] = {
+        "prepared": True,
+        "locally_signed": True,
+        "submitted": True,
+        "creation_time_ms": prepared["creation_time_ms"],
+        "public_key_encoding": "raw_ed25519_hex",
+        "private_key_forwarded": False,
+    }
+    return submission_payload
 
 
 def validate_bridge_response_metadata(response_json: dict[str, Any]) -> dict[str, Any]:
@@ -491,24 +896,9 @@ def validate_bridge_preparation_response(response_json: Any) -> dict[str, Any]:
     metadata = validate_bridge_response_metadata(response_json)
     if response_json.get("tx_hash_hex") is not None:
         raise ValueError("bridge preparation response must not include a transaction hash")
-    transaction_payload_b64 = response_json.get("transaction_payload_b64")
-    signing_message_b64 = response_json.get("signing_message_b64")
-    transaction_payload = decode_canonical_base64(
-        transaction_payload_b64,
-        "transaction_payload_b64",
-        maximum=16 * 1024 * 1024,
-    )
-    signing_message = decode_canonical_base64(
-        signing_message_b64,
-        "signing_message_b64",
-        maximum=32,
-    )
-    if len(signing_message) != 32 or signing_message != iroha_transaction_signing_message(transaction_payload):
-        raise ValueError("bridge preparation signing message does not match the exact transaction payload")
+    draft = validate_prepared_transaction(response_json, context="bridge preparation")
     return {
-        "transaction_payload_b64": transaction_payload_b64,
-        "signing_message": signing_message,
-        "signing_message_b64": signing_message_b64,
+        **draft,
         "creation_time_ms": metadata["creation_time_ms"],
         "metadata": metadata,
     }
@@ -619,51 +1009,191 @@ def positive_decimalish(value: Any) -> bool:
 
 
 def contract_address_from_evidence(record: dict[str, Any]) -> str | None:
-    direct = nonempty_string(record.get("contract_address"))
-    if direct:
-        return direct
-    instance = record.get("instance")
-    if isinstance(instance, dict):
-        return nonempty_string(instance.get("contract_address")) or nonempty_string(instance.get("contract_id"))
-    return None
+    return nonempty_string(record.get("contract_address"))
 
 
 def deploy_nonce_from_evidence(record: dict[str, Any]) -> Any:
-    if "deploy_nonce" in record:
-        return record.get("deploy_nonce")
-    instance = record.get("instance")
-    if isinstance(instance, dict):
-        return instance.get("deploy_nonce")
-    return None
+    return record.get("deploy_nonce") if "deploy_nonce" in record else None
 
 
-def normalize_hash_literal(value: Any) -> str | None:
-    if not isinstance(value, str):
+def iroha_literal_crc16(tag: str, body: str) -> int:
+    crc = 0xFFFF
+    for byte in f"{tag}:{body}".encode("ascii"):
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
+
+
+def canonical_hash_literal_hex(value: Any) -> str | None:
+    match = CANONICAL_HASH_LITERAL_RE.fullmatch(value if isinstance(value, str) else "")
+    if match is None:
         return None
-    normalized = value.strip().lower()
-    if not normalized:
+    body, checksum = match.groups()
+    if checksum != f"{iroha_literal_crc16('hash', body):04X}" or set(body) == {"0"}:
         return None
-    if normalized.startswith("hash:"):
-        normalized = normalized[len("hash:") :]
-    if "#" in normalized:
-        normalized = normalized.split("#", 1)[0]
-    if normalized.startswith("0x"):
-        normalized = normalized[2:]
-    return normalized or None
+    return body.lower()
 
 
 def hash_from_evidence(record: dict[str, Any], field: str) -> str | None:
-    direct = normalize_hash_literal(record.get(field))
-    if direct:
-        return direct
-    instance = record.get("instance")
-    if isinstance(instance, dict):
-        return normalize_hash_literal(instance.get(field))
-    return None
+    value = record.get(field)
+    if (
+        not isinstance(value, str)
+        or LOWER_NONZERO_HASH_RE.fullmatch(value) is None
+        or set(value) == {"0"}
+    ):
+        return None
+    return value
 
 
 def manifest_hash(manifest: dict[str, Any], field: str) -> str | None:
-    return normalize_hash_literal(manifest.get(field))
+    return canonical_hash_literal_hex(manifest.get(field))
+
+
+def current_contract_deploy_response_matches_record(
+    response: Any,
+    record: dict[str, Any],
+) -> bool:
+    if not isinstance(response, dict) or set(response) != CONTRACT_DEPLOY_RESPONSE_FIELDS:
+        return False
+    deploy_nonce = deploy_nonce_from_evidence(record)
+    final = response.get("final")
+    commit_hash = response.get("commit_deployment_tx_hash")
+    commit_hash_hex = canonical_hash_literal_hex(commit_hash)
+    register_manifest_hash = canonical_hash_literal_hex(response.get("register_manifest_tx_hash"))
+    register_bytes_hash = response.get("register_bytes_tx_hash")
+    stage_hashes = response.get("register_bytes_stage_tx_hashes")
+    deployment_state = response.get("deployment_state")
+    deployment_state_matches = bool(
+        isinstance(deployment_state, dict)
+        and set(deployment_state)
+        == {
+            "authority",
+            "chain_discriminant",
+            "contract_alias",
+            "dataspace_alias",
+            "dataspace_id",
+            "deploy_nonce",
+            "ledger_time_ms",
+            "observed_block_hash",
+            "observed_block_height",
+            "previous_contract_address",
+        }
+        and deployment_state.get("authority") == response.get("authority")
+        and deployment_state.get("contract_alias") == response.get("contract_alias")
+        and deployment_state.get("deploy_nonce") == str(deploy_nonce)
+        and deployment_state.get("dataspace_alias") == record.get("dataspace_alias")
+        and deployment_state.get("dataspace_id") == record.get("dataspace_id")
+        and deployment_state.get("previous_contract_address")
+        == response.get("expected_previous_contract_address")
+        and isinstance(deployment_state.get("observed_block_height"), str)
+        and CANONICAL_DECIMAL_STRING_RE.fullmatch(
+            deployment_state["observed_block_height"]
+        )
+        is not None
+        and int(deployment_state["observed_block_height"]) > 0
+        and hash_from_evidence(deployment_state, "observed_block_hash")
+        and isinstance(deployment_state.get("ledger_time_ms"), str)
+        and CANONICAL_DECIMAL_STRING_RE.fullmatch(deployment_state["ledger_time_ms"])
+        is not None
+        and deployment_state.get("chain_discriminant")
+        == str(response.get("chain_discriminant"))
+    )
+    receipt = response.get("operation_receipt")
+    receipt_matches = bool(
+        isinstance(receipt, dict)
+        and set(receipt) == CONTRACT_DEPLOY_RECEIPT_FIELDS
+        and receipt.get("operation_kind") == "contract_deploy"
+        and receipt.get("status") == "committed"
+        and receipt.get("transport") == "ivm-contract-deploy-helper"
+        and receipt.get("torii_url") == response.get("torii_url")
+        and receipt.get("chain_id") == response.get("chain_id")
+        and receipt.get("authority") == response.get("authority")
+        and receipt.get("chain_discriminant") == response.get("chain_discriminant")
+        and receipt.get("dataspace") == response.get("dataspace")
+        and receipt.get("contract_alias") == response.get("contract_alias")
+        and receipt.get("contract_address") == response.get("contract_address")
+        and receipt.get("contract_subject_account") == response.get("contract_subject_account")
+        and receipt.get("code_hash_hex") == response.get("code_hash_hex")
+        and receipt.get("abi_hash_hex") is None
+        and receipt.get("tx_hash_hex") == commit_hash_hex
+        and receipt.get("entrypoint") is None
+        and receipt.get("entrypoint_hash_hex") is None
+        and receipt.get("gas_used") is None
+        and isinstance(receipt.get("fee_payment"), dict)
+        and receipt.get("fee_quotes") == response.get("fee_quotes")
+        and hash_from_evidence(receipt, "payload_digest_hex")
+        and receipt.get("deployment_state") == response.get("deployment_state")
+    )
+    return bool(
+        response.get("ok") is True
+        and response.get("submitted") is True
+        and response.get("terminal_kind") == "Committed"
+        and isinstance(final, dict)
+        and set(final) == {"kind", "hash"}
+        and final.get("kind") == "Committed"
+        and commit_hash_hex
+        and final.get("hash") == commit_hash
+        and response.get("contract_address") == contract_address_from_evidence(record)
+        and response.get("contract_alias") == nonempty_string(record.get("contract_alias"))
+        and response.get("dataspace") == record.get("dataspace_id")
+        and response.get("deploy_nonce") == deploy_nonce
+        and isinstance(deploy_nonce, int)
+        and not isinstance(deploy_nonce, bool)
+        and deploy_nonce >= 0
+        and response.get("next_deploy_nonce") == deploy_nonce + 1
+        and response.get("code_hash_hex") == hash_from_evidence(record, "code_hash_hex")
+        and receipt_matches
+        and deployment_state_matches
+        and isinstance(response.get("fee_quotes"), list)
+        and isinstance(stage_hashes, list)
+        and all(hash_from_evidence({"value": item}, "value") for item in stage_hashes)
+        and hash_from_evidence({"value": register_bytes_hash}, "value")
+        and register_manifest_hash
+        and response.get("register_bytes_tx_strategy") == "native_chunks"
+        and response.get("register_bytes_chunk_size") == 65_536
+        and isinstance(response.get("register_bytes_chunk_count"), int)
+        and not isinstance(response.get("register_bytes_chunk_count"), bool)
+        and response.get("register_bytes_chunk_count") > 0
+        and nonempty_string(response.get("authority"))
+        and nonempty_string(response.get("chain_id"))
+        and nonempty_string(response.get("contract_subject_account"))
+        and nonempty_string(response.get("torii_url"))
+    )
+
+
+def current_deployment_record_shape(record: Any) -> bool:
+    if not isinstance(record, dict) or set(record) != DEPLOYMENT_RECORD_FIELDS:
+        return False
+    return bool(
+        has_generated_at(record)
+        and nonempty_string(record.get("contract_key"))
+        and nonempty_string(record.get("environment"))
+        and nonempty_string(record.get("contract_source"))
+        and nonempty_string(record.get("contract_alias"))
+        and record.get("contract_alias").endswith(
+            (
+                f".{DEPLOYMENT_DATASPACE_ALIAS}",
+                f"::{DEPLOYMENT_DATASPACE_ALIAS}",
+            )
+        )
+        and record.get("dataspace_alias") == DEPLOYMENT_DATASPACE_ALIAS
+        and record.get("dataspace_id") == DEPLOYMENT_DATASPACE_ID
+        and contract_address_from_evidence(record)
+        and hash_from_evidence(record, "code_hash_hex")
+        and hash_from_evidence(record, "abi_hash_hex")
+        and record.get("deploy_strategy") == CURRENT_DEPLOY_STRATEGY
+        and current_chain_fingerprint_shape(record.get("chain_fingerprint"))
+        and current_contract_deploy_response_matches_record(record.get("response"), record)
+    )
+
+
+def current_chain_fingerprint_shape(value: Any) -> bool:
+    return bool(
+        isinstance(value, dict)
+        and set(value) == CHAIN_FINGERPRINT_FIELDS
+        and all(nonempty_string(value.get(field)) for field in CHAIN_FINGERPRINT_FIELDS)
+    )
 
 
 def contains_local_diagnostic_path(value: Any) -> bool:
@@ -687,7 +1217,7 @@ def contract_evidence_records(contracts_latest: dict[str, Any]) -> dict[str, dic
     for item in items:
         if not isinstance(item, dict):
             continue
-        contract_key = nonempty_string(item.get("contract_key")) or nonempty_string(item.get("name"))
+        contract_key = nonempty_string(item.get("contract_key"))
         if contract_key:
             records[contract_key] = item
     return records
@@ -705,94 +1235,13 @@ def contract_evidence_duplicate_keys(contracts_latest: dict[str, Any] | list[Any
     for item in items:
         if not isinstance(item, dict):
             continue
-        contract_key = nonempty_string(item.get("contract_key")) or nonempty_string(item.get("name"))
+        contract_key = nonempty_string(item.get("contract_key"))
         if not contract_key:
             continue
         if contract_key in seen:
             duplicates.add(contract_key)
         seen.add(contract_key)
     return sorted(duplicates)
-
-
-def aggregate_bundle_receipt_issues(
-    receipt: dict[str, Any] | list[Any] | None,
-    environment: str,
-    chain_latest: dict[str, Any],
-    contract_records: dict[str, dict[str, Any]],
-) -> list[str]:
-    if not isinstance(receipt, dict):
-        return ["is not valid JSON object evidence"]
-
-    issues: list[str] = []
-    if receipt.get("ok") is not True:
-        issues.append("is not successful")
-    if not has_generated_at(receipt):
-        issues.append("is missing generated_at")
-    if receipt.get("environment") != environment:
-        issues.append(f"does not identify selected environment {environment}")
-    if contains_local_diagnostic_path(receipt):
-        issues.append("contains raw local path diagnostics")
-    if contains_sensitive_diagnostic_value(receipt):
-        issues.append("contains unredacted sensitive diagnostics")
-    receipt_chain = receipt.get("chain_fingerprint")
-    if not isinstance(receipt_chain, dict) or not chain_fingerprint_matches_chain(receipt_chain, chain_latest):
-        issues.append("does not match chain.latest.json")
-
-    bundle_items = receipt.get("contracts")
-    if not isinstance(bundle_items, list) or not bundle_items:
-        issues.append("does not include deployed contracts")
-        return issues
-
-    bundle_records: dict[str, dict[str, Any]] = {}
-    duplicate_keys: set[str] = set()
-    for item in bundle_items:
-        if not isinstance(item, dict):
-            issues.append("contains a non-object contract entry")
-            continue
-        contract_key = nonempty_string(item.get("contract_key")) or nonempty_string(item.get("name"))
-        if not contract_key:
-            issues.append("contains a contract entry without contract_key or name")
-            continue
-        if contract_key in bundle_records:
-            duplicate_keys.add(contract_key)
-        bundle_records[contract_key] = item
-
-    if duplicate_keys:
-        issues.append("contains duplicate contract entries: " + ", ".join(sorted(duplicate_keys)))
-
-    expected_keys = set(contract_records)
-    actual_keys = set(bundle_records)
-    if actual_keys != expected_keys:
-        missing = sorted(expected_keys - actual_keys)
-        extra = sorted(actual_keys - expected_keys)
-        detail = []
-        if missing:
-            detail.append("missing " + ", ".join(missing))
-        if extra:
-            detail.append("extra " + ", ".join(extra))
-        suffix = f" ({'; '.join(detail)})" if detail else ""
-        issues.append(f"does not match contracts.latest.json{suffix}")
-        return issues
-
-    mismatched_keys: list[str] = []
-    for contract_key, expected in sorted(contract_records.items()):
-        actual = bundle_records[contract_key]
-        expected_address = contract_address_from_evidence(expected)
-        expected_nonce = deploy_nonce_from_evidence(expected)
-        expected_code_hash = hash_from_evidence(expected, "code_hash_hex")
-        expected_abi_hash = hash_from_evidence(expected, "abi_hash_hex")
-        if (
-            actual.get("status") != "deployed"
-            or contract_address_from_evidence(actual) != expected_address
-            or str(deploy_nonce_from_evidence(actual)) != str(expected_nonce)
-            or hash_from_evidence(actual, "code_hash_hex") != expected_code_hash
-            or hash_from_evidence(actual, "abi_hash_hex") != expected_abi_hash
-        ):
-            mismatched_keys.append(contract_key)
-
-    if mismatched_keys:
-        issues.append("does not match contracts.latest.json: " + ", ".join(mismatched_keys))
-    return issues
 
 
 def deployment_manifest_matches_environment(
@@ -827,10 +1276,12 @@ def deployment_manifest_hashes_match_evidence(
 
 
 def record_matches_catalog_chain(record: dict[str, Any], chain_fingerprint: dict[str, Any] | None) -> bool:
-    if chain_fingerprint is None:
-        return True
     record_chain = record.get("chain_fingerprint")
-    return isinstance(record_chain, dict) and chain_fingerprint_matches_chain(record_chain, chain_fingerprint)
+    return bool(
+        chain_fingerprint is not None
+        and isinstance(record_chain, dict)
+        and chain_fingerprint_matches_chain(record_chain, chain_fingerprint)
+    )
 
 
 def deployment_record_matches_catalog_evidence(
@@ -841,42 +1292,11 @@ def deployment_record_matches_catalog_evidence(
     chain_fingerprint: dict[str, Any] | None,
 ) -> bool:
     return bool(
-        has_generated_at(record)
+        current_deployment_record_shape(record)
         and record.get("environment") == environment
         and nonempty_string(record.get("contract_key")) == contract_key
+        and record.get("deploy_strategy") == CURRENT_DEPLOY_STRATEGY
         and record_matches_catalog_chain(record, chain_fingerprint)
-        and deployment_manifest_matches_environment(manifest, environment, contract_key)
-        and deployment_manifest_hashes_match_evidence(manifest, record)
-    )
-
-
-def contracts_latest_matches_catalog_evidence(
-    contracts_latest: dict[str, Any] | list[Any] | None,
-    environment: str,
-    chain_fingerprint: dict[str, Any] | None,
-) -> bool:
-    if not isinstance(contracts_latest, dict):
-        return False
-    if not has_generated_at(contracts_latest) or contracts_latest.get("environment") != environment:
-        return False
-    if contracts_latest.get("status") != "completed":
-        return False
-    if contract_evidence_duplicate_keys(contracts_latest):
-        return False
-    if chain_fingerprint is None:
-        return True
-    contracts_chain = contracts_latest.get("chain_fingerprint")
-    return isinstance(contracts_chain, dict) and chain_fingerprint_matches_chain(contracts_chain, chain_fingerprint)
-
-
-def contract_snapshot_record_matches_catalog_evidence(
-    record: dict[str, Any],
-    manifest: dict[str, Any] | list[Any] | None,
-    environment: str,
-    contract_key: str,
-) -> bool:
-    return bool(
-        record.get("environment") == environment
         and deployment_manifest_matches_environment(manifest, environment, contract_key)
         and deployment_manifest_hashes_match_evidence(manifest, record)
     )
@@ -924,12 +1344,9 @@ def safe_read_toml(path: Path) -> dict[str, Any] | None:
 
 def account_config_string(config: dict[str, Any], key: str) -> str | None:
     account = config.get("account")
-    if isinstance(account, dict):
-        value = account.get(key)
-        if isinstance(value, str) and value:
-            return value
-    value = config.get(key)
-    return value if isinstance(value, str) else None
+    if not isinstance(account, dict):
+        return None
+    return nonempty_string(account.get(key))
 
 
 def looks_like_placeholder(value: str | None) -> bool:
@@ -978,6 +1395,7 @@ def candidate_default_signer_configs(repo_root: Path) -> dict[str, Path]:
 def config_supports_autodiscovery(path: Path, environment: str, repo_root: Path) -> bool:
     try:
         parsed = read_signer_config_secure(path, environment, repo_root)
+        canonical_network_id_bytes(parsed.get("network_id"))
     except (OSError, ValueError):
         return False
     if environment in PUBLIC_MUTATION_ENVIRONMENTS and looks_like_reserved_public_endpoint(parsed.get("torii_url")):
@@ -1021,6 +1439,63 @@ def sanitize_manifest_entrypoints(manifest: dict[str, Any] | None) -> list[dict[
             }
         )
     return sanitized
+
+
+def validate_manifest_numeric_arguments(
+    environment_record: dict[str, Any],
+    *,
+    contract_address: str,
+    entrypoint_name: str,
+    payload: Any,
+    context: str = "payload",
+) -> None:
+    if payload is None:
+        return
+    if not isinstance(payload, dict):
+        raise ValueError(f"{context} must be a JSON object")
+
+    contract = next(
+        (
+            item
+            for item in environment_record.get("contracts") or []
+            if item.get("contract_address") == contract_address
+        ),
+        None,
+    )
+    if not isinstance(contract, dict):
+        return
+    entrypoint = next(
+        (
+            item
+            for item in contract.get("entrypoints") or []
+            if item.get("name") == entrypoint_name
+        ),
+        None,
+    )
+    if not isinstance(entrypoint, dict):
+        return
+
+    for parameter in entrypoint.get("params") or []:
+        name = parameter.get("name")
+        type_name = parameter.get("type_name")
+        if not isinstance(name, str) or type_name not in MANIFEST_NUMERIC_TYPES or name not in payload:
+            continue
+        value = payload[name]
+        valid = False
+        if isinstance(value, str):
+            if type_name == "int":
+                valid = CANONICAL_INT_ARGUMENT_RE.fullmatch(value) is not None
+            elif type_name == "quantity":
+                valid = CANONICAL_QUANTITY_RE.fullmatch(value) is not None
+            else:
+                valid = (
+                    value != "-0"
+                    and CANONICAL_DECIMAL_ARGUMENT_RE.fullmatch(value) is not None
+                )
+        if not valid:
+            raise ValueError(
+                f"{context}.{name} for manifest type {type_name} must be an exact canonical JSON string"
+            )
 
 
 def infer_network_prefix(environment: str | None, configured_discriminant: int | None = None) -> str:
@@ -1126,6 +1601,7 @@ class SignerBinding:
     config_path: Path | None
     authority: str | None
     torii_url: str | None
+    network_id: str | None
     private_key: str | None
     public_key: str | None
     basic_auth: tuple[str, str] | None
@@ -1139,7 +1615,60 @@ class SignerBinding:
 
     @property
     def can_call(self) -> bool:
-        return self.configured and bool(self.private_key) and bool(self.authority)
+        return (
+            self.configured
+            and bool(self.private_key)
+            and bool(self.public_key)
+            and bool(self.authority)
+            and bool(self.network_id)
+        )
+
+    @property
+    def can_authenticate_requests(self) -> bool:
+        return bool(self.private_key and self.public_key and self.network_id)
+
+
+def require_bound_request_signer(
+    signer: SignerBinding,
+    *,
+    authority: str,
+    environment: str,
+) -> None:
+    if not signer.can_call:
+        raise ValueError(
+            f"no signer config with network_id, authority, and an Ed25519 keypair is bound for "
+            f"environment {environment}; start the service with --signer ENV=/path/to/client.toml"
+        )
+    if authority != signer.authority:
+        raise ValueError("request authority does not match the bound canonical request signer")
+
+
+def canonical_account_request_headers(
+    signer: SignerBinding,
+    *,
+    method: str,
+    request_url: str,
+    body: bytes,
+    timestamp_ms: int | None = None,
+    nonce: str | None = None,
+) -> dict[str, str]:
+    if not signer.can_authenticate_requests:
+        raise ValueError(
+            "canonical account request authentication requires signer network_id and an Ed25519 keypair"
+        )
+    assert signer.network_id is not None
+    assert signer.private_key is not None
+    assert signer.public_key is not None
+    return build_account_request_headers(
+        network_id=signer.network_id,
+        private_key=signer.private_key,
+        public_key=signer.public_key,
+        method=method,
+        request_url=request_url,
+        body=body,
+        timestamp_ms=timestamp_ms,
+        nonce=nonce,
+    )
 
 
 def load_signer_binding(
@@ -1157,6 +1686,7 @@ def load_signer_binding(
             config_path=None,
             authority=authority_override,
             torii_url=None,
+            network_id=None,
             private_key=None,
             public_key=None,
             basic_auth=None,
@@ -1172,22 +1702,24 @@ def load_signer_binding(
 
     config = read_signer_config_secure(resolved_path, environment, repo_root)
 
+    network_id = config.get("network_id")
+    canonical_network_id_bytes(network_id)
+
     account = config.get("account")
-    if not isinstance(account, dict) and environment != "production":
-        account = config
     if not isinstance(account, dict):
         raise ValueError(f"account in {config_label} must be a table")
+    public_key = nonempty_string(account.get("public_key"))
+    private_key = nonempty_string(account.get("private_key"))
+    if not public_key or not private_key:
+        raise ValueError(
+            f"account in {config_label} requires non-empty public_key and private_key"
+        )
     if environment == "production":
-        public_key = nonempty_string(account.get("public_key"))
-        private_key = nonempty_string(account.get("private_key"))
         domain = nonempty_string(account.get("domain"))
-        if not public_key or not private_key or not domain:
+        if not domain:
             raise ValueError(
                 f"account in {config_label} requires non-empty domain, public_key, and private_key"
             )
-    else:
-        public_key = account_config_string(config, "public_key")
-        private_key = account_config_string(config, "private_key")
     raw_torii_url = config.get("torii_url")
     if raw_torii_url is None and environment != "production" and config.get("basic_auth") is None:
         torii_url = None
@@ -1225,6 +1757,8 @@ def load_signer_binding(
             raise ValueError(f"chain in {config_label} must be a non-empty string")
         if chain == TAIRA_CHAIN_ID:
             raise ValueError("production signer config must not select the canonical Taira chain")
+        if network_id == TAIRA_NETWORK_ID:
+            raise ValueError("production signer config must not select the canonical Taira network")
         if host == "taira.sora.org" or host.endswith(".taira.sora.org"):
             raise ValueError("production signer config must not use a Taira Torii origin")
         if str(account.get("profile") or "").strip().lower() == "taira":
@@ -1245,15 +1779,25 @@ def load_signer_binding(
         torii_url = None
 
     authority = authority_override
-    if authority is None and public_key:
+    if public_key:
         if chain_discriminant is None:
-            authority, warning = derive_authority_from_public_key(str(public_key), environment)
+            derived_authority, warning = derive_authority_from_public_key(
+                str(public_key), environment
+            )
         else:
-            authority, warning = derive_authority_from_public_key(
+            derived_authority, warning = derive_authority_from_public_key(
                 str(public_key), environment, chain_discriminant
             )
         if warning:
             warnings.append(warning)
+        if authority_override is not None:
+            if derived_authority is None:
+                raise ValueError(
+                    "authority override cannot be verified against the configured signer public key"
+                )
+            if authority_override != derived_authority:
+                raise ValueError("authority override does not match the configured signer public key")
+        authority = derived_authority
 
     if authority is None:
         warnings.append(
@@ -1265,6 +1809,7 @@ def load_signer_binding(
         config_path=resolved_path,
         authority=authority,
         torii_url=torii_url,
+        network_id=str(network_id),
         private_key=str(private_key) if private_key else None,
         public_key=str(public_key) if public_key else None,
         basic_auth=basic_auth,
@@ -1334,25 +1879,21 @@ class ContractConsoleState:
             raise KeyError(f"unknown deployment environment: {environment}")
 
         chain_latest = safe_read_json(env_root / "chain.latest.json")
-        contracts_latest = safe_read_json(env_root / "contracts.latest.json")
-
         chain_fingerprint: dict[str, Any] | None = None
         if isinstance(chain_latest, dict):
             chain_fingerprint = dict(chain_latest)
-        elif isinstance(contracts_latest, dict) and isinstance(contracts_latest.get("chain_fingerprint"), dict):
-            chain_fingerprint = dict(contracts_latest["chain_fingerprint"])
 
         record_map: dict[str, dict[str, Any]] = {}
         record_sources: dict[str, dict[str, Any]] = {}
         required_contract_keys = set(required_contract_keys_from_repo(self.repo_root))
         for path in sorted(env_root.glob("*.deploy.json")):
-            if path.name in {"soraswap.bundle.deploy.json", "soraswap.foundation.bundle.deploy.json"}:
-                continue
             parsed = safe_read_json(path)
             if not isinstance(parsed, dict):
                 continue
             record_key = nonempty_string(parsed.get("contract_key"))
             if not record_key:
+                continue
+            if path.name != f"{record_key}.deploy.json":
                 continue
             if required_contract_keys and record_key not in required_contract_keys:
                 continue
@@ -1369,32 +1910,15 @@ class ContractConsoleState:
             record_map[record_key] = parsed
             record_sources[record_key] = {"source": "deploy_record", "deployment_path": path}
 
-        if contracts_latest_matches_catalog_evidence(contracts_latest, environment, chain_fingerprint):
-            for record_key, record in contract_evidence_records(contracts_latest).items():
-                if record_key in record_map:
-                    continue
-                if required_contract_keys and record_key not in required_contract_keys:
-                    continue
-                manifest_path = env_root / f"{record_key}.manifest.json"
-                manifest = safe_read_json(manifest_path)
-                if not contract_snapshot_record_matches_catalog_evidence(
-                    record,
-                    manifest,
-                    environment,
-                    record_key,
-                ):
-                    continue
-                record_map[record_key] = record
-                record_sources[record_key] = {"source": "contracts_latest", "deployment_path": None}
         records = sorted(
             record_map.values(),
-            key=lambda item: str(item.get("contract_key") or item.get("contract_address") or ""),
+            key=lambda item: item["contract_key"],
         )
 
         contracts: list[dict[str, Any]] = []
         for record in records:
-            contract_key = str(record.get("contract_key") or "")
-            manifest_path = env_root / f"{contract_key}.manifest.json" if contract_key else None
+            contract_key = record["contract_key"]
+            manifest_path = env_root / f"{contract_key}.manifest.json"
             source = record_sources.get(contract_key) or {}
             deployment_path = source.get("deployment_path")
             manifest = safe_read_json(manifest_path) if manifest_path else None
@@ -1404,18 +1928,15 @@ class ContractConsoleState:
                     "contract_key": contract_key,
                     "evidence_source": source.get("source"),
                     "contract_source": catalog_display_record_path(record.get("contract_source"), self.repo_root),
-                    "contract_address": record.get("contract_address")
-                    or ((record.get("instance") or {}).get("contract_address")),
-                    "dataspace": record.get("dataspace"),
+                    "contract_alias": record["contract_alias"],
+                    "contract_address": record["contract_address"],
+                    "dataspace_alias": record["dataspace_alias"],
+                    "dataspace_id": record["dataspace_id"],
                     "deploy_nonce": record.get("deploy_nonce"),
                     "deploy_strategy": record.get("deploy_strategy"),
-                    "code_hash_hex": record.get("code_hash_hex")
-                    or ((record.get("instance") or {}).get("code_hash_hex")),
-                    "abi_hash_hex": record.get("abi_hash_hex")
-                    or ((record.get("instance") or {}).get("abi_hash_hex")),
-                    "verification": ((record.get("instance") or {}).get("verification")),
-                    "tx_hash_hex": ((record.get("instance") or {}).get("tx_hash_hex"))
-                    or ((record.get("response") or {}).get("tx_hash_hex")),
+                    "code_hash_hex": record["code_hash_hex"],
+                    "abi_hash_hex": record["abi_hash_hex"],
+                    "commit_deployment_tx_hash": record["response"]["commit_deployment_tx_hash"],
                     "deployment_path": catalog_display_path(
                         deployment_path if isinstance(deployment_path, Path) else None,
                         self.repo_root,
@@ -1430,6 +1951,7 @@ class ContractConsoleState:
             config_path=None,
             authority=None,
             torii_url=None,
+            network_id=None,
             private_key=None,
             public_key=None,
             basic_auth=None,
@@ -1514,6 +2036,7 @@ class ContractConsoleState:
             config_path=None,
             authority=None,
             torii_url=None,
+            network_id=None,
             private_key=None,
             public_key=None,
             basic_auth=None,
@@ -1592,6 +2115,7 @@ def read_limited_text(response: Any, max_bytes: int = MAX_UPSTREAM_RESPONSE_BYTE
 def _response_credential_tokens(
     basic_auth: tuple[str, str] | None,
     request_payload: dict[str, Any] | None,
+    canonical_headers: dict[str, str] | None = None,
 ) -> set[str]:
     """Return exact secret encodings that an upstream response must never echo."""
 
@@ -1601,6 +2125,11 @@ def _response_credential_tokens(
         joined = f"{login}:{password}"
         encoded = base64.b64encode(joined.encode("utf-8")).decode("ascii")
         tokens.update({password, joined, encoded, f"Basic {encoded}"})
+    if canonical_headers is not None:
+        for header in ("X-Iroha-Signature", "X-Iroha-Nonce"):
+            value = canonical_headers.get(header)
+            if value:
+                tokens.add(value)
 
     def visit(value: Any, *, sensitive: bool = False) -> None:
         if isinstance(value, dict):
@@ -1626,8 +2155,9 @@ def reject_upstream_credential_echo(
     *,
     basic_auth: tuple[str, str] | None,
     request_payload: dict[str, Any] | None,
+    canonical_headers: dict[str, str] | None = None,
 ) -> None:
-    for token in _response_credential_tokens(basic_auth, request_payload):
+    for token in _response_credential_tokens(basic_auth, request_payload, canonical_headers):
         if token in response_text:
             raise OSError("upstream response contained credential material and was suppressed")
 
@@ -1637,6 +2167,40 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         return None
+
+
+INCOMPLETE_FANOUT_HEADERS = (
+    "x-iroha-fanout-routes-failed",
+    "x-iroha-fanout-routes-denied",
+    "x-iroha-fanout-routes-unavailable",
+    "x-iroha-fanout-routes-not-found",
+)
+
+
+def reject_incomplete_fanout_response(status: int, headers: object) -> None:
+    """Reject a successful Torii response whose routed read is incomplete."""
+
+    if not 200 <= status < 300:
+        return
+    get_all = getattr(headers, "get_all", None)
+    get_one = getattr(headers, "get", None)
+    incomplete: list[str] = []
+    for name in INCOMPLETE_FANOUT_HEADERS:
+        if callable(get_all):
+            values = get_all(name) or []
+        elif callable(get_one):
+            value = get_one(name)
+            values = [] if value is None else [value]
+        else:
+            values = []
+        for raw_value in values:
+            value = str(raw_value).strip()
+            if re.fullmatch(r"0|[1-9][0-9]*", value) is None:
+                incomplete.append(f"{name}=invalid")
+            elif int(value) != 0:
+                incomplete.append(f"{name}={value}")
+    if incomplete:
+        raise OSError("incomplete Torii routed response: " + ", ".join(incomplete))
 
 
 def proxy_torii_request(
@@ -1649,6 +2213,7 @@ def proxy_torii_request(
     basic_auth: tuple[str, str] | None,
     timeout: int,
     accept: str = "application/json",
+    canonical_signer: SignerBinding | None = None,
 ) -> tuple[int, str, str | None]:
     configured_origin = url_origin(
         torii_url,
@@ -1673,12 +2238,33 @@ def proxy_torii_request(
     if query_string:
         request_url = f"{request_url}?{query_string}"
 
-    encoded_payload = json.dumps(payload).encode("utf-8") if payload is not None else None
+    encoded_payload = (
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if payload is not None
+        else None
+    )
     headers = {
         "Accept": accept,
     }
     if payload is not None:
         headers["Content-Type"] = "application/json"
+    canonical_headers: dict[str, str] = {}
+    if path in CANONICAL_ACCOUNT_AUTH_PATHS:
+        if method.upper() != "POST" or encoded_payload is None:
+            raise ValueError("canonical account-authenticated Torii routes require a JSON POST body")
+        if query_string:
+            raise ValueError("canonical account-authenticated Torii routes do not accept query parameters")
+        if canonical_signer is None:
+            raise ValueError(
+                f"canonical account request authentication is required for upstream route {path}"
+            )
+        canonical_headers = canonical_account_request_headers(
+            canonical_signer,
+            method=method,
+            request_url=request_url,
+            body=encoded_payload,
+        )
+        headers.update(canonical_headers)
     request = urllib.request.Request(
         url=request_url,
         data=encoded_payload,
@@ -1692,11 +2278,13 @@ def proxy_torii_request(
     opener = urllib.request.build_opener(NoRedirectHandler())
     try:
         with opener.open(request, timeout=timeout) as response:
+            reject_incomplete_fanout_response(response.status, response.headers)
             body = read_limited_text(response)
             reject_upstream_credential_echo(
                 body,
                 basic_auth=basic_auth,
                 request_payload=payload,
+                canonical_headers=canonical_headers,
             )
             return response.status, body, response.headers.get("Content-Type")
     except urllib.error.HTTPError as exc:
@@ -1706,6 +2294,7 @@ def proxy_torii_request(
                 body,
                 basic_auth=basic_auth,
                 request_payload=payload,
+                canonical_headers=canonical_headers,
             )
             return exc.code, body, exc.headers.get("Content-Type")
         finally:
@@ -1801,6 +2390,7 @@ def bounded_read_proxy_query(
     if allowed_keys is None and (
         upstream_path.startswith("/v1/sccp/proofs/message/")
         or upstream_path.startswith("/v1/sccp/proof-requests/")
+        or upstream_path.startswith("/v1/assets/definitions/")
     ):
         allowed_keys = set()
     query_pairs = {
@@ -1866,9 +2456,9 @@ def bounded_status_proxy_query(pairs: dict[str, list[str]]) -> tuple[dict[str, s
         return {}, "hash is required"
     if LOWER_NONZERO_HASH_RE.fullmatch(tx_hash_hex) is None or set(tx_hash_hex) == {"0"}:
         return {}, "hash must be a nonzero lowercase 32-byte hexadecimal transaction hash"
-    scope = urllib.parse.unquote(str(first_query_value(pairs.get("scope")) or "auto").strip())
+    scope = urllib.parse.unquote(str(first_query_value(pairs.get("scope")) or "global").strip())
     if scope not in PIPELINE_STATUS_SCOPES:
-        return {}, "scope must be local, auto, or global"
+        return {}, "scope must be local or global"
     return {"hash": tx_hash_hex, "scope": scope}, None
 
 
@@ -1879,6 +2469,25 @@ def normalize_sccp_message_id(raw_message_id: str) -> tuple[str | None, str | No
     if LOWER_NONZERO_HASH_RE.fullmatch(message_id) is None or set(message_id) == {"0"}:
         return None, "message_id must be a nonzero lowercase 32-byte hexadecimal SCCP message id"
     return message_id, None
+
+
+def normalize_asset_definition_selector(raw_selector: str) -> tuple[str | None, str | None]:
+    try:
+        selector = urllib.parse.unquote(str(raw_selector or ""), errors="strict")
+    except UnicodeDecodeError:
+        return None, "asset definition selector must be valid UTF-8"
+    if not selector or selector != selector.strip():
+        return None, "asset definition selector is required"
+    if len(selector) > MAX_ASSET_DEFINITION_SELECTOR_CHARS:
+        return None, (
+            "asset definition selector must be at most "
+            f"{MAX_ASSET_DEFINITION_SELECTOR_CHARS} characters"
+        )
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in selector):
+        return None, "asset definition selector must not contain control characters"
+    if "/" in selector or "\\" in selector:
+        return None, "asset definition selector must be one path segment"
+    return selector, None
 
 
 def encoded_query(query: dict[str, Any] | None) -> str:
@@ -1900,6 +2509,7 @@ def signer_snapshot(signer: SignerBinding) -> dict[str, Any]:
         "config_path": signer.config_path.name if signer.config_path else None,
         "authority": signer.authority,
         "torii_url": signer.torii_url,
+        "network_id": signer.network_id,
         "chain_discriminant": signer.chain_discriminant,
         "call_enabled": signer.can_call,
         "basic_auth_configured": signer.basic_auth is not None,
@@ -2134,25 +2744,17 @@ def public_preflight_and_probe_issues(
         signer = preflight.get("signer")
         preflight_environment = preflight.get("environment")
         preflight_endpoint = preflight.get("endpoint")
-        if (
-            preflight.get("status") == "ready"
-            and isinstance(preflight_environment, dict)
-            and preflight_environment.get("oracle_public_key_present") is True
-            and preflight_environment.get("oracle_private_key_present") is True
-            and preflight_environment.get("oracle_keypair_verified") is not True
-        ):
-            issues.append(f"{environment}: preflight.latest.json oracle_keypair_verified must be true")
         readiness_ok = bool(
             preflight.get("status") == "ready"
             and preflight.get("blockers") == []
             and preflight.get("warnings") == []
             and isinstance(preflight_environment, dict)
             and preflight_environment.get("mutations_allowed") is True
-            and preflight_environment.get("oracle_public_key_present") is True
-            and preflight_environment.get("oracle_private_key_present") is True
-            and preflight_environment.get("oracle_keypair_verified") is True
-            and nonempty_string(preflight_environment.get("oracle_public_key_source"))
-            and nonempty_string(preflight_environment.get("oracle_private_key_source"))
+            and preflight_environment.get("oracle_client_config_present") is True
+            and preflight_environment.get("oracle_client_config_valid") is True
+            and preflight_environment.get("oracle_account_derivable") is True
+            and preflight_environment.get("oracle_account_distinct") is True
+            and nonempty_string(preflight_environment.get("oracle_client_config_source"))
             and isinstance(preflight_endpoint, dict)
             and public_preflight_mcp_ready(preflight_endpoint)
             and preflight_endpoint.get("health_issues") == []
@@ -2259,6 +2861,12 @@ def public_deployment_evidence_issues(repo_root: Path, environment: str) -> list
     if not isinstance(contracts_latest, dict):
         issues.append(f"{environment}: missing deployments/{environment}/contracts.latest.json")
     else:
+        if set(contracts_latest) != CONTRACTS_SNAPSHOT_FIELDS:
+            issues.append(f"{environment}: contracts.latest.json does not match the current snapshot schema")
+        if not current_chain_fingerprint_shape(contracts_latest.get("chain_fingerprint")):
+            issues.append(
+                f"{environment}: contracts.latest.json chain_fingerprint does not match the current schema"
+            )
         for issue in artifact_diagnostic_issues(
             str((env_root / "contracts.latest.json").relative_to(repo_root)),
             contracts_latest,
@@ -2280,6 +2888,16 @@ def public_deployment_evidence_issues(repo_root: Path, environment: str) -> list
                 f"{', '.join(duplicate_contract_keys)}"
             )
         contract_records = contract_evidence_records(contracts_latest)
+        malformed_contract_keys = sorted(
+            nonempty_string(item.get("contract_key")) or "<missing-contract-key>"
+            for item in contracts_latest.get("contracts", [])
+            if not current_deployment_record_shape(item)
+        ) if isinstance(contracts_latest.get("contracts"), list) else ["<invalid-contracts-array>"]
+        if malformed_contract_keys:
+            issues.append(
+                f"{environment}: contracts.latest.json contains records outside the current deployment schema: "
+                f"{', '.join(malformed_contract_keys)}"
+            )
         wrong_environment_contract_keys = sorted(
             key for key, record in contract_records.items() if record.get("environment") != environment
         )
@@ -2334,6 +2952,9 @@ def public_deployment_evidence_issues(repo_root: Path, environment: str) -> list
             if not has_generated_at(parsed):
                 issues.append(f"{environment}: {rel_path} is missing generated_at")
 
+            if not current_deployment_record_shape(parsed):
+                issues.append(f"{environment}: {rel_path} does not match the current deployment record schema")
+
             if parsed.get("environment") != environment:
                 issues.append(f"{environment}: {rel_path} does not identify selected environment {environment}")
 
@@ -2374,63 +2995,22 @@ def public_deployment_evidence_issues(repo_root: Path, environment: str) -> list
             else:
                 if manifest_hash(manifest, "code_hash") != expected_code_hash or manifest_hash(manifest, "abi_hash") != expected_abi_hash:
                     issues.append(f"{environment}: {manifest_rel_path} hashes do not match contracts.latest.json")
-                actual_code_hash = normalize_hash_literal(parsed.get("code_hash_hex"))
-                actual_abi_hash = normalize_hash_literal(parsed.get("abi_hash_hex"))
+                actual_code_hash = hash_from_evidence(parsed, "code_hash_hex")
+                actual_abi_hash = hash_from_evidence(parsed, "abi_hash_hex")
                 if actual_code_hash != expected_code_hash or actual_abi_hash != expected_abi_hash:
                     issues.append(f"{environment}: {rel_path} code or ABI hash does not match contracts.latest.json")
 
                 response = parsed.get("response")
                 if (
-                    not isinstance(response, dict)
-                    or response.get("ok") is not True
-                    or contract_address_from_evidence(response) != expected_address
-                    or str(deploy_nonce_from_evidence(response)) != str(expected_nonce)
-                    or normalize_hash_literal(response.get("code_hash_hex")) != expected_code_hash
-                    or normalize_hash_literal(response.get("abi_hash_hex")) != expected_abi_hash
+                    not current_contract_deploy_response_matches_record(response, parsed)
+                    or response.get("contract_address") != expected_address
+                    or response.get("deploy_nonce") != expected_nonce
+                    or response.get("code_hash_hex") != expected_code_hash
                 ):
                     issues.append(f"{environment}: {rel_path} does not include successful deploy response evidence")
 
-                instance = parsed.get("instance")
-                if (
-                    not isinstance(instance, dict)
-                    or contract_address_from_evidence(instance) != expected_address
-                    or str(deploy_nonce_from_evidence(instance)) != str(expected_nonce)
-                    or normalize_hash_literal(instance.get("code_hash_hex")) != expected_code_hash
-                    or normalize_hash_literal(instance.get("abi_hash_hex")) != expected_abi_hash
-                ):
-                    issues.append(f"{environment}: {rel_path} does not include matching live instance evidence")
-
-                if parsed.get("deploy_strategy") == "bundle":
-                    bundle_receipt = parsed.get("bundle_receipt")
-                    bundle_key = None
-                    if isinstance(bundle_receipt, dict):
-                        bundle_key = nonempty_string(bundle_receipt.get("name")) or nonempty_string(
-                            bundle_receipt.get("contract_key")
-                        )
-                    if (
-                        not isinstance(bundle_receipt, dict)
-                        or bundle_receipt.get("status") != "deployed"
-                        or bundle_key != contract_key
-                        or contract_address_from_evidence(bundle_receipt) != expected_address
-                        or str(deploy_nonce_from_evidence(bundle_receipt)) != str(expected_nonce)
-                        or normalize_hash_literal(bundle_receipt.get("code_hash_hex")) != expected_code_hash
-                        or normalize_hash_literal(bundle_receipt.get("abi_hash_hex")) != expected_abi_hash
-                    ):
-                        issues.append(
-                            f"{environment}: {rel_path} bundle receipt does not match contracts.latest.json"
-                        )
-
-        aggregate_bundle_path = env_root / "soraswap.bundle.deploy.json"
-        if aggregate_bundle_path.exists():
-            aggregate_rel_path = aggregate_bundle_path.relative_to(repo_root)
-            aggregate_receipt = safe_read_json(aggregate_bundle_path)
-            for aggregate_issue in aggregate_bundle_receipt_issues(
-                aggregate_receipt,
-                environment,
-                chain_latest,
-                contract_records,
-            ):
-                issues.append(f"{environment}: {aggregate_rel_path} {aggregate_issue}")
+                if parsed.get("deploy_strategy") != CURRENT_DEPLOY_STRATEGY:
+                    issues.append(f"{environment}: {rel_path} does not use a current deploy strategy")
 
     deploy_latest = safe_read_json(env_root / "deploy.latest.json")
     if not isinstance(deploy_latest, dict):
@@ -2456,8 +3036,6 @@ def public_deployment_evidence_issues(repo_root: Path, environment: str) -> list
     for deploy_record_path in sorted(env_root.glob("*.deploy.json")):
         if deploy_record_path in checked_deploy_record_paths:
             continue
-        if deploy_record_path.name in {"soraswap.bundle.deploy.json", "soraswap.foundation.bundle.deploy.json"}:
-            continue
         parsed = safe_read_json(deploy_record_path)
         rel_path = deploy_record_path.relative_to(repo_root)
         if not isinstance(parsed, dict):
@@ -2474,6 +3052,9 @@ def public_deployment_evidence_issues(repo_root: Path, environment: str) -> list
         actual_key = nonempty_string(parsed.get("contract_key"))
         if not actual_key:
             issues.append(f"{environment}: {rel_path} does not identify a current contract_key")
+            continue
+        if deploy_record_path.name != f"{actual_key}.deploy.json":
+            issues.append(f"{environment}: {rel_path} contract_key does not match filename")
             continue
         if actual_key not in required_contract_keys:
             issues.append(f"{environment}: {rel_path} is stale or unknown for current contracts/")
@@ -2802,24 +3383,11 @@ def extract_submitted_flag(response_json: Any) -> bool | None:
 def extract_status_kind(response_json: Any) -> str | None:
     if not isinstance(response_json, dict):
         return None
-
-    def pick_kind(value: Any) -> str | None:
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-        if isinstance(value, dict):
-            kind = value.get("kind")
-            if isinstance(kind, str) and kind.strip():
-                return kind.strip()
-        return None
-
-    direct = pick_kind(response_json.get("status"))
-    if direct:
-        return direct
-    content = response_json.get("content")
-    if isinstance(content, dict):
-        nested = pick_kind(content.get("status"))
-        if nested:
-            return nested
+    status = response_json.get("status")
+    if isinstance(status, dict):
+        kind = status.get("kind")
+        if isinstance(kind, str) and kind.strip():
+            return kind.strip()
     return None
 
 
@@ -2831,89 +3399,32 @@ def validate_pipeline_status_response(
 ) -> dict[str, Any]:
     if not isinstance(response_json, dict):
         raise ValueError("pipeline transaction status response must be a JSON object")
+    if set(response_json) != {"hash", "status", "scope", "resolved_from"}:
+        raise ValueError("pipeline transaction status response fields do not match the current status-only DTO")
     if response_json.get("hash") != expected_hash:
         raise ValueError("pipeline transaction status response hash does not match the request")
     scope = response_json.get("scope")
-    # Torii accepts `auto` as a request alias for its global/fanout read.  The
-    # typed response reports the scope that was actually applied, so an auto
-    # request is returned as `global` (see parse_pipeline_status_scope in
-    # iroha_torii).  Comparing the response literally with `auto` rejects a
-    # valid default status lookup.
-    applied_expected_scope = "global" if expected_scope == "auto" else expected_scope
-    if scope not in PIPELINE_STATUS_SCOPES or scope != applied_expected_scope:
+    if scope not in PIPELINE_STATUS_SCOPES or scope != expected_scope:
         raise ValueError("pipeline transaction status response scope does not match the request")
     if response_json.get("resolved_from") not in PIPELINE_STATUS_SOURCES:
         raise ValueError("pipeline transaction status response has an invalid resolved_from value")
     status = response_json.get("status")
     if not isinstance(status, dict) or status.get("kind") not in PIPELINE_STATUS_KINDS:
         raise ValueError("pipeline transaction status response has an unknown typed status kind")
+    if set(status) not in ({"kind"}, {"kind", "block_height"}):
+        raise ValueError("pipeline transaction status fields do not match the current status-only DTO")
     kind = str(status["kind"])
     block_height = status.get("block_height")
     if block_height is not None and (
         isinstance(block_height, bool) or not isinstance(block_height, int) or block_height <= 0
     ):
         raise ValueError("pipeline transaction status block_height must be a positive integer")
-    rejection_reason = status.get("rejection_reason")
-    if kind == "Rejected" and rejection_reason is None:
-        raise ValueError("rejected pipeline transaction status requires a structured rejection_reason")
-    if kind != "Rejected" and rejection_reason is not None:
-        raise ValueError("non-rejected pipeline transaction status must not carry rejection_reason")
-    summary = response_json.get("summary")
-    if not isinstance(summary, str) or not summary.strip():
-        raise ValueError("pipeline transaction status response requires a non-empty summary")
-    diagnostics = response_json.get("diagnostics", [])
-    if not isinstance(diagnostics, list) or any(not isinstance(entry, dict) for entry in diagnostics):
-        raise ValueError("pipeline transaction status diagnostics must be an array of objects")
     return {
         "kind": kind,
         "scope": scope,
-        "summary": summary,
-        "diagnostics": diagnostics,
-        "rejection_reason": rejection_reason,
+        "resolved_from": response_json["resolved_from"],
+        "block_height": block_height,
     }
-
-
-def extract_rejection_reason(response_json: Any) -> str | None:
-    if not isinstance(response_json, dict):
-        return None
-
-    direct_status = response_json.get("status")
-    if isinstance(direct_status, dict):
-        for key in ("rejection_reason", "rejectionReason", "reason", "reject_code", "rejectCode"):
-            value = direct_status.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        if (
-            str(direct_status.get("kind") or "").strip().lower() == "rejected"
-            and isinstance(direct_status.get("content"), str)
-            and str(direct_status["content"]).strip()
-        ):
-            return str(direct_status["content"]).strip()
-
-    for key in ("rejection_reason", "rejectionReason", "reason", "reject_code", "rejectCode"):
-        value = response_json.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-
-    content = response_json.get("content")
-    if isinstance(content, dict):
-        for key in ("rejection_reason", "rejectionReason", "reason", "reject_code", "rejectCode"):
-            value = content.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        status = content.get("status")
-        if isinstance(status, dict):
-            for key in ("rejection_reason", "rejectionReason", "reason", "reject_code", "rejectCode"):
-                value = status.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()
-            if (
-                str(status.get("kind") or "").strip().lower() == "rejected"
-                and isinstance(status.get("content"), str)
-                and str(status["content"]).strip()
-            ):
-                return str(status["content"]).strip()
-    return None
 
 
 def build_proxy_result(
@@ -2956,9 +3467,6 @@ def build_proxy_result(
     status_kind = extract_status_kind(response_json)
     if status_kind:
         result["status_kind"] = status_kind
-    rejection_reason = extract_rejection_reason(response_json)
-    if rejection_reason:
-        result["rejection_reason"] = rejection_reason
     return result
 
 
@@ -3012,8 +3520,9 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
                 query=query,
                 basic_auth=signer.basic_auth,
                 timeout=timeout,
+                canonical_signer=signer,
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             raise ConnectionError(f"failed to reach {torii_url}{path}: {exc}") from exc
 
         return build_proxy_result(
@@ -3120,10 +3629,9 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
                 return
             payload["status_kind"] = typed_status["kind"]
             payload["status_scope"] = typed_status["scope"]
-            payload["status_summary"] = typed_status["summary"]
-            payload["status_diagnostics"] = typed_status["diagnostics"]
-            if typed_status["rejection_reason"] is not None:
-                payload["rejection_reason"] = typed_status["rejection_reason"]
+            payload["status_resolved_from"] = typed_status["resolved_from"]
+            if typed_status["block_height"] is not None:
+                payload["status_block_height"] = typed_status["block_height"]
         json_response(self, HTTPStatus.OK, payload)
 
     def handle_transactions_history(self, parsed: urllib.parse.ParseResult) -> None:
@@ -3201,20 +3709,6 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
             json_response(self, HTTPStatus.FORBIDDEN, {"ok": False, "error": str(exc)})
             return
 
-        if not signer.private_key:
-            json_response(
-                self,
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": (
-                        f"no signer config with private key is bound for environment {environment}; "
-                        "start the console with --signer ENV=/path/to/client.toml"
-                    ),
-                },
-            )
-            return
-
         authority = str(body.get("authority") or signer.authority or "").strip()
         if not authority:
             json_response(
@@ -3228,6 +3722,15 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
                     ),
                 },
             )
+            return
+        try:
+            require_bound_request_signer(
+                signer,
+                authority=authority,
+                environment=environment,
+            )
+        except ValueError as exc:
+            json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
         body["authority"] = authority
 
@@ -3255,8 +3758,10 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
             json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
 
+        fee_payment = authority_fee_payment_intent(DEFAULT_GAS_LIMIT)
         preparation_request = {
             "authority": authority,
+            "fee_payment": fee_payment,
             proof_field: body[proof_field],
         }
 
@@ -3278,7 +3783,7 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
             return
         try:
             prepared = validate_bridge_preparation_response(preparation_payload.get("response_json"))
-            signature_b64 = sign_bridge_message_ed25519(
+            signature_b64 = sign_transaction_message_ed25519(
                 signer.private_key,
                 signer.public_key,
                 prepared["signing_message"],
@@ -3298,6 +3803,7 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
 
         submission_request = {
             "authority": authority,
+            "fee_payment": fee_payment,
             proof_field: body[proof_field],
             "transaction_payload_b64": prepared["transaction_payload_b64"],
             "signature_b64": signature_b64,
@@ -3342,7 +3848,6 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
             "creation_time_ms": prepared["creation_time_ms"],
             "transaction_payload_reused_exactly": True,
             "private_key_forwarded": False,
-            "fallback_used": False,
         }
         json_response(self, HTTPStatus.OK, submission_payload)
 
@@ -3359,6 +3864,19 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/sccp/messages/recent":
             self.handle_torii_read_proxy(parsed, "/v1/sccp/messages/recent")
+            return
+        if parsed.path.startswith("/api/assets/definitions/"):
+            selector, selector_error = normalize_asset_definition_selector(
+                parsed.path.removeprefix("/api/assets/definitions/")
+            )
+            if selector_error:
+                json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": selector_error})
+                return
+            encoded_selector = urllib.parse.quote(selector or "", safe="")
+            self.handle_torii_read_proxy(
+                parsed,
+                f"/v1/assets/definitions/{encoded_selector}",
+            )
             return
         if parsed.path.startswith("/api/sccp/proofs/message/"):
             message_id, message_id_error = normalize_sccp_message_id(
@@ -3457,9 +3975,29 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        try:
+            require_bound_request_signer(
+                signer,
+                authority=authority,
+                environment=environment,
+            )
+        except ValueError as exc:
+            json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
 
         try:
             gas_limit = normalize_browser_gas_limit(body.get("gas_limit"))
+        except ValueError as exc:
+            json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+
+        try:
+            validate_manifest_numeric_arguments(
+                env_record,
+                contract_address=contract_address,
+                entrypoint_name=entrypoint,
+                payload=body.get("payload"),
+            )
         except ValueError as exc:
             json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
@@ -3468,42 +4006,42 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
             "authority": authority,
             "contract_address": contract_address,
             "entrypoint": entrypoint,
-            "gas_limit": gas_limit,
         }
         if "payload" in body and body["payload"] is not None:
             upstream_request["payload"] = body["payload"]
 
         timeout = DEFAULT_UPSTREAM_TIMEOUT_SECONDS
-        path = "/v1/contracts/view"
         if parsed.path == "/api/call":
             try:
                 self.require_mutations_allowed(env_record)
             except PermissionError as exc:
                 json_response(self, HTTPStatus.FORBIDDEN, {"ok": False, "error": str(exc)})
                 return
-            path = "/v1/contracts/call"
-            if not signer.private_key:
-                json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {
-                        "ok": False,
-                        "error": (
-                            f"no signer config with private key is bound for environment {environment}; "
-                            "start the console with --signer ENV=/path/to/client.toml"
-                        ),
-                    },
+            upstream_request["fee_payment"] = authority_fee_payment_intent(gas_limit)
+            try:
+                payload = execute_detached_contract_call(
+                    self.execute_upstream_request,
+                    environment=environment,
+                    signer=signer,
+                    torii_url=torii_url,
+                    request_payload=upstream_request,
+                    timeout=timeout,
                 )
+            except ConnectionError as exc:
+                json_response(self, HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)})
                 return
-            upstream_request["private_key"] = signer.private_key
+            json_response(self, HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY, payload)
+            return
+
+        upstream_request["gas_limit"] = gas_limit
 
         try:
             payload = self.execute_upstream_request(
                 environment=environment,
                 signer=signer,
                 torii_url=torii_url,
-                mode="call" if parsed.path == "/api/call" else "view",
-                path=path,
+                mode="view",
+                path="/v1/contracts/view",
                 request_payload=upstream_request,
                 timeout=timeout,
             )
@@ -3564,6 +4102,15 @@ class ContractConsoleHandler(BaseHTTPRequestHandler):
                     ),
                 },
             )
+            return
+        try:
+            require_bound_request_signer(
+                signer,
+                authority=authority,
+                environment=environment,
+            )
+        except ValueError as exc:
+            json_response(self, HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
             return
 
         try:

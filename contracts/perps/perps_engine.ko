@@ -1,1407 +1,1644 @@
 seiyaku PerpsEngine {
-  error enum PerpsEngineError {
-    AutomationExecutorMismatch = 2249224927,
-    AutomationSafeMode = 3655001485,
-    ConfidenceTooWide = 3697031875,
-    EngineBacklog = 3157909582,
-    EngineContractUnbound = 2728006612,
-    EngineInitialized = 3508010550,
-    EngineNotInitialized = 282689467,
-    EngineOwnerMismatch = 1878439106,
-    InitialMargin = 3870223813,
-    InsufficientInitialMargin = 4154998114,
-    InsufficientMargin = 2634697019,
-    InvalidAmount = 1627965731,
-    InvalidBacklog = 913417955,
-    InvalidBacklogCap = 2164435547,
-    InvalidBacklogLimit = 2808899432,
-    InvalidCadence = 758396948,
-    InvalidConfidence = 1229599866,
-    InvalidEnabled = 1148015049,
-    InvalidEntryPrice = 2830783532,
-    InvalidFundingCadence = 2089521963,
-    InvalidFundingJobId = 2480220062,
-    InvalidGuardFlags = 1025817365,
-    InvalidIndexPrice = 731695455,
-    InvalidLeverage = 1671522821,
-    InvalidLeverageCap = 3511199014,
-    InvalidLiquidationFee = 709666791,
-    InvalidLiquidationJobId = 2701499375,
-    InvalidLiquidationStressLimit = 2667576312,
-    InvalidMaintenanceMargin = 2598440921,
-    InvalidMargin = 2911289187,
-    InvalidMarkPrice = 310264421,
-    InvalidMarketActiveFlag = 4090115736,
-    InvalidMaxItems = 2693425913,
-    InvalidOpenInterestCap = 1997052084,
-    InvalidOracleScheme = 1474311732,
-    InvalidOracleSlot = 3565780252,
-    InvalidOracleStaleSlots = 3102299734,
-    InvalidResultingMargin = 247918534,
-    InvalidScanSize = 3644206669,
-    InvalidSize = 850041996,
-    InvalidUtilisationClamp = 312379237,
-    LeverageExceedsMarketCap = 4220345,
-    LiquidationStress = 2101613080,
-    MaintenanceMargin = 3859931018,
-    MarketBacklog = 2235432138,
-    MarketGuarded = 3170517613,
-    MarketMissing = 3043703974,
-    MarketPaused = 2560373413,
-    MarketUtilisationClamp = 3701990448,
-    MaxItemsTooHigh = 3302846095,
-    MissingAttestation = 2337340976,
-    OpenInterestCap = 676701842,
-    OracleDegraded = 1708865256,
-    OracleDomainMismatch = 178003288,
-    OracleMarketMismatch = 1115355839,
-    OracleSchemeMissing = 110947573,
-    OracleSignature = 1546989046,
-    OracleSlotReplay = 127690675,
-    OracleStale = 3761902256,
-    PositionMissing = 3917543018,
-    PositionNotManageable = 453095927,
-    PositionNotOpen = 2478644168,
-    PositionOwnerMismatch = 2715695366,
-    PositionQueued = 3198987422,
-    RiskBucketReportFailed = 3275534661,
-    RiskVaultMarginSettle = 4104314977,
-    ScanSizeExceedsCap = 3250361834,
-    UseClosePosition = 52528652,
-    WithdrawalOnly = 2082914943,
-  }
-
-  state int PerpsInitialized;
-  state AccountId PerpsOwner;
-  state AssetDefinitionId PerpsCollateralAsset;
-  state bytes PerpsRiskVaultContract;
-  state int PerpsContractBound;
-  state AccountId PerpsContractId;
-  state int PerpsWithdrawalOnly;
-  state bytes PerpsOraclePublicKey;
-  state int PerpsOracleScheme;
-
-  state AccountId PerpsAutomationExecutor;
-  state int PerpsFundingJobId;
-  state int PerpsLiquidationJobId;
-  state int PerpsAutomationCadence;
-  state int PerpsAutomationBacklogCap;
-  state int PerpsAutomationBacklog;
-  state int PerpsAutomationSafeMode;
-
-  state int PerpsLifecycleCadenceSlots;
-  state int PerpsLifecycleMaxItems;
-  state int PerpsLifecycleEnabled;
-  state int PerpsLifecycleNextSlot;
-  state int PerpsLifecycleMarketCursor;
-  state int PerpsLifecycleLastSlot;
-  state int PerpsLifecycleLastProcessed;
-
-  state int PerpsNextMarketId;
-  state int PerpsNextPositionId;
-
-  state StateMap<int, AssetDefinitionId> PerpsMarketAsset;
-  state StateMap<int, int> PerpsMarketActive;
-  state StateMap<int, int> PerpsMarketOpenInterest;
-  state StateMap<int, int> PerpsMarketOpenInterestCap;
-  state StateMap<int, int> PerpsMarketMaxLeverageBps;
-  state StateMap<int, int> PerpsMarketMaintenanceMarginBps;
-  state StateMap<int, int> PerpsMarketLiquidationFeeBps;
-  state StateMap<int, int> PerpsMarketFundingBps;
-  state StateMap<int, int> PerpsMarketFundingIntervalSlots;
-  state StateMap<int, int> PerpsMarketOracleStaleSlots;
-  state StateMap<int, int> PerpsMarketBacklogLimit;
-  state StateMap<int, int> PerpsMarketUtilisationClampBps;
-  state StateMap<int, int> PerpsMarketLiquidationStressLimit;
-  state StateMap<int, int> PerpsMarketLastMarkPrice;
-  state StateMap<int, int> PerpsMarketLastIndexPrice;
-  state StateMap<int, int> PerpsMarketLastOracleSlot;
-  state StateMap<int, int> PerpsMarketLastOracleAttestationHash;
-  state StateMap<int, int> PerpsMarketGuardFlags;
-  state StateMap<int, int> PerpsMarketQueuedLiquidations;
-  state StateMap<int, int> PerpsMarketActivePositionCount;
-  state StateMap<int, int> PerpsMarketScanCursor;
-  state StateMap<int, int> PerpsMarketLastPassScanned;
-  state StateMap<int, int> PerpsMarketLastPassQueued;
-  state StateMap<int, int> PerpsMarketLastPassRecovered;
-  state StateMap<int, int> PerpsMarketLastPassLiquidated;
-  state StateMap<int, int> PerpsMarketLastNativeFundingDelta;
-  state StateMap<int, int> PerpsMarketLastNativePassSlot;
-
-  state StateMap<int, AccountId> PerpsPositionOwner;
-  state StateMap<int, int> PerpsPositionMarketId;
-  state StateMap<int, int> PerpsPositionSize;
-  state StateMap<int, int> PerpsPositionMargin;
-  state StateMap<int, int> PerpsPositionEntryPrice;
-  state StateMap<int, int> PerpsPositionMarkPrice;
-  state StateMap<int, int> PerpsPositionIndexPrice;
-  state StateMap<int, int> PerpsPositionFundingAccrued;
-  state StateMap<int, int> PerpsPositionRealizedPnl;
-  state StateMap<int, int> PerpsPositionStatus;
-  state StateMap<int, int> PerpsPositionActiveSlot;
-  state StateMap<int, int> PerpsPositionQueuedSlot;
-  state StateMap<int, int> PerpsPositionLastKeeperReward;
-  state StateMap<int, int> PerpsPositionLastOwnerResidual;
-
-  state StateMap<int, int> PerpsActivePositionBySlot;
-
-  trigger soraswap_perps_lifecycle_tick -> native_lifecycle_tick {
-    on time schedule(80000, 120000);
-    repeats indefinitely;
-    metadata { "tag": "soraswap"; "module": "perps.perps_engine"; "__enabled": false; }
-  }
-
-  fn assert_initialized() {
-    require(PerpsInitialized == 1, PerpsEngineError::EngineNotInitialized);
-  }
-
-  fn assert_owner() {
-    assert_initialized();
-    require(PerpsOwner == context::authority(), PerpsEngineError::EngineOwnerMismatch);
-  }
-
-  fn assert_automation_runner() {
-    assert_initialized();
-    if PerpsOwner == context::authority() {
-      return;
-    }
-    require(PerpsAutomationExecutor == context::authority(), PerpsEngineError::AutomationExecutorMismatch);
-  }
-
-  fn assert_risk_on() {
-    require(PerpsWithdrawalOnly == 0, PerpsEngineError::WithdrawalOnly);
-    require(PerpsAutomationSafeMode == 0, PerpsEngineError::AutomationSafeMode);
-  }
-
-  fn assert_contract_bound() {
-    require(PerpsContractBound == 1, PerpsEngineError::EngineContractUnbound);
-  }
-
-  fn abs_int(int value) -> int {
-    if value < 0 {
-      return 0 - value;
-    }
-    return value;
-  }
-
-  fn max_int(int a, int b) -> int {
-    if a >= b {
-      return a;
-    }
-    return b;
-  }
-
-  fn min_int(int a, int b) -> int {
-    if a <= b {
-      return a;
-    }
-    return b;
-  }
-
-  fn market_slot_key(int market_id, int slot) -> int {
-    return market_id * 1_000_000_000 + slot;
-  }
-
-  fn normalized_scan_cursor(int cursor, int active_count) -> int {
-    if active_count <= 0 {
-      return 0;
-    }
-    if cursor < 0 || cursor >= active_count {
-      return 0;
-    }
-    return cursor;
-  }
-
-  fn wrapped_market_slot(int cursor, int offset, int active_count) -> int {
-    if active_count <= 0 {
-      return 0;
-    }
-    let slot = cursor + offset;
-    if slot >= active_count {
-      return slot - active_count;
-    }
-    return slot;
-  }
-
-  fn liquidation_action_for_offset(int market_id,
-                                   int cursor,
-                                   int active_count,
-                                   int offset,
-                                   int mark_price_bps,
-                                   int index_price_bps,
-                                   int current_slot) -> int {
-    let slot = wrapped_market_slot(cursor, offset, active_count);
-    let position_id = PerpsActivePositionBySlot.get_or(market_slot_key(market_id, slot), 0);
-    return process_liquidation_candidate(
-      position_id,
-      market_id,
-      mark_price_bps,
-      index_price_bps,
-      current_slot
-    );
-  }
-
-  fn liquidation_action_for_offset_native(int market_id,
-                                          int cursor,
-                                          int active_count,
-                                          int offset,
-                                          int mark_price_bps,
-                                          int index_price_bps,
-                                          int current_slot) -> int {
-    let slot = wrapped_market_slot(cursor, offset, active_count);
-    let position_id = PerpsActivePositionBySlot.get_or(market_slot_key(market_id, slot), 0);
-    return process_liquidation_candidate_native(
-      position_id,
-      market_id,
-      mark_price_bps,
-      index_price_bps,
-      current_slot
-    );
-  }
-
-  fn position_registered(int position_id) -> int {
-    if PerpsPositionOwner.contains(position_id) {
-      return 1;
-    }
-    return 0;
-  }
-
-  fn assert_market_registered(int market_id) {
-    require(PerpsMarketAsset.contains(market_id), PerpsEngineError::MarketMissing);
-  }
-
-  fn assert_position_open(int position_id) {
-    require(PerpsPositionOwner.contains(position_id), PerpsEngineError::PositionMissing);
-    require(PerpsPositionStatus.get_or(position_id, 0) == 1, PerpsEngineError::PositionNotOpen);
-  }
-
-  fn assert_position_manageable(int position_id) {
-    require(PerpsPositionOwner.contains(position_id), PerpsEngineError::PositionMissing);
-    let status = PerpsPositionStatus.get_or(position_id, 0);
-    require(status == 1 || status == 3, PerpsEngineError::PositionNotManageable);
-  }
-
-  fn assert_position_owner(int position_id) {
-    assert_position_open(position_id);
-    require(PerpsPositionOwner[position_id] == context::authority(), PerpsEngineError::PositionOwnerMismatch);
-  }
-
-  fn assert_position_owner_manageable(int position_id) {
-    assert_position_manageable(position_id);
-    require(PerpsPositionOwner[position_id] == context::authority(), PerpsEngineError::PositionOwnerMismatch);
-  }
-
-  fn move_asset_if_needed(AccountId from,
-                          AccountId to,
-                          AssetDefinitionId asset,
-                          int amount) {
-    if amount > 0 {
-      if from != to {
-        ledger::asset::transfer(source: from, destination: to, asset_definition: asset, amount: amount, dataspace: DataSpaceId::parse("0"));
-      }
-    }
-  }
-
-  fn risk_vault_lock_liability(int exposure_id,
-                               int notional,
-                               int collateral_locked) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
-    let payload = json_set_int(payload, Name::parse("exposure_id"), exposure_id);
-    let payload = json_set_int(payload, Name::parse("notional"), notional);
-    let payload = json_set_int(payload, Name::parse("collateral_locked"), collateral_locked);
-    let payload = json_set_int(payload, Name::parse("backlog"), PerpsAutomationBacklog);
-    let result = call_contract(PerpsRiskVaultContract, "lock_liability", payload);
-    return decode_int(result);
-  }
-
-  fn risk_vault_deposit(int amount) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
-    let payload = json_set_int(payload, Name::parse("amount"), amount);
-    let result = call_contract(PerpsRiskVaultContract, "deposit", payload);
-    return decode_int(result);
-  }
-
-  fn risk_vault_release_liability(int exposure_id) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
-    let payload = json_set_int(payload, Name::parse("exposure_id"), exposure_id);
-    let payload = json_set_int(payload, Name::parse("backlog"), PerpsAutomationBacklog);
-    let result = call_contract(PerpsRiskVaultContract, "release_liability", payload);
-    return decode_int(result);
-  }
-
-  fn risk_vault_settle_payout(int exposure_id, AccountId recipient, int amount) -> int {
-    let payload = json_object();
-    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
-    let payload = json_set_int(payload, Name::parse("exposure_id"), exposure_id);
-    let payload = json_set_account_id(payload, Name::parse("recipient"), recipient);
-    let payload = json_set_int(payload, Name::parse("amount"), amount);
-    let result = call_contract(PerpsRiskVaultContract, "settle_payout", payload);
-    return decode_int(result);
-  }
-
-  fn risk_vault_report_bucket() {
-    let payload = json_object();
-    let payload = json_set_int(payload, Name::parse("bucket_id"), 1);
-    let payload = json_set_int(payload, Name::parse("backlog"), PerpsAutomationBacklog);
-    let payload = json_set_int(payload, Name::parse("safe_mode"), PerpsAutomationSafeMode);
-    let result = call_contract(PerpsRiskVaultContract, "report_bucket_c2c", payload);
-    require(decode_int(result) == 1, PerpsEngineError::RiskBucketReportFailed);
-  }
-
-  fn market_utilisation_bps(int market_id, int projected_open_interest) -> int {
-    let open_interest_cap = PerpsMarketOpenInterestCap.get_or(market_id, 0);
-    if open_interest_cap <= 0 {
-      return 0;
-    }
-    return (projected_open_interest * 10_000 + open_interest_cap - 1) / open_interest_cap;
-  }
-
-  fn required_initial_margin(int size, int leverage_bps) -> int {
-    require(leverage_bps > 0, PerpsEngineError::InvalidLeverage);
-    return (abs_int(size) * 10_000 + leverage_bps - 1) / leverage_bps;
-  }
-
-  fn required_maintenance_margin(int size, int maintenance_margin_bps) -> int {
-    return (abs_int(size) * maintenance_margin_bps + 10_000 - 1) / 10_000;
-  }
-
-  fn unrealized_pnl(int size, int entry_price_bps, int mark_price_bps) -> int {
-    require(entry_price_bps > 0, PerpsEngineError::InvalidEntryPrice);
-    require(mark_price_bps > 0, PerpsEngineError::InvalidMarkPrice);
-    return (size * (mark_price_bps - entry_price_bps)) / 10_000;
-  }
-
-  fn position_equity(int position_id, int mark_price_bps) -> int {
-    return PerpsPositionMargin.get_or(position_id, 0) +
-      unrealized_pnl(
-        PerpsPositionSize.get_or(position_id, 0),
-        PerpsPositionEntryPrice.get_or(position_id, 0),
-        mark_price_bps
-      );
-  }
-
-  fn perps_oracle_domain() -> int {
-    return 1;
-  }
-
-  fn assert_verified_oracle_payload(int market_id,
-                                    bytes oracle_payload,
-                                    bytes oracle_signature) -> (int, int, int, int, int, int) {
-    assert_market_registered(market_id);
-    require(PerpsOracleScheme > 0, PerpsEngineError::OracleSchemeMissing);
-    require(crypto::verify_signature(message: oracle_payload, signature: oracle_signature, public_key: PerpsOraclePublicKey, scheme: PerpsOracleScheme), PerpsEngineError::OracleSignature);
-    let payload = codec::decode_json(oracle_payload);
-    require(payload.get_int(Name::parse("domain")) == perps_oracle_domain(), PerpsEngineError::OracleDomainMismatch);
-    require(payload.get_int(Name::parse("market_id")) == market_id, PerpsEngineError::OracleMarketMismatch);
-    let mark_price_bps = payload.get_int(Name::parse("mark_price_bps"));
-    let index_price_bps = payload.get_int(Name::parse("index_price_bps"));
-    let confidence_bps = payload.get_int(Name::parse("confidence_bps"));
-    let oracle_slot = payload.get_int(Name::parse("oracle_slot"));
-    let status_flags = payload.get_int(Name::parse("status_flags"));
-    let attestation_hash = payload.get_int(Name::parse("attestation_hash"));
-    let current_slot = context::block_height();
-    require(mark_price_bps > 0, PerpsEngineError::InvalidMarkPrice);
-    require(index_price_bps > 0, PerpsEngineError::InvalidIndexPrice);
-    require(confidence_bps >= 0, PerpsEngineError::InvalidConfidence);
-    require(confidence_bps <= 2_500, PerpsEngineError::ConfidenceTooWide);
-    require(attestation_hash > 0, PerpsEngineError::MissingAttestation);
-    require(current_slot >= oracle_slot, PerpsEngineError::InvalidOracleSlot);
-    let prior_oracle_slot = PerpsMarketLastOracleSlot.get_or(market_id, 0);
-    if prior_oracle_slot > 0 {
-      require(oracle_slot > prior_oracle_slot, PerpsEngineError::OracleSlotReplay);
-    }
-    require(status_flags == 0, PerpsEngineError::OracleDegraded);
-    require(current_slot - oracle_slot <= PerpsMarketOracleStaleSlots.get_or(market_id, 0), PerpsEngineError::OracleStale);
-    return (mark_price_bps, index_price_bps, confidence_bps, oracle_slot, current_slot, attestation_hash);
-  }
-
-  fn assert_market_accepts_risk(int market_id, int projected_open_interest) {
-    assert_market_registered(market_id);
-    require(PerpsMarketActive.get_or(market_id, 0) == 1, PerpsEngineError::MarketPaused);
-    if PerpsAutomationBacklogCap > 0 {
-      require(PerpsAutomationBacklog <= PerpsAutomationBacklogCap, PerpsEngineError::EngineBacklog);
-    }
-    let backlog_limit = PerpsMarketBacklogLimit.get_or(market_id, 0);
-    if backlog_limit > 0 {
-      require(PerpsMarketQueuedLiquidations.get_or(market_id, 0) <= backlog_limit, PerpsEngineError::MarketBacklog);
-    }
-    require(PerpsMarketGuardFlags.get_or(market_id, 0) == 0, PerpsEngineError::MarketGuarded);
-    let utilisation_clamp = PerpsMarketUtilisationClampBps.get_or(market_id, 0);
-    if utilisation_clamp > 0 {
-      require(market_utilisation_bps(market_id, projected_open_interest) <= utilisation_clamp, PerpsEngineError::MarketUtilisationClamp);
-    }
-    let liquidation_stress_limit = PerpsMarketLiquidationStressLimit.get_or(market_id, 0);
-    if liquidation_stress_limit > 0 {
-      require(PerpsMarketQueuedLiquidations.get_or(market_id, 0) <= liquidation_stress_limit, PerpsEngineError::LiquidationStress);
-    }
-    let open_interest_cap = PerpsMarketOpenInterestCap.get_or(market_id, 0);
-    if open_interest_cap > 0 {
-      require(projected_open_interest <= open_interest_cap, PerpsEngineError::OpenInterestCap);
-    }
-  }
-
-  fn assert_market_risk_params(int max_leverage_bps,
-                               int maintenance_margin_bps,
-                               int liquidation_fee_bps,
-                               int open_interest_cap,
-                               int funding_interval_slots,
-                               int oracle_stale_slots,
-                               int backlog_limit,
-                               int utilisation_clamp_bps,
-                               int liquidation_stress_limit,
-                               int guard_flags,
-                               int active) {
-    require(max_leverage_bps > 10_000, PerpsEngineError::InvalidLeverageCap);
-    require(maintenance_margin_bps > 0, PerpsEngineError::InvalidMaintenanceMargin);
-    require(maintenance_margin_bps <= 10_000, PerpsEngineError::InvalidMaintenanceMargin);
-    require(liquidation_fee_bps >= 0, PerpsEngineError::InvalidLiquidationFee);
-    require(liquidation_fee_bps <= 10_000, PerpsEngineError::InvalidLiquidationFee);
-    require(open_interest_cap > 0, PerpsEngineError::InvalidOpenInterestCap);
-    require(funding_interval_slots >= 0, PerpsEngineError::InvalidFundingCadence);
-    require(oracle_stale_slots >= 0, PerpsEngineError::InvalidOracleStaleSlots);
-    require(backlog_limit >= 0, PerpsEngineError::InvalidBacklogLimit);
-    require(utilisation_clamp_bps >= 0, PerpsEngineError::InvalidUtilisationClamp);
-    require(utilisation_clamp_bps <= 10_000, PerpsEngineError::InvalidUtilisationClamp);
-    require(liquidation_stress_limit >= 0, PerpsEngineError::InvalidLiquidationStressLimit);
-    require(guard_flags >= 0, PerpsEngineError::InvalidGuardFlags);
-    require(active == 0 || active == 1, PerpsEngineError::InvalidMarketActiveFlag);
-  }
-
-  fn record_market_oracle(int market_id,
-                          int mark_price_bps,
-                          int index_price_bps,
-                          int oracle_slot,
-                          int attestation_hash) {
-    PerpsMarketLastMarkPrice[market_id] = mark_price_bps;
-    PerpsMarketLastIndexPrice[market_id] = index_price_bps;
-    PerpsMarketLastOracleSlot[market_id] = oracle_slot;
-    PerpsMarketLastOracleAttestationHash[market_id] = attestation_hash;
-  }
-
-  fn append_active_position(int market_id, int position_id) {
-    let slot = PerpsMarketActivePositionCount.get_or(market_id, 0);
-    PerpsActivePositionBySlot[market_slot_key(market_id, slot)] = position_id;
-    PerpsPositionActiveSlot[position_id] = slot;
-    PerpsMarketActivePositionCount[market_id] = slot + 1;
-  }
-
-  fn remove_active_position(int market_id, int position_id) {
-    let count = PerpsMarketActivePositionCount.get_or(market_id, 0);
-    if count <= 0 {
-      PerpsPositionActiveSlot[position_id] = -1;
-      return;
-    }
-    let slot = PerpsPositionActiveSlot.get_or(position_id, -1);
-    if slot < 0 || slot >= count {
-      PerpsPositionActiveSlot[position_id] = -1;
-      return;
+    error enum PerpsEngineError {
+        AutomationExecutorMismatch = 2249224927, AutomationSafeMode = 3655001485, ConfidenceTooWide = 3697031875, EngineBacklog = 3157909582, EngineNotInitialized = 282689467, EngineOwnerMismatch = 1878439106, InitialMargin = 3870223813, InsufficientInitialMargin = 4154998114, InsufficientMargin = 2634697019, InvalidAmount = 1627965731, InvalidBacklog = 913417955, InvalidBacklogCap = 2164435547, InvalidBacklogLimit = 2808899432, InvalidCadence = 758396948, InvalidConfidence = 1229599866, InvalidEnabled = 1148015049, InvalidEntryPrice = 2830783532, InvalidFundingCadence = 2089521963, InvalidFundingJobId = 2480220062, InvalidGuardFlags = 1025817365, InvalidIndexPrice = 731695455, InvalidLeverage = 1671522821, InvalidLeverageCap = 3511199014, InvalidLiquidationFee = 709666791, InvalidLiquidationJobId = 2701499375, InvalidLiquidationStressLimit = 2667576312, InvalidMaintenanceMargin = 2598440921, InvalidMargin = 2911289187, InvalidMarkPrice = 310264421, InvalidMarketActiveFlag = 4090115736, InvalidMaxItems = 2693425913, InvalidOpenInterestCap = 1997052084, InvalidOracleSlot = 3565780252, InvalidOracleStaleSlots = 3102299734, InvalidResultingMargin = 247918534, InvalidSafeMode = 2218057235, InvalidScanSize = 3644206669, InvalidSize = 850041996, InvalidUtilisationClamp = 312379237, LeverageExceedsMarketCap = 4220345, LiquidationStress = 2101613080, MaintenanceMargin = 3859931018, MarketBacklog = 2235432138, MarketGuarded = 3170517613, MarketMissing = 3043703974, MarketPaused = 2560373413, MarketUtilisationClamp = 3701990448, MaxItemsTooHigh = 3302846095, MissingAttestation = 2337340976, OpenInterestCap = 676701842, OracleDegraded = 1708865256, InvalidAuthoritySeparation = 178003288, OracleAccountMismatch = 1546989046, OracleSlotReplay = 127690675, OracleStale = 3761902256, PositionMissing = 3917543018, PositionNotManageable = 453095927, PositionNotOpen = 2478644168, PositionOwnerMismatch = 2715695366, PositionQueued = 3198987422, CollateralPoolSettle = 4104314977, ScanSizeExceedsCap = 3250361834, UseClosePosition = 52528652, WithdrawalOnly = 2082914943,
     }
 
-    let last_slot = count - 1;
-    if slot != last_slot {
-      let moved_position_id = PerpsActivePositionBySlot.get_or(market_slot_key(market_id, last_slot), 0);
-      PerpsActivePositionBySlot[market_slot_key(market_id, slot)] = moved_position_id;
-      PerpsPositionActiveSlot[moved_position_id] = slot;
+    state int PerpsInitialized;
+    state AccountId PerpsOwner;
+    state AssetDefinitionId PerpsCollateralAsset;
+    state AccountId PerpsCustodyAccount;
+    state int PerpsCollateralPoolBalance;
+    state int PerpsReservedMargin;
+    state int PerpsWithdrawalOnly;
+    state AccountId PerpsOracleAccount;
+    state AccountId PerpsAutomationExecutor;
+    state int PerpsFundingJobId;
+    state int PerpsLiquidationJobId;
+    state int PerpsAutomationCadence;
+    state int PerpsAutomationBacklogCap;
+    state int PerpsAutomationBacklog;
+    state int PerpsAutomationSafeMode;
+    state int PerpsLifecycleCadenceSlots;
+    state int PerpsLifecycleMaxItems;
+    state int PerpsLifecycleEnabled;
+    state int PerpsLifecycleNextSlot;
+    state int PerpsLifecycleMarketCursor;
+    state int PerpsLifecycleLastSlot;
+    state int PerpsLifecycleLastProcessed;
+    state int PerpsNextMarketId;
+    state int PerpsNextPositionId;
+    state StateMap<int, AssetDefinitionId> PerpsMarketAsset;
+    state StateMap<int, int> PerpsMarketActive;
+    state StateMap<int, int> PerpsMarketOpenInterest;
+    state StateMap<int, int> PerpsMarketOpenInterestCap;
+    state StateMap<int, int> PerpsMarketMaxLeverageBps;
+    state StateMap<int, int> PerpsMarketMaintenanceMarginBps;
+    state StateMap<int, int> PerpsMarketLiquidationFeeBps;
+    state StateMap<int, int> PerpsMarketFundingBps;
+    state StateMap<int, int> PerpsMarketFundingIntervalSlots;
+    state StateMap<int, int> PerpsMarketOracleStaleSlots;
+    state StateMap<int, int> PerpsMarketBacklogLimit;
+    state StateMap<int, int> PerpsMarketUtilisationClampBps;
+    state StateMap<int, int> PerpsMarketLiquidationStressLimit;
+    state StateMap<int, int> PerpsMarketLastMarkPrice;
+    state StateMap<int, int> PerpsMarketLastIndexPrice;
+    state StateMap<int, int> PerpsMarketLastConfidenceBps;
+    state StateMap<int, int> PerpsMarketLastOracleSlot;
+    state StateMap<int, int> PerpsMarketLastOracleAttestationHash;
+    state StateMap<int, int> PerpsMarketGuardFlags;
+    state StateMap<int, int> PerpsMarketQueuedLiquidations;
+    state StateMap<int, int> PerpsMarketActivePositionCount;
+    state StateMap<int, int> PerpsMarketScanCursor;
+    state StateMap<int, int> PerpsMarketLastPassScanned;
+    state StateMap<int, int> PerpsMarketLastPassQueued;
+    state StateMap<int, int> PerpsMarketLastPassRecovered;
+    state StateMap<int, int> PerpsMarketLastPassLiquidated;
+    state StateMap<int, int> PerpsMarketLastNativeFundingDelta;
+    state StateMap<int, int> PerpsMarketLastNativePassSlot;
+    state StateMap<int, AccountId> PerpsPositionOwner;
+    state StateMap<int, int> PerpsPositionMarketId;
+    state StateMap<int, int> PerpsPositionSize;
+    state StateMap<int, int> PerpsPositionMargin;
+    state StateMap<int, int> PerpsPositionEntryPrice;
+    state StateMap<int, int> PerpsPositionMarkPrice;
+    state StateMap<int, int> PerpsPositionIndexPrice;
+    state StateMap<int, int> PerpsPositionFundingAccrued;
+    state StateMap<int, int> PerpsPositionRealizedPnl;
+    state StateMap<int, int> PerpsPositionStatus;
+    state StateMap<int, int> PerpsPositionActiveSlot;
+    state StateMap<int, int> PerpsPositionQueuedSlot;
+    state StateMap<int, int> PerpsPositionLastKeeperReward;
+    state StateMap<int, int> PerpsPositionLastOwnerResidual;
+    state StateMap<int, int> PerpsActivePositionBySlot;
+    trigger soraswap_perps_lifecycle_tick -> native_lifecycle_tick {
+        on time schedule(80000, 120000);
+        repeats indefinitely;
+        metadata {
+            "tag": "soraswap";
+            "module": "perps.perps_engine";
+            "__enabled": false;
+        }
     }
 
-    PerpsActivePositionBySlot[market_slot_key(market_id, last_slot)] = 0;
-    PerpsMarketActivePositionCount[market_id] = last_slot;
-    PerpsPositionActiveSlot[position_id] = -1;
-
-    if last_slot <= 0 {
-      PerpsMarketScanCursor[market_id] = 0;
-      return;
+    fn assert_initialized() {
+        require(PerpsInitialized == 1, PerpsEngineError::EngineNotInitialized);
     }
 
-    let cursor = PerpsMarketScanCursor.get_or(market_id, 0);
-    if cursor == last_slot {
-      PerpsMarketScanCursor[market_id] = slot;
-      return;
-    }
-    if cursor >= last_slot {
-      PerpsMarketScanCursor[market_id] = 0;
-    }
-  }
-
-  fn queue_position(int position_id,
-                    int market_id,
-                    int current_slot,
-                    int mark_price_bps,
-                    int index_price_bps) {
-    PerpsPositionStatus[position_id] = 3;
-    PerpsPositionQueuedSlot[position_id] = current_slot;
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-    PerpsMarketQueuedLiquidations[market_id] = PerpsMarketQueuedLiquidations.get_or(market_id, 0) + 1;
-  }
-
-  fn recover_position(int position_id,
-                      int market_id,
-                      int mark_price_bps,
-                      int index_price_bps) {
-    PerpsPositionStatus[position_id] = 1;
-    PerpsPositionQueuedSlot[position_id] = 0;
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-    PerpsMarketQueuedLiquidations[market_id] =
-      max_int(PerpsMarketQueuedLiquidations.get_or(market_id, 0) - 1, 0);
-  }
-
-  fn liquidate_position(int position_id,
-                        int market_id,
-                        int mark_price_bps,
-                        int index_price_bps) {
-    let margin = PerpsPositionMargin.get_or(position_id, 0);
-    let equity = position_equity(position_id, mark_price_bps);
-    let reward_request = (margin * PerpsMarketLiquidationFeeBps.get_or(market_id, 0)) / 10_000;
-    let settled_keeper_reward = risk_vault_settle_payout(position_id, context::authority(), min_int(reward_request, margin));
-    let owner_residual_request = max_int(equity - settled_keeper_reward, 0);
-    let settled_owner_residual = risk_vault_settle_payout(
-      position_id,
-      PerpsPositionOwner[position_id],
-      owner_residual_request
-    );
-    risk_vault_release_liability(position_id);
-    PerpsPositionRealizedPnl[position_id] =
-      PerpsPositionRealizedPnl.get_or(position_id, 0) +
-      settled_keeper_reward +
-      settled_owner_residual -
-      margin;
-    PerpsMarketOpenInterest[market_id] =
-      max_int(PerpsMarketOpenInterest.get_or(market_id, 0) - abs_int(PerpsPositionSize.get_or(position_id, 0)), 0);
-    PerpsMarketQueuedLiquidations[market_id] =
-      max_int(PerpsMarketQueuedLiquidations.get_or(market_id, 0) - 1, 0);
-    PerpsPositionSize[position_id] = 0;
-    PerpsPositionMargin[position_id] = 0;
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-    PerpsPositionStatus[position_id] = 4;
-    PerpsPositionQueuedSlot[position_id] = 0;
-    PerpsPositionLastKeeperReward[position_id] = settled_keeper_reward;
-    PerpsPositionLastOwnerResidual[position_id] = settled_owner_residual;
-    remove_active_position(market_id, position_id);
-  }
-
-  fn liquidate_position_native(int position_id,
-                               int market_id,
-                               int mark_price_bps,
-                               int index_price_bps) {
-    let margin = PerpsPositionMargin.get_or(position_id, 0);
-    let equity = position_equity(position_id, mark_price_bps);
-    let owner_residual_request = max_int(equity, 0);
-    let settled_owner_residual = risk_vault_settle_payout(
-      position_id,
-      PerpsPositionOwner[position_id],
-      owner_residual_request
-    );
-    risk_vault_release_liability(position_id);
-    PerpsPositionRealizedPnl[position_id] =
-      PerpsPositionRealizedPnl.get_or(position_id, 0) +
-      settled_owner_residual -
-      margin;
-    PerpsMarketOpenInterest[market_id] =
-      max_int(PerpsMarketOpenInterest.get_or(market_id, 0) - abs_int(PerpsPositionSize.get_or(position_id, 0)), 0);
-    PerpsMarketQueuedLiquidations[market_id] =
-      max_int(PerpsMarketQueuedLiquidations.get_or(market_id, 0) - 1, 0);
-    PerpsPositionSize[position_id] = 0;
-    PerpsPositionMargin[position_id] = 0;
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-    PerpsPositionStatus[position_id] = 4;
-    PerpsPositionQueuedSlot[position_id] = 0;
-    PerpsPositionLastKeeperReward[position_id] = 0;
-    PerpsPositionLastOwnerResidual[position_id] = settled_owner_residual;
-    remove_active_position(market_id, position_id);
-  }
-
-  fn process_liquidation_candidate(int position_id,
-                                   int market_id,
-                                   int mark_price_bps,
-                                   int index_price_bps,
-                                   int current_slot) -> int {
-    let status = PerpsPositionStatus.get_or(position_id, 0);
-    if status != 1 && status != 3 {
-      return 0;
+    fn assert_owner() {
+        assert_initialized();
+        require(PerpsOwner == context::authority(), PerpsEngineError::EngineOwnerMismatch);
     }
 
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-
-    let maintenance = required_maintenance_margin(
-      PerpsPositionSize.get_or(position_id, 0),
-      PerpsMarketMaintenanceMarginBps.get_or(market_id, 0)
-    );
-    let equity = position_equity(position_id, mark_price_bps);
-
-    if status == 1 {
-      if equity < maintenance {
-        queue_position(position_id, market_id, current_slot, mark_price_bps, index_price_bps);
-        return 1;
-      }
-      return 0;
+    fn assert_automation_runner() {
+        assert_initialized();
+        if PerpsOwner == context::authority() {
+            return;
+        }
+        require(
+            PerpsAutomationExecutor == context::authority(),
+            PerpsEngineError::AutomationExecutorMismatch,
+        );
     }
 
-    if equity >= maintenance {
-      recover_position(position_id, market_id, mark_price_bps, index_price_bps);
-      return 2;
+    fn assert_risk_on() {
+        require(PerpsWithdrawalOnly == 0, PerpsEngineError::WithdrawalOnly);
+        require(PerpsAutomationSafeMode == 0, PerpsEngineError::AutomationSafeMode);
     }
 
-    if current_slot > PerpsPositionQueuedSlot.get_or(position_id, 0) {
-      liquidate_position(position_id, market_id, mark_price_bps, index_price_bps);
-      return 3;
+    fn abs_int(int value) -> int {
+        if value < 0 {
+            return 0 - value;
+        }
+        return value;
     }
 
-    return 0;
-  }
-
-  fn process_liquidation_candidate_native(int position_id,
-                                          int market_id,
-                                          int mark_price_bps,
-                                          int index_price_bps,
-                                          int current_slot) -> int {
-    let status = PerpsPositionStatus.get_or(position_id, 0);
-    if status != 1 && status != 3 {
-      return 0;
+    fn max_int(int a, int b) -> int {
+        if a >= b {
+            return a;
+        }
+        return b;
     }
 
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-
-    let maintenance = required_maintenance_margin(
-      PerpsPositionSize.get_or(position_id, 0),
-      PerpsMarketMaintenanceMarginBps.get_or(market_id, 0)
-    );
-    let equity = position_equity(position_id, mark_price_bps);
-
-    if status == 1 {
-      if equity < maintenance {
-        queue_position(position_id, market_id, current_slot, mark_price_bps, index_price_bps);
-        return 1;
-      }
-      return 0;
+    fn min_int(int a, int b) -> int {
+        if a <= b {
+            return a;
+        }
+        return b;
     }
 
-    if equity >= maintenance {
-      recover_position(position_id, market_id, mark_price_bps, index_price_bps);
-      return 2;
+    fn market_slot_key(int market_id, int slot) -> int {
+        return market_id * 1_000_000_000 + slot;
     }
 
-    if current_slot > PerpsPositionQueuedSlot.get_or(position_id, 0) {
-      liquidate_position_native(position_id, market_id, mark_price_bps, index_price_bps);
-      return 3;
+    fn normalized_scan_cursor(int cursor, int active_count) -> int {
+        if active_count <= 0 {
+            return 0;
+        }
+        if cursor < 0 || cursor >= active_count {
+            return 0;
+        }
+        return cursor;
     }
 
-    return 0;
-  }
+    fn wrapped_market_slot(int cursor, int offset, int active_count) -> int {
+        if active_count <= 0 {
+            return 0;
+        }
+        let slot = cursor + offset;
+        if slot >= active_count {
+            return slot - active_count;
+        }
+        return slot;
+    }
 
-  kotoage fn main() -> int authorize("AssetOps") {
-    if PerpsInitialized == 1 {
-      return 1;
+    fn liquidation_action_for_offset(
+        int market_id,
+        int cursor,
+        int active_count,
+        int offset,
+        int mark_price_bps,
+        int index_price_bps,
+        int current_slot,
+    ) -> int {
+        let slot = wrapped_market_slot(cursor: cursor, offset: offset, active_count: active_count);
+        let position_id = PerpsActivePositionBySlot.get_or(
+            key: market_slot_key(market_id: market_id, slot: slot),
+            default: 0,
+        );
+        return process_liquidation_candidate(
+            position_id: position_id,
+            market_id: market_id,
+            mark_price_bps: mark_price_bps,
+            index_price_bps: index_price_bps,
+            current_slot: current_slot,
+        );
     }
-    return 0;
-  }
 
-  kotoage fn init_engine(AssetDefinitionId collateral_asset,
-                         bytes risk_vault_contract,
-                         bytes oracle_public_key,
-                         int oracle_scheme) authorize("AssetOps") {
-    require(PerpsInitialized == 0, PerpsEngineError::EngineInitialized);
-    require(oracle_scheme > 0, PerpsEngineError::InvalidOracleScheme);
-    PerpsInitialized = 1;
-    PerpsOwner = context::authority();
-    PerpsCollateralAsset = collateral_asset;
-    PerpsRiskVaultContract = risk_vault_contract;
-    PerpsOraclePublicKey = oracle_public_key;
-    PerpsOracleScheme = oracle_scheme;
-    PerpsContractBound = 0;
-    PerpsContractId = context::authority();
-    PerpsWithdrawalOnly = 1;
-    PerpsFundingJobId = 0;
-    PerpsLiquidationJobId = 0;
-    PerpsAutomationCadence = 0;
-    PerpsAutomationBacklogCap = 0;
-    PerpsAutomationBacklog = 0;
-    PerpsAutomationSafeMode = 0;
-    PerpsLifecycleCadenceSlots = 0;
-    PerpsLifecycleMaxItems = 1;
-    PerpsLifecycleEnabled = 0;
-    PerpsLifecycleNextSlot = 0;
-    PerpsLifecycleMarketCursor = 1;
-    PerpsLifecycleLastSlot = 0;
-    PerpsLifecycleLastProcessed = 0;
-    PerpsNextMarketId = 1;
-    PerpsNextPositionId = 1;
-  }
+    fn liquidation_action_for_offset_native(
+        int market_id,
+        int cursor,
+        int active_count,
+        int offset,
+        int mark_price_bps,
+        int index_price_bps,
+        int current_slot,
+    ) -> int {
+        let slot = wrapped_market_slot(cursor: cursor, offset: offset, active_count: active_count);
+        let position_id = PerpsActivePositionBySlot.get_or(
+            key: market_slot_key(market_id: market_id, slot: slot),
+            default: 0,
+        );
+        return process_liquidation_candidate_native(
+            position_id: position_id,
+            market_id: market_id,
+            mark_price_bps: mark_price_bps,
+            index_price_bps: index_price_bps,
+            current_slot: current_slot,
+        );
+    }
 
-  kotoage fn sync_automation(AccountId executor,
-                             int funding_job_id,
-                             int liquidation_job_id,
-                             int cadence_slots,
-                             int backlog_cap,
-                             int safe_mode) authorize("AssetOps") {
-    assert_owner();
-    require(funding_job_id >= 0, PerpsEngineError::InvalidFundingJobId);
-    require(liquidation_job_id >= 0, PerpsEngineError::InvalidLiquidationJobId);
-    require(cadence_slots >= 0, PerpsEngineError::InvalidCadence);
-    require(backlog_cap >= 0, PerpsEngineError::InvalidBacklogCap);
-    PerpsAutomationExecutor = executor;
-    PerpsFundingJobId = funding_job_id;
-    PerpsLiquidationJobId = liquidation_job_id;
-    PerpsAutomationCadence = cadence_slots;
-    PerpsAutomationBacklogCap = backlog_cap;
-    PerpsAutomationSafeMode = safe_mode;
-  }
+    fn position_registered(int position_id) -> int {
+        if PerpsPositionOwner.contains(position_id) {
+            return 1;
+        }
+        return 0;
+    }
 
-  kotoage fn configure_trigger_lifecycle(int cadence_slots,
-                                         int max_items_per_tick,
-                                         int enabled) authorize("Admin") {
-    assert_owner();
-    require(cadence_slots >= 0, PerpsEngineError::InvalidCadence);
-    require(max_items_per_tick > 0, PerpsEngineError::InvalidMaxItems);
-    require(max_items_per_tick <= 4, PerpsEngineError::MaxItemsTooHigh);
-    require(enabled == 0 || enabled == 1, PerpsEngineError::InvalidEnabled);
-    PerpsLifecycleCadenceSlots = cadence_slots;
-    PerpsLifecycleMaxItems = max_items_per_tick;
-    PerpsLifecycleEnabled = enabled;
-    PerpsLifecycleNextSlot = context::block_height() + cadence_slots;
-    if PerpsLifecycleMarketCursor <= 0 {
-      PerpsLifecycleMarketCursor = 1;
+    fn assert_market_registered(int market_id) {
+        require(PerpsMarketAsset.contains(market_id), PerpsEngineError::MarketMissing);
     }
-    ledger::trigger::set_enabled(Name::parse("soraswap_perps_lifecycle_tick"), enabled);
-  }
 
-  kotoage fn native_lifecycle_tick() authorize("AssetOps") {
-    if PerpsInitialized == 0 {
-      return;
+    fn assert_position_open(int position_id) {
+        require(PerpsPositionOwner.contains(position_id), PerpsEngineError::PositionMissing);
+        require(
+            PerpsPositionStatus.get_or(key: position_id, default: 0) == 1,
+            PerpsEngineError::PositionNotOpen,
+        );
     }
-    if PerpsLifecycleEnabled == 0 || PerpsAutomationSafeMode != 0 {
-      return;
+
+    fn assert_position_manageable(int position_id) {
+        require(PerpsPositionOwner.contains(position_id), PerpsEngineError::PositionMissing);
+        let status = PerpsPositionStatus.get_or(key: position_id, default: 0);
+        require(status == 1 || status == 3, PerpsEngineError::PositionNotManageable);
     }
-    let current_slot = context::block_height();
-    if PerpsLifecycleNextSlot > 0 && current_slot < PerpsLifecycleNextSlot {
-      return;
+
+    fn assert_position_owner(int position_id) {
+        assert_position_open(position_id);
+        require(
+            PerpsPositionOwner.get(key: position_id).unwrap_or(default: PerpsOwner) == context::authority(
+            ),
+            PerpsEngineError::PositionOwnerMismatch,
+        );
     }
-    let market_id = PerpsLifecycleMarketCursor;
-    if market_id <= 0 || market_id >= PerpsNextMarketId {
-      market_id = 1;
+
+    fn assert_position_owner_manageable(int position_id) {
+        assert_position_manageable(position_id);
+        require(
+            PerpsPositionOwner.get(key: position_id).unwrap_or(default: PerpsOwner) == context::authority(
+            ),
+            PerpsEngineError::PositionOwnerMismatch,
+        );
     }
-    let processed = 0;
-    if market_id < PerpsNextMarketId && PerpsMarketActive.get_or(market_id, 0) == 1 {
-      let mark_price_bps = PerpsMarketLastMarkPrice.get_or(market_id, 0);
-      let index_price_bps = PerpsMarketLastIndexPrice.get_or(market_id, 0);
-      let oracle_slot = PerpsMarketLastOracleSlot.get_or(market_id, 0);
-      if mark_price_bps > 0 && index_price_bps > 0 &&
-        oracle_slot > 0 &&
-        current_slot >= oracle_slot &&
-        current_slot - oracle_slot <= PerpsMarketOracleStaleSlots.get_or(market_id, 0) {
+
+    fn move_asset_if_needed(AccountId from, AccountId to, AssetDefinitionId asset, int amount) {
+        if amount > 0 {
+            if from != to {
+                ledger::asset::transfer(
+                    source: from,
+                    destination: to,
+                    asset_definition: asset,
+                    amount: checked_quantity(amount),
+                    dataspace: DataSpaceId::parse("0"),
+                );
+            }
+        }
+    }
+
+    fn checked_quantity(int value) -> quantity {
+        require(value >= 0, PerpsEngineError::InvalidAmount);
+        return match quantity::try_from_int(value: value) {
+            Result::ok(amount) => amount,
+            Result::err(_) => {
+                require(false, PerpsEngineError::InvalidAmount);
+                0
+            },
+        };
+    }
+
+    fn collateral_surplus() -> int {
+        require(
+            PerpsCollateralPoolBalance >= PerpsReservedMargin,
+            PerpsEngineError::CollateralPoolSettle,
+        );
+        return PerpsCollateralPoolBalance - PerpsReservedMargin;
+    }
+
+    fn collect_collateral(AccountId payer, int amount) {
+        require(amount > 0, PerpsEngineError::InvalidAmount);
+        require(payer != PerpsCustodyAccount, PerpsEngineError::InvalidAuthoritySeparation);
+        move_asset_if_needed(
+            from: payer,
+            to: PerpsCustodyAccount,
+            asset: PerpsCollateralAsset,
+            amount: amount,
+        );
+        PerpsCollateralPoolBalance = PerpsCollateralPoolBalance + amount;
+    }
+
+    fn reserve_margin(int amount) {
+        require(amount >= 0, PerpsEngineError::InvalidMargin);
+        let next_reserved = PerpsReservedMargin + amount;
+        require(PerpsCollateralPoolBalance >= next_reserved, PerpsEngineError::CollateralPoolSettle);
+        PerpsReservedMargin = next_reserved;
+    }
+
+    fn release_margin_reserve(int amount) {
+        require(
+            amount >= 0 && PerpsReservedMargin >= amount,
+            PerpsEngineError::CollateralPoolSettle,
+        );
+        PerpsReservedMargin = PerpsReservedMargin - amount;
+        require(
+            PerpsCollateralPoolBalance >= PerpsReservedMargin,
+            PerpsEngineError::CollateralPoolSettle,
+        );
+    }
+
+    fn settle_collateral(AccountId recipient, int amount) -> int {
+        require(amount >= 0, PerpsEngineError::InvalidAmount);
+        if amount > 0 {
+            require(recipient != PerpsCustodyAccount, PerpsEngineError::InvalidAuthoritySeparation);
+        }
+        let settled = min_int(a: amount, b: PerpsCollateralPoolBalance);
+        move_asset_if_needed(
+            from: PerpsCustodyAccount,
+            to: recipient,
+            asset: PerpsCollateralAsset,
+            amount: settled,
+        );
+        PerpsCollateralPoolBalance = PerpsCollateralPoolBalance - settled;
+        return settled;
+    }
+
+    fn position_payout_budget(int margin) -> int {
+        require(margin >= 0, PerpsEngineError::InvalidMargin);
+        return margin + collateral_surplus();
+    }
+
+    fn market_utilisation_bps(int market_id, int projected_open_interest) -> int {
+        let open_interest_cap = PerpsMarketOpenInterestCap.get_or(key: market_id, default: 0);
+        if open_interest_cap <= 0 {
+            return 0;
+        }
+        return (projected_open_interest * 10_000 + open_interest_cap - 1) / open_interest_cap;
+    }
+
+    fn required_initial_margin(int size, int leverage_bps) -> int {
+        require(leverage_bps > 0, PerpsEngineError::InvalidLeverage);
+        return (abs_int(size) * 10_000 + leverage_bps - 1) / leverage_bps;
+    }
+
+    fn required_maintenance_margin(int size, int maintenance_margin_bps) -> int {
+        return (abs_int(size) * maintenance_margin_bps + 10_000 - 1) / 10_000;
+    }
+
+    fn unrealized_pnl(int size, int entry_price_bps, int mark_price_bps) -> int {
+        require(entry_price_bps > 0, PerpsEngineError::InvalidEntryPrice);
+        require(mark_price_bps > 0, PerpsEngineError::InvalidMarkPrice);
+        return (size * (mark_price_bps - entry_price_bps)) / 10_000;
+    }
+
+    fn position_equity(int position_id, int mark_price_bps) -> int {
+        return PerpsPositionMargin.get_or(key: position_id, default: 0) + unrealized_pnl(
+            size: PerpsPositionSize.get_or(key: position_id, default: 0),
+            entry_price_bps: PerpsPositionEntryPrice.get_or(key: position_id, default: 0),
+            mark_price_bps: mark_price_bps,
+        );
+    }
+
+    fn assert_oracle_account() {
+        assert_initialized();
+        require(PerpsOracleAccount == context::authority(), PerpsEngineError::OracleAccountMismatch);
+    }
+
+    fn assert_fresh_market_oracle(int market_id) -> (int, int, int, int, int) {
+        assert_market_registered(market_id);
+        let mark_price_bps = PerpsMarketLastMarkPrice.get_or(key: market_id, default: 0);
+        let index_price_bps = PerpsMarketLastIndexPrice.get_or(key: market_id, default: 0);
+        let oracle_slot = PerpsMarketLastOracleSlot.get_or(key: market_id, default: 0);
+        let attestation_hash = PerpsMarketLastOracleAttestationHash.get_or(
+            key: market_id,
+            default: 0,
+        );
+        let current_slot = context::block_height();
+        require(mark_price_bps > 0, PerpsEngineError::InvalidMarkPrice);
+        require(index_price_bps > 0, PerpsEngineError::InvalidIndexPrice);
+        require(attestation_hash > 0, PerpsEngineError::MissingAttestation);
+        require(current_slot >= oracle_slot, PerpsEngineError::InvalidOracleSlot);
+        require(
+            current_slot - oracle_slot <= PerpsMarketOracleStaleSlots.get_or(
+                key: market_id,
+                default: 0,
+            ),
+            PerpsEngineError::OracleStale,
+        );
+        return (mark_price_bps, index_price_bps, oracle_slot, current_slot, attestation_hash);
+    }
+
+    fn assert_market_accepts_risk(int market_id, int projected_open_interest) {
+        assert_market_registered(market_id);
+        require(
+            PerpsMarketActive.get_or(key: market_id, default: 0) == 1,
+            PerpsEngineError::MarketPaused,
+        );
+        if PerpsAutomationBacklogCap > 0 {
+            require(
+                PerpsAutomationBacklog <= PerpsAutomationBacklogCap,
+                PerpsEngineError::EngineBacklog,
+            );
+        }
+        let backlog_limit = PerpsMarketBacklogLimit.get_or(key: market_id, default: 0);
+        if backlog_limit > 0 {
+            require(
+                PerpsMarketQueuedLiquidations.get_or(key: market_id, default: 0) <= backlog_limit,
+                PerpsEngineError::MarketBacklog,
+            );
+        }
+        require(
+            PerpsMarketGuardFlags.get_or(key: market_id, default: 0) == 0,
+            PerpsEngineError::MarketGuarded,
+        );
+        let utilisation_clamp = PerpsMarketUtilisationClampBps.get_or(key: market_id, default: 0);
+        if utilisation_clamp > 0 {
+            require(
+                market_utilisation_bps(
+                    market_id: market_id,
+                    projected_open_interest: projected_open_interest,
+                ) <= utilisation_clamp,
+                PerpsEngineError::MarketUtilisationClamp,
+            );
+        }
+        let liquidation_stress_limit = PerpsMarketLiquidationStressLimit.get_or(
+            key: market_id,
+            default: 0,
+        );
+        if liquidation_stress_limit > 0 {
+            require(
+                PerpsMarketQueuedLiquidations.get_or(key: market_id, default: 0) <= liquidation_stress_limit,
+                PerpsEngineError::LiquidationStress,
+            );
+        }
+        let open_interest_cap = PerpsMarketOpenInterestCap.get_or(key: market_id, default: 0);
+        if open_interest_cap > 0 {
+            require(projected_open_interest <= open_interest_cap, PerpsEngineError::OpenInterestCap);
+        }
+    }
+
+    fn assert_market_risk_params(
+        int max_leverage_bps,
+        int maintenance_margin_bps,
+        int liquidation_fee_bps,
+        int open_interest_cap,
+        int funding_interval_slots,
+        int oracle_stale_slots,
+        int backlog_limit,
+        int utilisation_clamp_bps,
+        int liquidation_stress_limit,
+        int guard_flags,
+        int active,
+    ) {
+        require(max_leverage_bps > 10_000, PerpsEngineError::InvalidLeverageCap);
+        require(maintenance_margin_bps > 0, PerpsEngineError::InvalidMaintenanceMargin);
+        require(maintenance_margin_bps <= 10_000, PerpsEngineError::InvalidMaintenanceMargin);
+        require(liquidation_fee_bps >= 0, PerpsEngineError::InvalidLiquidationFee);
+        require(liquidation_fee_bps <= 10_000, PerpsEngineError::InvalidLiquidationFee);
+        require(open_interest_cap > 0, PerpsEngineError::InvalidOpenInterestCap);
+        require(funding_interval_slots >= 0, PerpsEngineError::InvalidFundingCadence);
+        require(oracle_stale_slots >= 0, PerpsEngineError::InvalidOracleStaleSlots);
+        require(backlog_limit >= 0, PerpsEngineError::InvalidBacklogLimit);
+        require(utilisation_clamp_bps >= 0, PerpsEngineError::InvalidUtilisationClamp);
+        require(utilisation_clamp_bps <= 10_000, PerpsEngineError::InvalidUtilisationClamp);
+        require(liquidation_stress_limit >= 0, PerpsEngineError::InvalidLiquidationStressLimit);
+        require(guard_flags >= 0, PerpsEngineError::InvalidGuardFlags);
+        require(active == 0 || active == 1, PerpsEngineError::InvalidMarketActiveFlag);
+    }
+
+    fn record_market_oracle(
+        int market_id,
+        int mark_price_bps,
+        int index_price_bps,
+        int confidence_bps,
+        int oracle_slot,
+        int attestation_hash,
+    ) {
+        PerpsMarketLastMarkPrice[market_id] = mark_price_bps;
+        PerpsMarketLastIndexPrice[market_id] = index_price_bps;
+        PerpsMarketLastConfidenceBps[market_id] = confidence_bps;
+        PerpsMarketLastOracleSlot[market_id] = oracle_slot;
+        PerpsMarketLastOracleAttestationHash[market_id] = attestation_hash;
+    }
+
+    fn append_active_position(int market_id, int position_id) {
+        let slot = PerpsMarketActivePositionCount.get_or(key: market_id, default: 0);
+        PerpsActivePositionBySlot[market_slot_key(market_id: market_id, slot: slot)] = position_id;
+        PerpsPositionActiveSlot[position_id] = slot;
+        PerpsMarketActivePositionCount[market_id] = slot + 1;
+    }
+
+    fn remove_active_position(int market_id, int position_id) {
+        let count = PerpsMarketActivePositionCount.get_or(key: market_id, default: 0);
+        if count <= 0 {
+            PerpsPositionActiveSlot[position_id] =-1;
+            return;
+        }
+        let slot = PerpsPositionActiveSlot.get_or(key: position_id, default: -1);
+        if slot < 0 || slot >= count {
+            PerpsPositionActiveSlot[position_id] =-1;
+            return;
+        }
+        let last_slot = count - 1;
+        if slot != last_slot {
+            let moved_position_id = PerpsActivePositionBySlot.get_or(
+                key: market_slot_key(market_id: market_id, slot: last_slot),
+                default: 0,
+            );
+            PerpsActivePositionBySlot[market_slot_key(market_id: market_id, slot: slot)] = moved_position_id;
+            PerpsPositionActiveSlot[moved_position_id] = slot;
+        }
+        PerpsActivePositionBySlot[market_slot_key(market_id: market_id, slot: last_slot)] = 0;
+        PerpsMarketActivePositionCount[market_id] = last_slot;
+        PerpsPositionActiveSlot[position_id] =-1;
+        if last_slot <= 0 {
+            PerpsMarketScanCursor[market_id] = 0;
+            return;
+        }
+        let cursor = PerpsMarketScanCursor.get_or(key: market_id, default: 0);
+        if cursor == last_slot {
+            PerpsMarketScanCursor[market_id] = slot;
+            return;
+        }
+        if cursor >= last_slot {
+            PerpsMarketScanCursor[market_id] = 0;
+        }
+    }
+
+    fn queue_position(
+        int position_id,
+        int market_id,
+        int current_slot,
+        int mark_price_bps,
+        int index_price_bps,
+    ) {
+        PerpsPositionStatus[position_id] = 3;
+        PerpsPositionQueuedSlot[position_id] = current_slot;
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        PerpsMarketQueuedLiquidations[market_id] = PerpsMarketQueuedLiquidations.get_or(
+            key: market_id,
+            default: 0,
+        ) + 1;
+    }
+
+    fn recover_position(int position_id, int market_id, int mark_price_bps, int index_price_bps) {
+        PerpsPositionStatus[position_id] = 1;
+        PerpsPositionQueuedSlot[position_id] = 0;
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        PerpsMarketQueuedLiquidations[market_id] = max_int(
+            a: PerpsMarketQueuedLiquidations.get_or(key: market_id, default: 0) - 1,
+            b: 0,
+        );
+    }
+
+    fn liquidate_position(int position_id, int market_id, int mark_price_bps, int index_price_bps) {
+        let margin = PerpsPositionMargin.get_or(key: position_id, default: 0);
+        let equity = position_equity(position_id: position_id, mark_price_bps: mark_price_bps);
+        let reward_request = (margin * PerpsMarketLiquidationFeeBps.get_or(
+            key: market_id,
+            default: 0,
+        )) / 10_000;
+        let payout_budget = position_payout_budget(margin: margin);
+        let settled_keeper_reward = settle_collateral(
+            recipient: context::authority(),
+            amount: min_int(a: min_int(a: reward_request, b: margin), b: payout_budget),
+        );
+        let owner_residual_request = max_int(a: equity - settled_keeper_reward, b: 0);
+        let settled_owner_residual = settle_collateral(
+            recipient: PerpsPositionOwner.get(key: position_id).unwrap_or(default: PerpsOwner),
+            amount: min_int(a: owner_residual_request, b: payout_budget - settled_keeper_reward),
+        );
+        release_margin_reserve(amount: margin);
+        PerpsPositionRealizedPnl[position_id] = PerpsPositionRealizedPnl.get_or(
+            key: position_id,
+            default: 0,
+        ) + settled_keeper_reward + settled_owner_residual - margin;
+        PerpsMarketOpenInterest[market_id] = max_int(
+            a: PerpsMarketOpenInterest.get_or(key: market_id, default: 0) - abs_int(
+                PerpsPositionSize.get_or(key: position_id, default: 0),
+            ),
+            b: 0,
+        );
+        PerpsMarketQueuedLiquidations[market_id] = max_int(
+            a: PerpsMarketQueuedLiquidations.get_or(key: market_id, default: 0) - 1,
+            b: 0,
+        );
+        PerpsPositionSize[position_id] = 0;
+        PerpsPositionMargin[position_id] = 0;
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        PerpsPositionStatus[position_id] = 4;
+        PerpsPositionQueuedSlot[position_id] = 0;
+        PerpsPositionLastKeeperReward[position_id] = settled_keeper_reward;
+        PerpsPositionLastOwnerResidual[position_id] = settled_owner_residual;
+        remove_active_position(market_id: market_id, position_id: position_id);
+    }
+
+    fn liquidate_position_native(
+        int position_id,
+        int market_id,
+        int mark_price_bps,
+        int index_price_bps,
+    ) {
+        let margin = PerpsPositionMargin.get_or(key: position_id, default: 0);
+        let equity = position_equity(position_id: position_id, mark_price_bps: mark_price_bps);
+        let owner_residual_request = max_int(a: equity, b: 0);
+        let settled_owner_residual = settle_collateral(
+            recipient: PerpsPositionOwner.get(key: position_id).unwrap_or(default: PerpsOwner),
+            amount: min_int(a: owner_residual_request, b: position_payout_budget(margin: margin)),
+        );
+        release_margin_reserve(amount: margin);
+        PerpsPositionRealizedPnl[position_id] = PerpsPositionRealizedPnl.get_or(
+            key: position_id,
+            default: 0,
+        ) + settled_owner_residual - margin;
+        PerpsMarketOpenInterest[market_id] = max_int(
+            a: PerpsMarketOpenInterest.get_or(key: market_id, default: 0) - abs_int(
+                PerpsPositionSize.get_or(key: position_id, default: 0),
+            ),
+            b: 0,
+        );
+        PerpsMarketQueuedLiquidations[market_id] = max_int(
+            a: PerpsMarketQueuedLiquidations.get_or(key: market_id, default: 0) - 1,
+            b: 0,
+        );
+        PerpsPositionSize[position_id] = 0;
+        PerpsPositionMargin[position_id] = 0;
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        PerpsPositionStatus[position_id] = 4;
+        PerpsPositionQueuedSlot[position_id] = 0;
+        PerpsPositionLastKeeperReward[position_id] = 0;
+        PerpsPositionLastOwnerResidual[position_id] = settled_owner_residual;
+        remove_active_position(market_id: market_id, position_id: position_id);
+    }
+
+    fn process_liquidation_candidate(
+        int position_id,
+        int market_id,
+        int mark_price_bps,
+        int index_price_bps,
+        int current_slot,
+    ) -> int {
+        let status = PerpsPositionStatus.get_or(key: position_id, default: 0);
+        if status != 1 && status != 3 {
+            return 0;
+        }
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        let maintenance = required_maintenance_margin(
+            size: PerpsPositionSize.get_or(key: position_id, default: 0),
+            maintenance_margin_bps: PerpsMarketMaintenanceMarginBps.get_or(
+                key: market_id,
+                default: 0,
+            ),
+        );
+        let equity = position_equity(position_id: position_id, mark_price_bps: mark_price_bps);
+        if status == 1 {
+            if equity < maintenance {
+                queue_position(
+                    position_id: position_id,
+                    market_id: market_id,
+                    current_slot: current_slot,
+                    mark_price_bps: mark_price_bps,
+                    index_price_bps: index_price_bps,
+                );
+                return 1;
+            }
+            return 0;
+        }
+        if equity >= maintenance {
+            recover_position(
+                position_id: position_id,
+                market_id: market_id,
+                mark_price_bps: mark_price_bps,
+                index_price_bps: index_price_bps,
+            );
+            return 2;
+        }
+        if current_slot > PerpsPositionQueuedSlot.get_or(key: position_id, default: 0) {
+            liquidate_position(
+                position_id: position_id,
+                market_id: market_id,
+                mark_price_bps: mark_price_bps,
+                index_price_bps: index_price_bps,
+            );
+            return 3;
+        }
+        return 0;
+    }
+
+    fn process_liquidation_candidate_native(
+        int position_id,
+        int market_id,
+        int mark_price_bps,
+        int index_price_bps,
+        int current_slot,
+    ) -> int {
+        let status = PerpsPositionStatus.get_or(key: position_id, default: 0);
+        if status != 1 && status != 3 {
+            return 0;
+        }
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        let maintenance = required_maintenance_margin(
+            size: PerpsPositionSize.get_or(key: position_id, default: 0),
+            maintenance_margin_bps: PerpsMarketMaintenanceMarginBps.get_or(
+                key: market_id,
+                default: 0,
+            ),
+        );
+        let equity = position_equity(position_id: position_id, mark_price_bps: mark_price_bps);
+        if status == 1 {
+            if equity < maintenance {
+                queue_position(
+                    position_id: position_id,
+                    market_id: market_id,
+                    current_slot: current_slot,
+                    mark_price_bps: mark_price_bps,
+                    index_price_bps: index_price_bps,
+                );
+                return 1;
+            }
+            return 0;
+        }
+        if equity >= maintenance {
+            recover_position(
+                position_id: position_id,
+                market_id: market_id,
+                mark_price_bps: mark_price_bps,
+                index_price_bps: index_price_bps,
+            );
+            return 2;
+        }
+        if current_slot > PerpsPositionQueuedSlot.get_or(key: position_id, default: 0) {
+            liquidate_position_native(
+                position_id: position_id,
+                market_id: market_id,
+                mark_price_bps: mark_price_bps,
+                index_price_bps: index_price_bps,
+            );
+            return 3;
+        }
+        return 0;
+    }
+
+    view fn main() -> int {
+        return PerpsInitialized;
+    }
+
+    hajimari(
+        AssetDefinitionId collateral_asset,
+        AccountId custody_account,
+        AccountId oracle_account,
+    ) {
+        require(
+            custody_account != context::authority() && oracle_account != context::authority() && oracle_account != custody_account,
+            PerpsEngineError::InvalidAuthoritySeparation,
+        );
+        PerpsInitialized = 1;
+        PerpsOwner = context::authority();
+        PerpsCollateralAsset = collateral_asset;
+        PerpsCustodyAccount = custody_account;
+        PerpsCollateralPoolBalance = 0;
+        PerpsReservedMargin = 0;
+        PerpsOracleAccount = oracle_account;
+        PerpsWithdrawalOnly = 1;
+        PerpsAutomationExecutor = context::authority();
+        PerpsFundingJobId = 0;
+        PerpsLiquidationJobId = 0;
+        PerpsAutomationCadence = 0;
+        PerpsAutomationBacklogCap = 0;
+        PerpsAutomationBacklog = 0;
+        PerpsAutomationSafeMode = 0;
+        PerpsLifecycleCadenceSlots = 0;
+        PerpsLifecycleMaxItems = 1;
+        PerpsLifecycleEnabled = 0;
+        PerpsLifecycleNextSlot = 0;
+        PerpsLifecycleMarketCursor = 1;
+        PerpsLifecycleLastSlot = 0;
+        PerpsLifecycleLastProcessed = 0;
+        PerpsNextMarketId = 1;
+        PerpsNextPositionId = 1;
+    }
+
+    kotoage fn sync_automation(
+        AccountId executor,
+        int funding_job_id,
+        int liquidation_job_id,
+        int cadence_slots,
+        int backlog_cap,
+        int safe_mode,
+    ) authorize("AssetOps") {
+        assert_owner();
+        require(funding_job_id >= 0, PerpsEngineError::InvalidFundingJobId);
+        require(liquidation_job_id >= 0, PerpsEngineError::InvalidLiquidationJobId);
+        require(cadence_slots >= 0, PerpsEngineError::InvalidCadence);
+        require(backlog_cap >= 0, PerpsEngineError::InvalidBacklogCap);
+        require(safe_mode == 0 || safe_mode == 1, PerpsEngineError::InvalidSafeMode);
+        PerpsAutomationExecutor = executor;
+        PerpsFundingJobId = funding_job_id;
+        PerpsLiquidationJobId = liquidation_job_id;
+        PerpsAutomationCadence = cadence_slots;
+        PerpsAutomationBacklogCap = backlog_cap;
+        PerpsAutomationSafeMode = safe_mode;
+    }
+
+    kotoage fn configure_trigger_lifecycle(int cadence_slots, int max_items_per_tick, int enabled) authorize(
+        "Admin"
+    ) {
+        assert_owner();
+        require(cadence_slots >= 0, PerpsEngineError::InvalidCadence);
+        require(max_items_per_tick > 0, PerpsEngineError::InvalidMaxItems);
+        require(max_items_per_tick <= 4, PerpsEngineError::MaxItemsTooHigh);
+        require(enabled == 0 || enabled == 1, PerpsEngineError::InvalidEnabled);
+        PerpsLifecycleCadenceSlots = cadence_slots;
+        PerpsLifecycleMaxItems = max_items_per_tick;
+        PerpsLifecycleEnabled = enabled;
+        PerpsLifecycleNextSlot = context::block_height() + cadence_slots;
+        if PerpsLifecycleMarketCursor <= 0 {
+            PerpsLifecycleMarketCursor = 1;
+        }
+        ledger::trigger::set_enabled(Name::parse("soraswap_perps_lifecycle_tick"), enabled);
+    }
+
+    kotoage fn native_lifecycle_tick() authorize("AssetOps") {
+        if PerpsInitialized == 0 {
+            return;
+        }
+        if PerpsLifecycleEnabled == 0 || PerpsAutomationSafeMode != 0 {
+            return;
+        }
+        let current_slot = context::block_height();
+        if PerpsLifecycleNextSlot > 0 && current_slot < PerpsLifecycleNextSlot {
+            return;
+        }
+        var market_id = PerpsLifecycleMarketCursor;
+        if market_id <= 0 || market_id >= PerpsNextMarketId {
+            market_id = 1;
+        }
+        var processed = 0;
+        if market_id < PerpsNextMarketId && PerpsMarketActive.get_or(key: market_id, default: 0) == 1 {
+            let mark_price_bps = PerpsMarketLastMarkPrice.get_or(key: market_id, default: 0);
+            let index_price_bps = PerpsMarketLastIndexPrice.get_or(key: market_id, default: 0);
+            let oracle_slot = PerpsMarketLastOracleSlot.get_or(key: market_id, default: 0);
+            if mark_price_bps > 0 && index_price_bps > 0 && oracle_slot > 0 && current_slot >= oracle_slot && current_slot - oracle_slot <= PerpsMarketOracleStaleSlots.get_or(
+                key: market_id,
+                default: 0,
+            ) {
+                let premium_bps = mark_price_bps - index_price_bps;
+                PerpsMarketLastNativeFundingDelta[market_id] = (PerpsMarketFundingBps.get_or(
+                    key: market_id,
+                    default: 0,
+                ) * premium_bps) / 10_000;
+                let active_count = PerpsMarketActivePositionCount.get_or(key: market_id, default: 0);
+                let cursor = normalized_scan_cursor(
+                    cursor: PerpsMarketScanCursor.get_or(key: market_id, default: 0),
+                    active_count: active_count,
+                );
+                let scan_limit = min_int(a: PerpsLifecycleMaxItems, b: active_count);
+                var queued = 0;
+                var recovered = 0;
+                var liquidated = 0;
+                if scan_limit > 0 {
+                    let action0 = liquidation_action_for_offset_native(
+                        market_id: market_id,
+                        cursor: cursor,
+                        active_count: active_count,
+                        offset: 0,
+                        mark_price_bps: mark_price_bps,
+                        index_price_bps: index_price_bps,
+                        current_slot: current_slot,
+                    );
+                    if action0 == 1 {
+                        queued = queued + 1;
+                    }
+                    if action0 == 2 {
+                        recovered = recovered + 1;
+                    }
+                    if action0 == 3 {
+                        liquidated = liquidated + 1;
+                    }
+                }
+                if scan_limit > 1 {
+                    let action1 = liquidation_action_for_offset_native(
+                        market_id: market_id,
+                        cursor: cursor,
+                        active_count: active_count,
+                        offset: 1,
+                        mark_price_bps: mark_price_bps,
+                        index_price_bps: index_price_bps,
+                        current_slot: current_slot,
+                    );
+                    if action1 == 1 {
+                        queued = queued + 1;
+                    }
+                    if action1 == 2 {
+                        recovered = recovered + 1;
+                    }
+                    if action1 == 3 {
+                        liquidated = liquidated + 1;
+                    }
+                }
+                if scan_limit > 2 {
+                    let action2 = liquidation_action_for_offset_native(
+                        market_id: market_id,
+                        cursor: cursor,
+                        active_count: active_count,
+                        offset: 2,
+                        mark_price_bps: mark_price_bps,
+                        index_price_bps: index_price_bps,
+                        current_slot: current_slot,
+                    );
+                    if action2 == 1 {
+                        queued = queued + 1;
+                    }
+                    if action2 == 2 {
+                        recovered = recovered + 1;
+                    }
+                    if action2 == 3 {
+                        liquidated = liquidated + 1;
+                    }
+                }
+                if scan_limit > 3 {
+                    let action3 = liquidation_action_for_offset_native(
+                        market_id: market_id,
+                        cursor: cursor,
+                        active_count: active_count,
+                        offset: 3,
+                        mark_price_bps: mark_price_bps,
+                        index_price_bps: index_price_bps,
+                        current_slot: current_slot,
+                    );
+                    if action3 == 1 {
+                        queued = queued + 1;
+                    }
+                    if action3 == 2 {
+                        recovered = recovered + 1;
+                    }
+                    if action3 == 3 {
+                        liquidated = liquidated + 1;
+                    }
+                }
+                processed = scan_limit;
+                let next_cursor = cursor + scan_limit;
+                let next_active_count = PerpsMarketActivePositionCount.get_or(
+                    key: market_id,
+                    default: 0,
+                );
+                if next_active_count <= 0 || next_cursor >= next_active_count {
+                    PerpsMarketScanCursor[market_id] = 0;
+                } else {
+                    PerpsMarketScanCursor[market_id] = next_cursor;
+                }
+                PerpsMarketLastPassScanned[market_id] = scan_limit;
+                PerpsMarketLastPassQueued[market_id] = queued;
+                PerpsMarketLastPassRecovered[market_id] = recovered;
+                PerpsMarketLastPassLiquidated[market_id] = liquidated;
+                PerpsMarketLastNativePassSlot[market_id] = current_slot;
+            }
+        }
+        market_id = market_id + 1;
+        if market_id >= PerpsNextMarketId {
+            market_id = 1;
+        }
+        PerpsLifecycleMarketCursor = market_id;
+        PerpsLifecycleLastSlot = current_slot;
+        PerpsLifecycleLastProcessed = processed;
+        PerpsLifecycleNextSlot = current_slot + PerpsLifecycleCadenceSlots;
+    }
+
+    view fn engine_config() -> (AssetDefinitionId, AccountId, AccountId, int, int, int, int, int, int) {
+        assert_initialized();
+        return (PerpsCollateralAsset, PerpsCustodyAccount, PerpsOracleAccount, PerpsWithdrawalOnly, PerpsNextMarketId, PerpsNextPositionId, PerpsFundingJobId, PerpsLiquidationJobId, PerpsAutomationBacklogCap);
+    }
+
+    view fn collateral_pool_state() -> (AccountId, int, int, int) {
+        assert_initialized();
+        return (PerpsCustodyAccount, PerpsCollateralPoolBalance, PerpsReservedMargin, collateral_surplus(
+        ));
+    }
+
+    view fn market_state(int market_id) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
+        var registered = 0;
+        if PerpsMarketAsset.contains(market_id) {
+            registered = 1;
+        }
+        return (registered, PerpsMarketActive.get_or(key: market_id, default: 0), PerpsMarketOpenInterest.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketOpenInterestCap.get_or(key: market_id, default: 0), PerpsMarketMaxLeverageBps.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketMaintenanceMarginBps.get_or(key: market_id, default: 0), PerpsMarketLiquidationFeeBps.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketFundingBps.get_or(key: market_id, default: 0), PerpsMarketFundingIntervalSlots.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketOracleStaleSlots.get_or(key: market_id, default: 0), PerpsMarketQueuedLiquidations.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketGuardFlags.get_or(key: market_id, default: 0), PerpsMarketBacklogLimit.get_or(
+            key: market_id,
+            default: 0,
+        ));
+    }
+
+    view fn market_oracle_state(int market_id) -> (int, int, int, int, int) {
+        assert_market_registered(market_id);
+        return (PerpsMarketLastMarkPrice.get_or(key: market_id, default: 0), PerpsMarketLastIndexPrice.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketLastConfidenceBps.get_or(key: market_id, default: 0), PerpsMarketLastOracleSlot.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketLastOracleAttestationHash.get_or(key: market_id, default: 0));
+    }
+
+    view fn position_state(int position_id) -> (int, int, int, int, int, int, int, int, int, int, int) {
+        return (position_registered(position_id), PerpsPositionStatus.get_or(
+            key: position_id,
+            default: 0,
+        ), PerpsPositionMarketId.get_or(key: position_id, default: 0), PerpsPositionSize.get_or(
+            key: position_id,
+            default: 0,
+        ), PerpsPositionMargin.get_or(key: position_id, default: 0), PerpsPositionFundingAccrued.get_or(
+            key: position_id,
+            default: 0,
+        ), PerpsPositionRealizedPnl.get_or(key: position_id, default: 0), PerpsPositionEntryPrice.get_or(
+            key: position_id,
+            default: 0,
+        ), PerpsPositionMarkPrice.get_or(key: position_id, default: 0), PerpsPositionIndexPrice.get_or(
+            key: position_id,
+            default: 0,
+        ), PerpsPositionQueuedSlot.get_or(key: position_id, default: 0));
+    }
+
+    view fn liquidation_state(int market_id) -> (int, int, int, int, int, int, int) {
+        assert_market_registered(market_id);
+        return (PerpsMarketActivePositionCount.get_or(key: market_id, default: 0), PerpsMarketScanCursor.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketQueuedLiquidations.get_or(key: market_id, default: 0), PerpsMarketLastPassScanned.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketLastPassQueued.get_or(key: market_id, default: 0), PerpsMarketLastPassRecovered.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketLastPassLiquidated.get_or(key: market_id, default: 0));
+    }
+
+    view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
+        return (PerpsLifecycleEnabled, PerpsLifecycleCadenceSlots, PerpsLifecycleMaxItems, PerpsLifecycleNextSlot, PerpsLifecycleMarketCursor, PerpsLifecycleLastSlot, PerpsLifecycleLastProcessed);
+    }
+
+    view fn position_liquidation_state(int position_id) -> (int, int, int) {
+        return (PerpsPositionQueuedSlot.get_or(key: position_id, default: 0), PerpsPositionLastKeeperReward.get_or(
+            key: position_id,
+            default: 0,
+        ), PerpsPositionLastOwnerResidual.get_or(key: position_id, default: 0));
+    }
+
+    view fn risk_state(int market_id) -> (int, int, int, int, int, int, int, int) {
+        assert_market_registered(market_id);
+        let projected_open_interest = PerpsMarketOpenInterest.get_or(key: market_id, default: 0);
+        return (projected_open_interest, PerpsMarketOpenInterestCap.get_or(
+            key: market_id,
+            default: 0,
+        ), PerpsMarketQueuedLiquidations.get_or(key: market_id, default: 0), market_utilisation_bps(
+            market_id: market_id,
+            projected_open_interest: projected_open_interest,
+        ), PerpsMarketGuardFlags.get_or(key: market_id, default: 0), PerpsAutomationBacklog, PerpsAutomationSafeMode, PerpsWithdrawalOnly);
+    }
+
+    view fn automation_state() -> (int, int, int, int, int, int, int) {
+        var executor_bound = 0;
+        if PerpsInitialized == 1 {
+            if PerpsAutomationExecutor == PerpsOwner {
+                executor_bound = 1;
+            } else {
+                if PerpsFundingJobId > 0 || PerpsLiquidationJobId > 0 {
+                    executor_bound = 1;
+                }
+            }
+        }
+        return (executor_bound, PerpsFundingJobId, PerpsLiquidationJobId, PerpsAutomationCadence, PerpsAutomationBacklogCap, PerpsAutomationBacklog, PerpsAutomationSafeMode);
+    }
+
+    kotoage fn fund_collateral_pool(int amount) -> int authorize("AssetOps") {
+        assert_initialized();
+        collect_collateral(payer: context::authority(), amount: amount);
+        return PerpsCollateralPoolBalance;
+    }
+
+    kotoage fn publish_market_oracle(
+        int market_id,
+        int mark_price_bps,
+        int index_price_bps,
+        int confidence_bps,
+        int oracle_slot,
+        int status_flags,
+        int attestation_hash,
+    ) -> int authorize("Oracle") {
+        assert_oracle_account();
+        assert_market_registered(market_id);
+        require(mark_price_bps > 0, PerpsEngineError::InvalidMarkPrice);
+        require(index_price_bps > 0, PerpsEngineError::InvalidIndexPrice);
+        require(confidence_bps >= 0, PerpsEngineError::InvalidConfidence);
+        require(confidence_bps <= 2_500, PerpsEngineError::ConfidenceTooWide);
+        require(status_flags == 0, PerpsEngineError::OracleDegraded);
+        require(attestation_hash > 0, PerpsEngineError::MissingAttestation);
+        let current_slot = context::block_height();
+        require(oracle_slot > 0 && current_slot >= oracle_slot, PerpsEngineError::InvalidOracleSlot);
+        require(
+            oracle_slot > PerpsMarketLastOracleSlot.get_or(key: market_id, default: 0),
+            PerpsEngineError::OracleSlotReplay,
+        );
+        require(
+            current_slot - oracle_slot <= PerpsMarketOracleStaleSlots.get_or(
+                key: market_id,
+                default: 0,
+            ),
+            PerpsEngineError::OracleStale,
+        );
+        record_market_oracle(
+            market_id: market_id,
+            mark_price_bps: mark_price_bps,
+            index_price_bps: index_price_bps,
+            confidence_bps: confidence_bps,
+            oracle_slot: oracle_slot,
+            attestation_hash: attestation_hash,
+        );
+        return oracle_slot;
+    }
+
+    kotoage fn withdraw_collateral_surplus(AccountId recipient, int amount) -> int authorize(
+        "AssetOps"
+    ) {
+        assert_owner();
+        require(PerpsWithdrawalOnly == 1, PerpsEngineError::WithdrawalOnly);
+        require(amount > 0, PerpsEngineError::InvalidAmount);
+        require(amount <= collateral_surplus(), PerpsEngineError::CollateralPoolSettle);
+        let settled = settle_collateral(recipient: recipient, amount: amount);
+        require(settled == amount, PerpsEngineError::CollateralPoolSettle);
+        return PerpsCollateralPoolBalance;
+    }
+
+    kotoage fn configure_oracle_account(AccountId oracle_account) authorize("Admin") {
+        assert_owner();
+        require(PerpsWithdrawalOnly == 1, PerpsEngineError::WithdrawalOnly);
+        require(
+            oracle_account != PerpsOwner && oracle_account != PerpsCustodyAccount,
+            PerpsEngineError::InvalidAuthoritySeparation,
+        );
+        PerpsOracleAccount = oracle_account;
+    }
+
+    kotoage fn enter_withdrawal_only() authorize("AssetOps") {
+        assert_owner();
+        PerpsWithdrawalOnly = 1;
+    }
+
+    kotoage fn exit_withdrawal_only() authorize("AssetOps") {
+        assert_owner();
+        PerpsWithdrawalOnly = 0;
+    }
+
+    kotoage fn open_position(int market_id, int size, int margin, int requested_leverage_bps) -> int authorize(
+        "AssetOps"
+    ) {
+        assert_initialized();
+        assert_risk_on();
+        require(size != 0, PerpsEngineError::InvalidSize);
+        require(margin > 0, PerpsEngineError::InvalidMargin);
+        let oracle = assert_fresh_market_oracle(market_id: market_id);
+        let mark_price_bps = oracle.0;
+        let index_price_bps = oracle.1;
+        var effective_leverage = requested_leverage_bps;
+        require(effective_leverage >= 0, PerpsEngineError::InvalidLeverage);
+        if effective_leverage <= 0 {
+            effective_leverage = PerpsMarketMaxLeverageBps.get_or(key: market_id, default: 0);
+        }
+        require(
+            effective_leverage <= PerpsMarketMaxLeverageBps.get_or(key: market_id, default: 0),
+            PerpsEngineError::LeverageExceedsMarketCap,
+        );
+        require(
+            margin >= required_initial_margin(size: size, leverage_bps: effective_leverage),
+            PerpsEngineError::InsufficientInitialMargin,
+        );
+        let projected_open_interest = PerpsMarketOpenInterest.get_or(key: market_id, default: 0) + abs_int(
+            size,
+        );
+        assert_market_accepts_risk(
+            market_id: market_id,
+            projected_open_interest: projected_open_interest,
+        );
+        let position_id = PerpsNextPositionId;
+        PerpsNextPositionId = position_id + 1;
+        collect_collateral(payer: context::authority(), amount: margin);
+        reserve_margin(amount: margin);
+        PerpsPositionOwner[position_id] = context::authority();
+        PerpsPositionMarketId[position_id] = market_id;
+        PerpsPositionSize[position_id] = size;
+        PerpsPositionMargin[position_id] = margin;
+        PerpsPositionEntryPrice[position_id] = mark_price_bps;
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        PerpsPositionFundingAccrued[position_id] = 0;
+        PerpsPositionRealizedPnl[position_id] = 0;
+        PerpsPositionStatus[position_id] = 1;
+        PerpsPositionActiveSlot[position_id] = 0;
+        PerpsPositionQueuedSlot[position_id] = 0;
+        PerpsPositionLastKeeperReward[position_id] = 0;
+        PerpsPositionLastOwnerResidual[position_id] = 0;
+        append_active_position(market_id: market_id, position_id: position_id);
+        PerpsMarketOpenInterest[market_id] = projected_open_interest;
+        return position_id;
+    }
+
+    kotoage fn add_margin(int position_id, int amount) -> int authorize("AssetOps") {
+        assert_initialized();
+        assert_risk_on();
+        assert_position_owner_manageable(position_id);
+        require(amount > 0, PerpsEngineError::InvalidAmount);
+        let market_id = PerpsPositionMarketId.get_or(key: position_id, default: 0);
+        collect_collateral(payer: context::authority(), amount: amount);
+        reserve_margin(amount: amount);
+        PerpsPositionMargin[position_id] = PerpsPositionMargin.get_or(key: position_id, default: 0) + amount;
+        return market_utilisation_bps(
+            market_id: market_id,
+            projected_open_interest: PerpsMarketOpenInterest.get_or(key: market_id, default: 0),
+        );
+    }
+
+    kotoage fn remove_margin(int position_id, int amount) -> int authorize("AssetOps") {
+        assert_initialized();
+        assert_risk_on();
+        assert_position_owner(position_id);
+        require(amount > 0, PerpsEngineError::InvalidAmount);
+        let market_id = PerpsPositionMarketId.get_or(key: position_id, default: 0);
+        let oracle = assert_fresh_market_oracle(market_id: market_id);
+        let mark_price_bps = oracle.0;
+        let index_price_bps = oracle.1;
+        let next_margin = PerpsPositionMargin.get_or(key: position_id, default: 0) - amount;
+        require(next_margin >= 0, PerpsEngineError::InsufficientMargin);
+        let next_equity = next_margin + unrealized_pnl(
+            size: PerpsPositionSize.get_or(key: position_id, default: 0),
+            entry_price_bps: PerpsPositionEntryPrice.get_or(key: position_id, default: 0),
+            mark_price_bps: mark_price_bps,
+        );
+        let maintenance = required_maintenance_margin(
+            size: PerpsPositionSize.get_or(key: position_id, default: 0),
+            maintenance_margin_bps: PerpsMarketMaintenanceMarginBps.get_or(
+                key: market_id,
+                default: 0,
+            ),
+        );
+        require(next_equity >= maintenance, PerpsEngineError::MaintenanceMargin);
+        let settled = settle_collateral(recipient: context::authority(), amount: amount);
+        require(settled == amount, PerpsEngineError::CollateralPoolSettle);
+        release_margin_reserve(amount: amount);
+        PerpsPositionMargin[position_id] = next_margin;
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        return next_margin;
+    }
+
+    kotoage fn sync_funding(int market_id) -> int authorize("AssetOps") {
+        assert_initialized();
+        assert_market_registered(market_id);
+        let oracle = assert_fresh_market_oracle(market_id: market_id);
+        let mark_price_bps = oracle.0;
+        let index_price_bps = oracle.1;
+        let funding_bps = PerpsMarketFundingBps.get_or(key: market_id, default: 0);
         let premium_bps = mark_price_bps - index_price_bps;
-        PerpsMarketLastNativeFundingDelta[market_id] =
-          (PerpsMarketFundingBps.get_or(market_id, 0) * premium_bps) / 10_000;
+        let funding_delta_bps = (funding_bps * premium_bps) / 10_000;
+        return funding_delta_bps;
+    }
 
-        let active_count = PerpsMarketActivePositionCount.get_or(market_id, 0);
-        let cursor = normalized_scan_cursor(PerpsMarketScanCursor.get_or(market_id, 0), active_count);
-        let scan_limit = min_int(PerpsLifecycleMaxItems, active_count);
-        let queued = 0;
-        let recovered = 0;
-        let liquidated = 0;
-
+    kotoage fn run_liquidation_pass(int market_id, int max_positions) -> int authorize("AssetOps") {
+        assert_initialized();
+        assert_automation_runner();
+        require(max_positions > 0, PerpsEngineError::InvalidScanSize);
+        require(max_positions <= 4, PerpsEngineError::ScanSizeExceedsCap);
+        let oracle = assert_fresh_market_oracle(market_id: market_id);
+        let mark_price_bps = oracle.0;
+        let index_price_bps = oracle.1;
+        let current_slot = oracle.3;
+        let active_count = PerpsMarketActivePositionCount.get_or(key: market_id, default: 0);
+        let cursor = normalized_scan_cursor(
+            cursor: PerpsMarketScanCursor.get_or(key: market_id, default: 0),
+            active_count: active_count,
+        );
+        let scan_limit = min_int(a: max_positions, b: active_count);
+        var scanned = 0;
+        var queued = 0;
+        var recovered = 0;
+        var liquidated = 0;
         if scan_limit > 0 {
-          let action0 = liquidation_action_for_offset_native(market_id, cursor, active_count, 0, mark_price_bps, index_price_bps, current_slot);
-          if action0 == 1 { queued = queued + 1; }
-          if action0 == 2 { recovered = recovered + 1; }
-          if action0 == 3 { liquidated = liquidated + 1; }
+            let action0 = liquidation_action_for_offset(
+                market_id: market_id,
+                cursor: cursor,
+                active_count: active_count,
+                offset: 0,
+                mark_price_bps: mark_price_bps,
+                index_price_bps: index_price_bps,
+                current_slot: current_slot,
+            );
+            if action0 == 1 {
+                queued = queued + 1;
+            }
+            if action0 == 2 {
+                recovered = recovered + 1;
+            }
+            if action0 == 3 {
+                liquidated = liquidated + 1;
+            }
         }
         if scan_limit > 1 {
-          let action1 = liquidation_action_for_offset_native(market_id, cursor, active_count, 1, mark_price_bps, index_price_bps, current_slot);
-          if action1 == 1 { queued = queued + 1; }
-          if action1 == 2 { recovered = recovered + 1; }
-          if action1 == 3 { liquidated = liquidated + 1; }
+            let action1 = liquidation_action_for_offset(
+                market_id: market_id,
+                cursor: cursor,
+                active_count: active_count,
+                offset: 1,
+                mark_price_bps: mark_price_bps,
+                index_price_bps: index_price_bps,
+                current_slot: current_slot,
+            );
+            if action1 == 1 {
+                queued = queued + 1;
+            }
+            if action1 == 2 {
+                recovered = recovered + 1;
+            }
+            if action1 == 3 {
+                liquidated = liquidated + 1;
+            }
         }
         if scan_limit > 2 {
-          let action2 = liquidation_action_for_offset_native(market_id, cursor, active_count, 2, mark_price_bps, index_price_bps, current_slot);
-          if action2 == 1 { queued = queued + 1; }
-          if action2 == 2 { recovered = recovered + 1; }
-          if action2 == 3 { liquidated = liquidated + 1; }
+            let action2 = liquidation_action_for_offset(
+                market_id: market_id,
+                cursor: cursor,
+                active_count: active_count,
+                offset: 2,
+                mark_price_bps: mark_price_bps,
+                index_price_bps: index_price_bps,
+                current_slot: current_slot,
+            );
+            if action2 == 1 {
+                queued = queued + 1;
+            }
+            if action2 == 2 {
+                recovered = recovered + 1;
+            }
+            if action2 == 3 {
+                liquidated = liquidated + 1;
+            }
         }
         if scan_limit > 3 {
-          let action3 = liquidation_action_for_offset_native(market_id, cursor, active_count, 3, mark_price_bps, index_price_bps, current_slot);
-          if action3 == 1 { queued = queued + 1; }
-          if action3 == 2 { recovered = recovered + 1; }
-          if action3 == 3 { liquidated = liquidated + 1; }
+            let action3 = liquidation_action_for_offset(
+                market_id: market_id,
+                cursor: cursor,
+                active_count: active_count,
+                offset: 3,
+                mark_price_bps: mark_price_bps,
+                index_price_bps: index_price_bps,
+                current_slot: current_slot,
+            );
+            if action3 == 1 {
+                queued = queued + 1;
+            }
+            if action3 == 2 {
+                recovered = recovered + 1;
+            }
+            if action3 == 3 {
+                liquidated = liquidated + 1;
+            }
         }
-        processed = scan_limit;
+        scanned = scan_limit;
         let next_cursor = cursor + scan_limit;
-        let next_active_count = PerpsMarketActivePositionCount.get_or(market_id, 0);
-        if next_active_count <= 0 || next_cursor >= next_active_count {
-          PerpsMarketScanCursor[market_id] = 0;
+        let next_active_count = PerpsMarketActivePositionCount.get_or(key: market_id, default: 0);
+        if next_active_count <= 0 {
+            PerpsMarketScanCursor[market_id] = 0;
         } else {
-          PerpsMarketScanCursor[market_id] = next_cursor;
+            if next_cursor >= next_active_count {
+                PerpsMarketScanCursor[market_id] = 0;
+            } else {
+                PerpsMarketScanCursor[market_id] = next_cursor;
+            }
         }
-        PerpsMarketLastPassScanned[market_id] = scan_limit;
+        PerpsMarketLastPassScanned[market_id] = scanned;
         PerpsMarketLastPassQueued[market_id] = queued;
         PerpsMarketLastPassRecovered[market_id] = recovered;
         PerpsMarketLastPassLiquidated[market_id] = liquidated;
-        PerpsMarketLastNativePassSlot[market_id] = current_slot;
-      }
+        return liquidated;
     }
-    market_id = market_id + 1;
-    if market_id >= PerpsNextMarketId {
-      market_id = 1;
-    }
-    PerpsLifecycleMarketCursor = market_id;
-    PerpsLifecycleLastSlot = current_slot;
-    PerpsLifecycleLastProcessed = processed;
-    PerpsLifecycleNextSlot = current_slot + PerpsLifecycleCadenceSlots;
-  }
 
-  view fn engine_config() -> (AssetDefinitionId, bytes, int, int, int, int, int, int) {
-    assert_initialized();
-    return (
-      PerpsCollateralAsset,
-      PerpsRiskVaultContract,
-      PerpsWithdrawalOnly,
-      PerpsNextMarketId,
-      PerpsNextPositionId,
-      PerpsFundingJobId,
-      PerpsLiquidationJobId,
-      PerpsAutomationBacklogCap
-    );
-  }
-
-  view fn market_state(int market_id) -> (int, int, int, int, int, int, int, int, int, int, int, int, int) {
-    let registered = 0;
-    if PerpsMarketAsset.contains(market_id) {
-      registered = 1;
-    }
-    return (
-      registered,
-      PerpsMarketActive.get_or(market_id, 0),
-      PerpsMarketOpenInterest.get_or(market_id, 0),
-      PerpsMarketOpenInterestCap.get_or(market_id, 0),
-      PerpsMarketMaxLeverageBps.get_or(market_id, 0),
-      PerpsMarketMaintenanceMarginBps.get_or(market_id, 0),
-      PerpsMarketLiquidationFeeBps.get_or(market_id, 0),
-      PerpsMarketFundingBps.get_or(market_id, 0),
-      PerpsMarketFundingIntervalSlots.get_or(market_id, 0),
-      PerpsMarketOracleStaleSlots.get_or(market_id, 0),
-      PerpsMarketQueuedLiquidations.get_or(market_id, 0),
-      PerpsMarketGuardFlags.get_or(market_id, 0),
-      PerpsMarketBacklogLimit.get_or(market_id, 0)
-    );
-  }
-
-  view fn market_oracle_state(int market_id) -> (int, int, int, int) {
-    assert_market_registered(market_id);
-    return (
-      PerpsMarketLastMarkPrice.get_or(market_id, 0),
-      PerpsMarketLastIndexPrice.get_or(market_id, 0),
-      PerpsMarketLastOracleSlot.get_or(market_id, 0),
-      PerpsMarketLastOracleAttestationHash.get_or(market_id, 0)
-    );
-  }
-
-  view fn position_state(int position_id) -> (int, int, int, int, int, int, int, int, int, int, int) {
-    return (
-      position_registered(position_id),
-      PerpsPositionStatus.get_or(position_id, 0),
-      PerpsPositionMarketId.get_or(position_id, 0),
-      PerpsPositionSize.get_or(position_id, 0),
-      PerpsPositionMargin.get_or(position_id, 0),
-      PerpsPositionFundingAccrued.get_or(position_id, 0),
-      PerpsPositionRealizedPnl.get_or(position_id, 0),
-      PerpsPositionEntryPrice.get_or(position_id, 0),
-      PerpsPositionMarkPrice.get_or(position_id, 0),
-      PerpsPositionIndexPrice.get_or(position_id, 0),
-      PerpsPositionQueuedSlot.get_or(position_id, 0)
-    );
-  }
-
-  view fn liquidation_state(int market_id) -> (int, int, int, int, int, int, int) {
-    assert_market_registered(market_id);
-    return (
-      PerpsMarketActivePositionCount.get_or(market_id, 0),
-      PerpsMarketScanCursor.get_or(market_id, 0),
-      PerpsMarketQueuedLiquidations.get_or(market_id, 0),
-      PerpsMarketLastPassScanned.get_or(market_id, 0),
-      PerpsMarketLastPassQueued.get_or(market_id, 0),
-      PerpsMarketLastPassRecovered.get_or(market_id, 0),
-      PerpsMarketLastPassLiquidated.get_or(market_id, 0)
-    );
-  }
-
-  view fn trigger_lifecycle_state() -> (int, int, int, int, int, int, int) {
-    return (
-      PerpsLifecycleEnabled,
-      PerpsLifecycleCadenceSlots,
-      PerpsLifecycleMaxItems,
-      PerpsLifecycleNextSlot,
-      PerpsLifecycleMarketCursor,
-      PerpsLifecycleLastSlot,
-      PerpsLifecycleLastProcessed
-    );
-  }
-
-  view fn position_liquidation_state(int position_id) -> (int, int, int) {
-    return (
-      PerpsPositionQueuedSlot.get_or(position_id, 0),
-      PerpsPositionLastKeeperReward.get_or(position_id, 0),
-      PerpsPositionLastOwnerResidual.get_or(position_id, 0)
-    );
-  }
-
-  view fn risk_state(int market_id) -> (int, int, int, int, int, int, int, int) {
-    assert_market_registered(market_id);
-    let projected_open_interest = PerpsMarketOpenInterest.get_or(market_id, 0);
-    return (
-      projected_open_interest,
-      PerpsMarketOpenInterestCap.get_or(market_id, 0),
-      PerpsMarketQueuedLiquidations.get_or(market_id, 0),
-      market_utilisation_bps(market_id, projected_open_interest),
-      PerpsMarketGuardFlags.get_or(market_id, 0),
-      PerpsAutomationBacklog,
-      PerpsAutomationSafeMode,
-      PerpsWithdrawalOnly
-    );
-  }
-
-  view fn automation_state() -> (int, int, int, int, int, int, int) {
-    let executor_bound = 0;
-    if PerpsInitialized == 1 {
-      if PerpsAutomationExecutor == PerpsOwner {
-        executor_bound = 1;
-      } else {
-        if PerpsFundingJobId > 0 || PerpsLiquidationJobId > 0 {
-          executor_bound = 1;
+    kotoage fn close_position(int position_id) -> int authorize("AssetOps") {
+        assert_initialized();
+        assert_risk_on();
+        assert_position_owner_manageable(position_id);
+        let market_id = PerpsPositionMarketId.get_or(key: position_id, default: 0);
+        let oracle = assert_fresh_market_oracle(market_id: market_id);
+        let mark_price_bps = oracle.0;
+        let index_price_bps = oracle.1;
+        let status = PerpsPositionStatus.get_or(key: position_id, default: 0);
+        let payout = max_int(
+            a: position_equity(position_id: position_id, mark_price_bps: mark_price_bps),
+            b: 0,
+        );
+        if status == 3 {
+            let maintenance = required_maintenance_margin(
+                size: PerpsPositionSize.get_or(key: position_id, default: 0),
+                maintenance_margin_bps: PerpsMarketMaintenanceMarginBps.get_or(
+                    key: market_id,
+                    default: 0,
+                ),
+            );
+            require(
+                position_equity(position_id: position_id, mark_price_bps: mark_price_bps) >= maintenance,
+                PerpsEngineError::PositionQueued,
+            );
+            PerpsMarketQueuedLiquidations[market_id] = max_int(
+                a: PerpsMarketQueuedLiquidations.get_or(key: market_id, default: 0) - 1,
+                b: 0,
+            );
+            PerpsPositionQueuedSlot[position_id] = 0;
         }
-      }
+        let margin = PerpsPositionMargin.get_or(key: position_id, default: 0);
+        let settled_payout = settle_collateral(
+            recipient: context::authority(),
+            amount: min_int(a: payout, b: position_payout_budget(margin: margin)),
+        );
+        release_margin_reserve(amount: margin);
+        PerpsPositionRealizedPnl[position_id] = PerpsPositionRealizedPnl.get_or(
+            key: position_id,
+            default: 0,
+        ) + (settled_payout - PerpsPositionMargin.get_or(key: position_id, default: 0));
+        PerpsMarketOpenInterest[market_id] = max_int(
+            a: PerpsMarketOpenInterest.get_or(key: market_id, default: 0) - abs_int(
+                PerpsPositionSize.get_or(key: position_id, default: 0),
+            ),
+            b: 0,
+        );
+        PerpsPositionSize[position_id] = 0;
+        PerpsPositionMargin[position_id] = 0;
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        PerpsPositionStatus[position_id] = 2;
+        PerpsPositionQueuedSlot[position_id] = 0;
+        remove_active_position(market_id: market_id, position_id: position_id);
+        return settled_payout;
     }
-    return (
-      executor_bound,
-      PerpsFundingJobId,
-      PerpsLiquidationJobId,
-      PerpsAutomationCadence,
-      PerpsAutomationBacklogCap,
-      PerpsAutomationBacklog,
-      PerpsAutomationSafeMode
-    );
-  }
 
-  kotoage fn bind_contract(AccountId contract_id) authorize("AssetOps") {
-    assert_owner();
-    PerpsContractId = contract_id;
-    PerpsContractBound = 1;
-  }
-
-  kotoage fn bind_risk_vault(bytes risk_vault_contract) authorize("AssetOps") {
-    assert_owner();
-    PerpsRiskVaultContract = risk_vault_contract;
-  }
-
-  kotoage fn enter_withdrawal_only() authorize("AssetOps") {
-    assert_owner();
-    PerpsWithdrawalOnly = 1;
-  }
-
-  kotoage fn exit_withdrawal_only() authorize("AssetOps") {
-    assert_owner();
-    PerpsWithdrawalOnly = 0;
-  }
-
-  kotoage fn open_position(int market_id,
-                           int size,
-                           int margin,
-                           int requested_leverage_bps,
-                           bytes oracle_payload,
-                           bytes oracle_signature) -> int authorize("AssetOps") {
-    assert_initialized();
-    assert_risk_on();
-    require(size != 0, PerpsEngineError::InvalidSize);
-    require(margin > 0, PerpsEngineError::InvalidMargin);
-    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
-    let mark_price_bps = oracle.0;
-    let index_price_bps = oracle.1;
-    let oracle_slot = oracle.3;
-    let attestation_hash = oracle.5;
-    let effective_leverage = requested_leverage_bps;
-    if effective_leverage <= 0 {
-      effective_leverage = PerpsMarketMaxLeverageBps[market_id];
-    }
-    require(effective_leverage <= PerpsMarketMaxLeverageBps[market_id], PerpsEngineError::LeverageExceedsMarketCap);
-    require(margin >= required_initial_margin(size, effective_leverage), PerpsEngineError::InsufficientInitialMargin);
-    let projected_open_interest = PerpsMarketOpenInterest.get_or(market_id, 0) + abs_int(size);
-    assert_market_accepts_risk(market_id, projected_open_interest);
-    let position_id = PerpsNextPositionId;
-    PerpsNextPositionId = position_id + 1;
-    assert_contract_bound();
-    move_asset_if_needed(context::authority(), PerpsContractId, PerpsCollateralAsset, margin);
-    risk_vault_deposit(margin);
-    risk_vault_lock_liability(position_id, abs_int(size), margin);
-    PerpsPositionOwner[position_id] = context::authority();
-    PerpsPositionMarketId[position_id] = market_id;
-    PerpsPositionSize[position_id] = size;
-    PerpsPositionMargin[position_id] = margin;
-    PerpsPositionEntryPrice[position_id] = mark_price_bps;
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-    PerpsPositionFundingAccrued[position_id] = 0;
-    PerpsPositionRealizedPnl[position_id] = 0;
-    PerpsPositionStatus[position_id] = 1;
-    PerpsPositionActiveSlot[position_id] = 0;
-    PerpsPositionQueuedSlot[position_id] = 0;
-    PerpsPositionLastKeeperReward[position_id] = 0;
-    PerpsPositionLastOwnerResidual[position_id] = 0;
-    append_active_position(market_id, position_id);
-    PerpsMarketOpenInterest[market_id] = projected_open_interest;
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
-    return position_id;
-  }
-
-  kotoage fn add_margin(int position_id, int amount) -> int authorize("AssetOps") {
-    assert_initialized();
-    assert_risk_on();
-    assert_position_owner_manageable(position_id);
-    require(amount > 0, PerpsEngineError::InvalidAmount);
-    let market_id = PerpsPositionMarketId[position_id];
-    assert_contract_bound();
-    move_asset_if_needed(context::authority(), PerpsContractId, PerpsCollateralAsset, amount);
-    risk_vault_deposit(amount);
-    PerpsPositionMargin[position_id] = PerpsPositionMargin[position_id] + amount;
-    risk_vault_lock_liability(
-      position_id,
-      abs_int(PerpsPositionSize[position_id]),
-      PerpsPositionMargin[position_id]
-    );
-    return market_utilisation_bps(market_id, PerpsMarketOpenInterest.get_or(market_id, 0));
-  }
-
-  kotoage fn remove_margin(int position_id,
-                           int amount,
-                           bytes oracle_payload,
-                           bytes oracle_signature) -> int authorize("AssetOps") {
-    assert_initialized();
-    assert_risk_on();
-    assert_position_owner(position_id);
-    require(amount > 0, PerpsEngineError::InvalidAmount);
-    let market_id = PerpsPositionMarketId[position_id];
-    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
-    let mark_price_bps = oracle.0;
-    let index_price_bps = oracle.1;
-    let oracle_slot = oracle.3;
-    let attestation_hash = oracle.5;
-    let next_margin = PerpsPositionMargin[position_id] - amount;
-    require(next_margin >= 0, PerpsEngineError::InsufficientMargin);
-    let next_equity = next_margin +
-      unrealized_pnl(PerpsPositionSize[position_id], PerpsPositionEntryPrice[position_id], mark_price_bps);
-    let maintenance = required_maintenance_margin(
-      PerpsPositionSize[position_id],
-      PerpsMarketMaintenanceMarginBps[market_id]
-    );
-    require(next_equity >= maintenance, PerpsEngineError::MaintenanceMargin);
-    let settled = risk_vault_settle_payout(position_id, context::authority(), amount);
-    require(settled == amount, PerpsEngineError::RiskVaultMarginSettle);
-    PerpsPositionMargin[position_id] = next_margin;
-    risk_vault_lock_liability(position_id, abs_int(PerpsPositionSize[position_id]), next_margin);
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
-    return next_margin;
-  }
-
-  kotoage fn sync_funding(int market_id,
-                          bytes oracle_payload,
-                          bytes oracle_signature) -> int authorize("AssetOps") {
-    assert_initialized();
-    assert_market_registered(market_id);
-    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
-    let mark_price_bps = oracle.0;
-    let index_price_bps = oracle.1;
-    let oracle_slot = oracle.3;
-    let attestation_hash = oracle.5;
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
-    let funding_bps = PerpsMarketFundingBps.get_or(market_id, 0);
-    let premium_bps = mark_price_bps - index_price_bps;
-    let funding_delta_bps = (funding_bps * premium_bps) / 10_000;
-    return funding_delta_bps;
-  }
-
-  kotoage fn run_liquidation_pass(int market_id,
-                                  int max_positions,
-                                  bytes oracle_payload,
-                                  bytes oracle_signature) -> int authorize("AssetOps") {
-    assert_initialized();
-    assert_automation_runner();
-    require(max_positions > 0, PerpsEngineError::InvalidScanSize);
-    require(max_positions <= 4, PerpsEngineError::ScanSizeExceedsCap);
-    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
-    let mark_price_bps = oracle.0;
-    let index_price_bps = oracle.1;
-    let oracle_slot = oracle.3;
-    let current_slot = oracle.4;
-    let attestation_hash = oracle.5;
-
-    let active_count = PerpsMarketActivePositionCount.get_or(market_id, 0);
-    let cursor = normalized_scan_cursor(PerpsMarketScanCursor.get_or(market_id, 0), active_count);
-    let scan_limit = min_int(max_positions, active_count);
-    let scanned = 0;
-    let queued = 0;
-    let recovered = 0;
-    let liquidated = 0;
-
-    if scan_limit > 0 {
-      let action0 = liquidation_action_for_offset(market_id, cursor, active_count, 0, mark_price_bps, index_price_bps, current_slot);
-      if action0 == 1 { queued = queued + 1; }
-      if action0 == 2 { recovered = recovered + 1; }
-      if action0 == 3 { liquidated = liquidated + 1; }
-    }
-    if scan_limit > 1 {
-      let action1 = liquidation_action_for_offset(market_id, cursor, active_count, 1, mark_price_bps, index_price_bps, current_slot);
-      if action1 == 1 { queued = queued + 1; }
-      if action1 == 2 { recovered = recovered + 1; }
-      if action1 == 3 { liquidated = liquidated + 1; }
-    }
-    if scan_limit > 2 {
-      let action2 = liquidation_action_for_offset(market_id, cursor, active_count, 2, mark_price_bps, index_price_bps, current_slot);
-      if action2 == 1 { queued = queued + 1; }
-      if action2 == 2 { recovered = recovered + 1; }
-      if action2 == 3 { liquidated = liquidated + 1; }
-    }
-    if scan_limit > 3 {
-      let action3 = liquidation_action_for_offset(market_id, cursor, active_count, 3, mark_price_bps, index_price_bps, current_slot);
-      if action3 == 1 { queued = queued + 1; }
-      if action3 == 2 { recovered = recovered + 1; }
-      if action3 == 3 { liquidated = liquidated + 1; }
-    }
-    scanned = scan_limit;
-
-    let next_cursor = cursor + scan_limit;
-    let next_active_count = PerpsMarketActivePositionCount.get_or(market_id, 0);
-    if next_active_count <= 0 {
-      PerpsMarketScanCursor[market_id] = 0;
-    } else {
-      if next_cursor >= next_active_count {
+    kotoage fn register_market(
+        AssetDefinitionId asset,
+        int max_leverage_bps,
+        int maintenance_margin_bps,
+        int liquidation_fee_bps,
+        int open_interest_cap,
+        int funding_bps,
+        int funding_interval_slots,
+        int oracle_stale_slots,
+        int backlog_limit,
+        int utilisation_clamp_bps,
+        int liquidation_stress_limit,
+    ) -> int authorize("AssetOps") {
+        assert_owner();
+        assert_market_risk_params(
+            max_leverage_bps: max_leverage_bps,
+            maintenance_margin_bps: maintenance_margin_bps,
+            liquidation_fee_bps: liquidation_fee_bps,
+            open_interest_cap: open_interest_cap,
+            funding_interval_slots: funding_interval_slots,
+            oracle_stale_slots: oracle_stale_slots,
+            backlog_limit: backlog_limit,
+            utilisation_clamp_bps: utilisation_clamp_bps,
+            liquidation_stress_limit: liquidation_stress_limit,
+            guard_flags: 0,
+            active: 1,
+        );
+        let market_id = PerpsNextMarketId;
+        PerpsNextMarketId = market_id + 1;
+        PerpsMarketAsset[market_id] = asset;
+        PerpsMarketActive[market_id] = 1;
+        PerpsMarketOpenInterest[market_id] = 0;
+        PerpsMarketOpenInterestCap[market_id] = open_interest_cap;
+        PerpsMarketMaxLeverageBps[market_id] = max_leverage_bps;
+        PerpsMarketMaintenanceMarginBps[market_id] = maintenance_margin_bps;
+        PerpsMarketLiquidationFeeBps[market_id] = liquidation_fee_bps;
+        PerpsMarketFundingBps[market_id] = funding_bps;
+        PerpsMarketFundingIntervalSlots[market_id] = funding_interval_slots;
+        PerpsMarketOracleStaleSlots[market_id] = oracle_stale_slots;
+        PerpsMarketBacklogLimit[market_id] = backlog_limit;
+        PerpsMarketUtilisationClampBps[market_id] = utilisation_clamp_bps;
+        PerpsMarketLiquidationStressLimit[market_id] = liquidation_stress_limit;
+        PerpsMarketLastMarkPrice[market_id] = 0;
+        PerpsMarketLastIndexPrice[market_id] = 0;
+        PerpsMarketLastConfidenceBps[market_id] = 0;
+        PerpsMarketLastOracleSlot[market_id] = 0;
+        PerpsMarketLastOracleAttestationHash[market_id] = 0;
+        PerpsMarketGuardFlags[market_id] = 0;
+        PerpsMarketQueuedLiquidations[market_id] = 0;
+        PerpsMarketActivePositionCount[market_id] = 0;
         PerpsMarketScanCursor[market_id] = 0;
-      } else {
-        PerpsMarketScanCursor[market_id] = next_cursor;
-      }
-    }
-    PerpsMarketLastPassScanned[market_id] = scanned;
-    PerpsMarketLastPassQueued[market_id] = queued;
-    PerpsMarketLastPassRecovered[market_id] = recovered;
-    PerpsMarketLastPassLiquidated[market_id] = liquidated;
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
-    return liquidated;
-  }
-
-  kotoage fn close_position(int position_id,
-                            bytes oracle_payload,
-                            bytes oracle_signature) -> int authorize("AssetOps") {
-    assert_initialized();
-    assert_risk_on();
-    assert_position_owner_manageable(position_id);
-    let market_id = PerpsPositionMarketId[position_id];
-    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
-    let mark_price_bps = oracle.0;
-    let index_price_bps = oracle.1;
-    let oracle_slot = oracle.3;
-    let attestation_hash = oracle.5;
-
-    let status = PerpsPositionStatus.get_or(position_id, 0);
-    let payout = max_int(position_equity(position_id, mark_price_bps), 0);
-    if status == 3 {
-      let maintenance = required_maintenance_margin(
-        PerpsPositionSize[position_id],
-        PerpsMarketMaintenanceMarginBps.get_or(market_id, 0)
-      );
-      require(position_equity(position_id, mark_price_bps) >= maintenance, PerpsEngineError::PositionQueued);
-      PerpsMarketQueuedLiquidations[market_id] =
-        max_int(PerpsMarketQueuedLiquidations.get_or(market_id, 0) - 1, 0);
-      PerpsPositionQueuedSlot[position_id] = 0;
+        PerpsMarketLastPassScanned[market_id] = 0;
+        PerpsMarketLastPassQueued[market_id] = 0;
+        PerpsMarketLastPassRecovered[market_id] = 0;
+        PerpsMarketLastPassLiquidated[market_id] = 0;
+        PerpsMarketLastNativeFundingDelta[market_id] = 0;
+        PerpsMarketLastNativePassSlot[market_id] = 0;
+        return market_id;
     }
 
-    let settled_payout = risk_vault_settle_payout(position_id, context::authority(), payout);
-    risk_vault_release_liability(position_id);
-    PerpsPositionRealizedPnl[position_id] =
-      PerpsPositionRealizedPnl.get_or(position_id, 0) +
-      (settled_payout - PerpsPositionMargin.get_or(position_id, 0));
-    PerpsMarketOpenInterest[market_id] =
-      max_int(PerpsMarketOpenInterest.get_or(market_id, 0) - abs_int(PerpsPositionSize[position_id]), 0);
-    PerpsPositionSize[position_id] = 0;
-    PerpsPositionMargin[position_id] = 0;
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-    PerpsPositionStatus[position_id] = 2;
-    PerpsPositionQueuedSlot[position_id] = 0;
-    remove_active_position(market_id, position_id);
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
-    return settled_payout;
-  }
-
-  kotoage fn register_market(AssetDefinitionId asset,
-                             int max_leverage_bps,
-                             int maintenance_margin_bps,
-                             int liquidation_fee_bps,
-                             int open_interest_cap,
-                             int funding_bps,
-                             int funding_interval_slots,
-                             int oracle_stale_slots,
-                             int backlog_limit,
-                             int utilisation_clamp_bps,
-                             int liquidation_stress_limit) -> int authorize("AssetOps") {
-    assert_owner();
-    assert_market_risk_params(
-      max_leverage_bps,
-      maintenance_margin_bps,
-      liquidation_fee_bps,
-      open_interest_cap,
-      funding_interval_slots,
-      oracle_stale_slots,
-      backlog_limit,
-      utilisation_clamp_bps,
-      liquidation_stress_limit,
-      0,
-      1
-    );
-    let market_id = PerpsNextMarketId;
-    PerpsNextMarketId = market_id + 1;
-    PerpsMarketAsset[market_id] = asset;
-    PerpsMarketActive[market_id] = 1;
-    PerpsMarketOpenInterest[market_id] = 0;
-    PerpsMarketOpenInterestCap[market_id] = open_interest_cap;
-    PerpsMarketMaxLeverageBps[market_id] = max_leverage_bps;
-    PerpsMarketMaintenanceMarginBps[market_id] = maintenance_margin_bps;
-    PerpsMarketLiquidationFeeBps[market_id] = liquidation_fee_bps;
-    PerpsMarketFundingBps[market_id] = funding_bps;
-    PerpsMarketFundingIntervalSlots[market_id] = funding_interval_slots;
-    PerpsMarketOracleStaleSlots[market_id] = oracle_stale_slots;
-    PerpsMarketBacklogLimit[market_id] = backlog_limit;
-    PerpsMarketUtilisationClampBps[market_id] = utilisation_clamp_bps;
-    PerpsMarketLiquidationStressLimit[market_id] = liquidation_stress_limit;
-    PerpsMarketLastMarkPrice[market_id] = 0;
-    PerpsMarketLastIndexPrice[market_id] = 0;
-    PerpsMarketLastOracleSlot[market_id] = 0;
-    PerpsMarketLastOracleAttestationHash[market_id] = 0;
-    PerpsMarketGuardFlags[market_id] = 0;
-    PerpsMarketQueuedLiquidations[market_id] = 0;
-    PerpsMarketActivePositionCount[market_id] = 0;
-    PerpsMarketScanCursor[market_id] = 0;
-    PerpsMarketLastPassScanned[market_id] = 0;
-    PerpsMarketLastPassQueued[market_id] = 0;
-    PerpsMarketLastPassRecovered[market_id] = 0;
-    PerpsMarketLastPassLiquidated[market_id] = 0;
-    PerpsMarketLastNativeFundingDelta[market_id] = 0;
-    PerpsMarketLastNativePassSlot[market_id] = 0;
-    return market_id;
-  }
-
-  kotoage fn update_market(int market_id,
-                           int max_leverage_bps,
-                           int maintenance_margin_bps,
-                           int liquidation_fee_bps,
-                           int open_interest_cap,
-                           int funding_bps,
-                           int funding_interval_slots,
-                           int oracle_stale_slots,
-                           int backlog_limit,
-                           int utilisation_clamp_bps,
-                           int liquidation_stress_limit,
-                           int guard_flags,
-                           int active) authorize("AssetOps") {
-    assert_owner();
-    assert_market_registered(market_id);
-    assert_market_risk_params(
-      max_leverage_bps,
-      maintenance_margin_bps,
-      liquidation_fee_bps,
-      open_interest_cap,
-      funding_interval_slots,
-      oracle_stale_slots,
-      backlog_limit,
-      utilisation_clamp_bps,
-      liquidation_stress_limit,
-      guard_flags,
-      active
-    );
-    PerpsMarketMaxLeverageBps[market_id] = max_leverage_bps;
-    PerpsMarketMaintenanceMarginBps[market_id] = maintenance_margin_bps;
-    PerpsMarketLiquidationFeeBps[market_id] = liquidation_fee_bps;
-    PerpsMarketOpenInterestCap[market_id] = open_interest_cap;
-    PerpsMarketFundingBps[market_id] = funding_bps;
-    PerpsMarketFundingIntervalSlots[market_id] = funding_interval_slots;
-    PerpsMarketOracleStaleSlots[market_id] = oracle_stale_slots;
-    PerpsMarketBacklogLimit[market_id] = backlog_limit;
-    PerpsMarketUtilisationClampBps[market_id] = utilisation_clamp_bps;
-    PerpsMarketLiquidationStressLimit[market_id] = liquidation_stress_limit;
-    PerpsMarketGuardFlags[market_id] = guard_flags;
-    PerpsMarketActive[market_id] = active;
-  }
-
-  kotoage fn heartbeat(int market_id,
-                       int current_backlog,
-                       int safe_mode) authorize("Admin") {
-    assert_owner();
-    assert_market_registered(market_id);
-    require(current_backlog >= 0, PerpsEngineError::InvalidBacklog);
-    PerpsAutomationBacklog = current_backlog;
-    PerpsAutomationSafeMode = safe_mode;
-    risk_vault_report_bucket();
-  }
-
-  kotoage fn modify_position(int position_id,
-                             int size_delta,
-                             int margin_delta,
-                             int requested_leverage_bps,
-                             bytes oracle_payload,
-                             bytes oracle_signature) -> int authorize("AssetOps") {
-    assert_initialized();
-    assert_risk_on();
-    assert_position_owner(position_id);
-    let market_id = PerpsPositionMarketId[position_id];
-    let oracle = assert_verified_oracle_payload(market_id, oracle_payload, oracle_signature);
-    let mark_price_bps = oracle.0;
-    let index_price_bps = oracle.1;
-    let oracle_slot = oracle.3;
-    let attestation_hash = oracle.5;
-    let current_size = PerpsPositionSize[position_id];
-    let current_margin = PerpsPositionMargin[position_id];
-    let next_size = current_size + size_delta;
-    require(next_size != 0, PerpsEngineError::UseClosePosition);
-    let next_margin = current_margin + margin_delta;
-    require(next_margin > 0, PerpsEngineError::InvalidResultingMargin);
-
-    let current_open_interest = PerpsMarketOpenInterest.get_or(market_id, 0);
-    let projected_open_interest = current_open_interest - abs_int(current_size) + abs_int(next_size);
-    assert_market_accepts_risk(market_id, projected_open_interest);
-
-    let effective_leverage = requested_leverage_bps;
-    if effective_leverage <= 0 {
-      effective_leverage = PerpsMarketMaxLeverageBps[market_id];
+    kotoage fn update_market(
+        int market_id,
+        int max_leverage_bps,
+        int maintenance_margin_bps,
+        int liquidation_fee_bps,
+        int open_interest_cap,
+        int funding_bps,
+        int funding_interval_slots,
+        int oracle_stale_slots,
+        int backlog_limit,
+        int utilisation_clamp_bps,
+        int liquidation_stress_limit,
+        int guard_flags,
+        int active,
+    ) authorize("AssetOps") {
+        assert_owner();
+        assert_market_registered(market_id);
+        assert_market_risk_params(
+            max_leverage_bps: max_leverage_bps,
+            maintenance_margin_bps: maintenance_margin_bps,
+            liquidation_fee_bps: liquidation_fee_bps,
+            open_interest_cap: open_interest_cap,
+            funding_interval_slots: funding_interval_slots,
+            oracle_stale_slots: oracle_stale_slots,
+            backlog_limit: backlog_limit,
+            utilisation_clamp_bps: utilisation_clamp_bps,
+            liquidation_stress_limit: liquidation_stress_limit,
+            guard_flags: guard_flags,
+            active: active,
+        );
+        PerpsMarketMaxLeverageBps[market_id] = max_leverage_bps;
+        PerpsMarketMaintenanceMarginBps[market_id] = maintenance_margin_bps;
+        PerpsMarketLiquidationFeeBps[market_id] = liquidation_fee_bps;
+        PerpsMarketOpenInterestCap[market_id] = open_interest_cap;
+        PerpsMarketFundingBps[market_id] = funding_bps;
+        PerpsMarketFundingIntervalSlots[market_id] = funding_interval_slots;
+        PerpsMarketOracleStaleSlots[market_id] = oracle_stale_slots;
+        PerpsMarketBacklogLimit[market_id] = backlog_limit;
+        PerpsMarketUtilisationClampBps[market_id] = utilisation_clamp_bps;
+        PerpsMarketLiquidationStressLimit[market_id] = liquidation_stress_limit;
+        PerpsMarketGuardFlags[market_id] = guard_flags;
+        PerpsMarketActive[market_id] = active;
     }
-    require(next_margin >= required_initial_margin(next_size, min_int(effective_leverage, PerpsMarketMaxLeverageBps[market_id])), PerpsEngineError::InitialMargin);
-    let next_equity = next_margin + unrealized_pnl(next_size, PerpsPositionEntryPrice[position_id], mark_price_bps);
-    let maintenance = required_maintenance_margin(next_size, PerpsMarketMaintenanceMarginBps[market_id]);
-    require(next_equity >= maintenance, PerpsEngineError::MaintenanceMargin);
 
-    if margin_delta > 0 {
-      assert_contract_bound();
-      move_asset_if_needed(context::authority(), PerpsContractId, PerpsCollateralAsset, margin_delta);
-      risk_vault_deposit(margin_delta);
+    kotoage fn heartbeat(int market_id, int current_backlog, int safe_mode) authorize("Admin") {
+        assert_owner();
+        assert_market_registered(market_id);
+        require(current_backlog >= 0, PerpsEngineError::InvalidBacklog);
+        require(safe_mode == 0 || safe_mode == 1, PerpsEngineError::InvalidSafeMode);
+        PerpsAutomationBacklog = current_backlog;
+        PerpsAutomationSafeMode = safe_mode;
     }
-    if margin_delta < 0 {
-      let settled = risk_vault_settle_payout(position_id, context::authority(), 0 - margin_delta);
-      require(settled == 0 - margin_delta, PerpsEngineError::RiskVaultMarginSettle);
+
+    kotoage fn modify_position(
+        int position_id,
+        int size_delta,
+        int margin_delta,
+        int requested_leverage_bps,
+    ) -> int authorize("AssetOps") {
+        assert_initialized();
+        assert_risk_on();
+        assert_position_owner(position_id);
+        let market_id = PerpsPositionMarketId.get_or(key: position_id, default: 0);
+        let oracle = assert_fresh_market_oracle(market_id: market_id);
+        let mark_price_bps = oracle.0;
+        let index_price_bps = oracle.1;
+        let current_size = PerpsPositionSize.get_or(key: position_id, default: 0);
+        let current_margin = PerpsPositionMargin.get_or(key: position_id, default: 0);
+        let next_size = current_size + size_delta;
+        require(next_size != 0, PerpsEngineError::UseClosePosition);
+        let next_margin = current_margin + margin_delta;
+        require(next_margin > 0, PerpsEngineError::InvalidResultingMargin);
+        let current_open_interest = PerpsMarketOpenInterest.get_or(key: market_id, default: 0);
+        let projected_open_interest = current_open_interest - abs_int(current_size) + abs_int(
+            next_size,
+        );
+        assert_market_accepts_risk(
+            market_id: market_id,
+            projected_open_interest: projected_open_interest,
+        );
+        var effective_leverage = requested_leverage_bps;
+        require(effective_leverage >= 0, PerpsEngineError::InvalidLeverage);
+        if effective_leverage <= 0 {
+            effective_leverage = PerpsMarketMaxLeverageBps.get_or(key: market_id, default: 0);
+        }
+        require(
+            effective_leverage <= PerpsMarketMaxLeverageBps.get_or(key: market_id, default: 0),
+            PerpsEngineError::LeverageExceedsMarketCap,
+        );
+        require(
+            next_margin >= required_initial_margin(
+                size: next_size,
+                leverage_bps: effective_leverage,
+            ),
+            PerpsEngineError::InitialMargin,
+        );
+        let next_equity = next_margin + unrealized_pnl(
+            size: next_size,
+            entry_price_bps: PerpsPositionEntryPrice.get_or(key: position_id, default: 0),
+            mark_price_bps: mark_price_bps,
+        );
+        let maintenance = required_maintenance_margin(
+            size: next_size,
+            maintenance_margin_bps: PerpsMarketMaintenanceMarginBps.get_or(
+                key: market_id,
+                default: 0,
+            ),
+        );
+        require(next_equity >= maintenance, PerpsEngineError::MaintenanceMargin);
+        if margin_delta > 0 {
+            collect_collateral(payer: context::authority(), amount: margin_delta);
+            reserve_margin(amount: margin_delta);
+        }
+        if margin_delta < 0 {
+            let released_margin = 0 - margin_delta;
+            let settled = settle_collateral(
+                recipient: context::authority(),
+                amount: released_margin,
+            );
+            require(settled == released_margin, PerpsEngineError::CollateralPoolSettle);
+            release_margin_reserve(amount: released_margin);
+        }
+        PerpsPositionSize[position_id] = next_size;
+        PerpsPositionMargin[position_id] = next_margin;
+        PerpsPositionMarkPrice[position_id] = mark_price_bps;
+        PerpsPositionIndexPrice[position_id] = index_price_bps;
+        PerpsMarketOpenInterest[market_id] = projected_open_interest;
+        return next_margin;
     }
-    risk_vault_lock_liability(position_id, abs_int(next_size), next_margin);
-
-    PerpsPositionSize[position_id] = next_size;
-    PerpsPositionMargin[position_id] = next_margin;
-    PerpsPositionMarkPrice[position_id] = mark_price_bps;
-    PerpsPositionIndexPrice[position_id] = index_price_bps;
-    PerpsMarketOpenInterest[market_id] = projected_open_interest;
-    record_market_oracle(market_id, mark_price_bps, index_price_bps, oracle_slot, attestation_hash);
-    return next_margin;
-  }
-
 }

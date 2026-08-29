@@ -16,10 +16,10 @@ module DlmmPoolV1Regressions {
     );
     grant_permission("owner", "AssetOps");
     grant_permission("owner", "Admin");
+    grant_permission("public_trader", "AssetOps");
     grant_seiyaku_kotoage_permission("owner", "add_position_liquidity");
     grant_seiyaku_kotoage_permission("owner", "seed_bin");
     grant_seiyaku_kotoage_permission("owner", "renounce_admin");
-    grant_seiyaku_kotoage_permission("public_trader", "swap_exact_in_quote_public");
     grant_permission(
       "owner",
       "read_assets:sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"
@@ -30,6 +30,11 @@ module DlmmPoolV1Regressions {
       0
     );
     grant_seiyaku_transfer_effect_permission(
+      "public_trader",
+      AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM"),
+      0
+    );
+    grant_seiyaku_transfer_effect_permission(
       "owner",
       AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM"),
       0
@@ -37,6 +42,11 @@ module DlmmPoolV1Regressions {
     set_balance(
       AccountId::parse("sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"),
       AssetDefinitionId::parse("6pEP9RjNoZ7beWkT3pLfKoM1dyfi"),
+      100000
+    );
+    set_balance(
+      AccountId::parse("sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"),
+      AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM"),
       100000
     );
     set_balance(
@@ -58,8 +68,14 @@ module DlmmPoolV1Regressions {
     return AssetDefinitionId::parse("6pEP9RjNoZ7beWkT3pLfKoM1dyfi");
   }
 
+  fn launchpad_executor_account() -> AccountId {
+    return AccountId::parse(
+      "sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"
+    );
+  }
+
   fn standard_hajimari_arguments() -> Json {
-    return Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"fee_pips\":\"3000\",\"bin_step\":\"1\",\"active_bin\":\"0\",\"impact_cap_bps\":\"10000\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"0\",\"max_bins_per_swap\":\"32\",\"bin_liquidity_cap\":\"0\"}");
+    return Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"launchpad_executor\":\"sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV\",\"fee_pips\":\"3000\",\"bin_step\":\"1\",\"active_bin\":\"0\",\"impact_cap_bps\":\"10000\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"0\",\"max_bins_per_swap\":\"32\",\"bin_liquidity_cap\":\"0\"}");
   }
 
   fn arm_range_governor_for_renounce_test() {
@@ -72,7 +88,7 @@ module DlmmPoolV1Regressions {
     test::expect_reject_as(
       actor: "owner",
       kotoage: "hajimari",
-      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"fee_pips\":\"3000\",\"bin_step\":\"1\",\"active_bin\":\"0\",\"impact_cap_bps\":\"10000\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"0\",\"max_bins_per_swap\":\"32\",\"bin_liquidity_cap\":\"0\"}")
+      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"launchpad_executor\":\"sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV\",\"fee_pips\":\"3000\",\"bin_step\":\"1\",\"active_bin\":\"0\",\"impact_cap_bps\":\"10000\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"0\",\"max_bins_per_swap\":\"32\",\"bin_liquidity_cap\":\"0\"}")
     );
   }
 
@@ -81,7 +97,7 @@ module DlmmPoolV1Regressions {
     test::expect_reject_as(
       actor: "owner",
       kotoage: "hajimari",
-      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"fee_pips\":\"3000\",\"bin_step\":\"1\",\"active_bin\":\"0\",\"impact_cap_bps\":\"10000\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"0\",\"max_bins_per_swap\":\"65\",\"bin_liquidity_cap\":\"0\"}")
+      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"launchpad_executor\":\"sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV\",\"fee_pips\":\"3000\",\"bin_step\":\"1\",\"active_bin\":\"0\",\"impact_cap_bps\":\"10000\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"0\",\"max_bins_per_swap\":\"65\",\"bin_liquidity_cap\":\"0\"}")
     );
   }
 
@@ -145,6 +161,55 @@ module DlmmPoolV1Regressions {
   }
 
   #[test(fixture = "pool_actor")]
+  fn launchpad_position_name_is_reserved_from_direct_liquidity_calls() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "seed_bin",
+      arguments: Json::parse("{\"position_id\":\"launchpad_executor\",\"bin_id\":\"0\",\"base_amount\":\"1\",\"quote_amount\":\"1\"}")
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn launchpad_quantity2_call_is_pinned_to_executor_and_initialization_bin() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    ActiveBin = 9;
+    let minted = test::invoke_kotoage_as(
+      actor: "public_trader",
+      kotoage: "seed_launchpad_liquidity",
+      arguments: Json::parse("{\"amount_in\":\"3\",\"min_out\":\"4\"}")
+    );
+    let position = launchpad_position_id();
+    test::assert(minted == 7);
+    test::assert(position_owner_value(position) == launchpad_executor_account());
+    test::assert(position_bin_value(position) == 0);
+    test::assert(InitializationBin == 0);
+    test::assert(ActiveBin == 9);
+  }
+
+  #[test(fixture = "pool_actor")]
+  fn launchpad_quantity2_call_rejects_unpinned_authority() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: standard_hajimari_arguments()
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "seed_launchpad_liquidity",
+      arguments: Json::parse("{\"amount_in\":\"1\",\"min_out\":\"1\"}")
+    );
+  }
+
+  #[test(fixture = "pool_actor")]
   fn a_position_cannot_move_between_bins() {
     test::invoke_kotoage_as(
       actor: "owner",
@@ -191,7 +256,7 @@ module DlmmPoolV1Regressions {
   }
 
   #[test(fixture = "pool_actor")]
-  fn public_quote_swap_is_caller_funded_and_requires_full_fill() {
+  fn exact_quote_swap_is_caller_funded_and_requires_full_fill() {
     test::invoke_kotoage_as(
       actor: "owner",
       kotoage: "hajimari",
@@ -211,7 +276,7 @@ module DlmmPoolV1Regressions {
     let vault_base_before = ledger::asset::balance(owner_account(), base_asset());
     let output = test::invoke_kotoage_as(
       actor: "public_trader",
-      kotoage: "swap_exact_in_quote_public",
+      kotoage: "swap_exact_in_quote",
       arguments: Json::parse("{\"amount_in\":\"1000\",\"min_out\":\"990\"}")
     );
     test::assert(output == 997);
@@ -230,7 +295,7 @@ module DlmmPoolV1Regressions {
   }
 
   #[test(fixture = "pool_actor")]
-  fn public_quote_swap_rejects_a_partial_fill_atomically() {
+  fn exact_quote_swap_rejects_a_partial_fill_atomically() {
     test::invoke_kotoage_as(
       actor: "owner",
       kotoage: "hajimari",
@@ -252,7 +317,7 @@ module DlmmPoolV1Regressions {
     let vault_base_before = ledger::asset::balance(owner_account(), base_asset());
     test::expect_reject_as(
       actor: "public_trader",
-      kotoage: "swap_exact_in_quote_public",
+      kotoage: "swap_exact_in_quote",
       arguments: Json::parse("{\"amount_in\":\"1000\",\"min_out\":\"1\"}")
     );
     test::assert(bin_reserve_base_value(0) == base_before);
@@ -283,11 +348,6 @@ module DlmmPoolV1Regressions {
     test::assert_eq(actual: AdminRenounced, expected: 1);
     test::assert_eq(actual: RangeGovernorEnabled, expected: 0);
     test::assert_eq(actual: RangeGovernorNextSlot, expected: 0);
-    test::expect_reject_as(
-      actor: "owner",
-      kotoage: "bind_custody_account",
-      arguments: Json::parse("{\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\"}")
-    );
     test::expect_reject_as(
       actor: "owner",
       kotoage: "configure_range_governor",
@@ -341,8 +401,8 @@ module DlmmPoolV1Regressions {
     let quote_before = bin_reserve_quote_value(0);
     test::expect_reject_as(
       actor: "owner",
-      kotoage: "swap_exact_in_base_for",
-      arguments: Json::parse("{\"recipient\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"amount_in\":\"1000\",\"min_out\":\"1\"}")
+      kotoage: "swap_exact_in_base",
+      arguments: Json::parse("{\"amount_in\":\"1000\",\"min_out\":\"1\"}")
     );
     test::assert(bin_reserve_base_value(0) == base_before);
     test::assert(bin_reserve_quote_value(0) == quote_before);

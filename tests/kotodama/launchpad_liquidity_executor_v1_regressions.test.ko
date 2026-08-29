@@ -9,11 +9,11 @@ module LaunchpadLiquidityExecutorV1Regressions {
     );
     actor(
       "factory",
-      AccountId::parse("sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6")
+      AccountId::parse("sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV")
     );
     actor(
       "guardian",
-      AccountId::parse("sorauﾛ1NfｷgﾉﾓﾉBｦKﾌﾘﾒoﾇﾂﾛrG81ﾋjWﾎﾕVncwﾌSｱ3pﾘﾋﾉhUS9Q76")
+      AccountId::parse("sorauﾛ1Nﾓf6sfﾈPLMRED1Vr5zｸCﾘｳgｹ7ﾉrMxﾀ2ﾂL9YAｾHUDD6F42")
     );
     grant_permission("owner", "Admin");
     grant_permission("owner", "AssetOps");
@@ -21,108 +21,119 @@ module LaunchpadLiquidityExecutorV1Regressions {
     grant_permission("guardian", "Admin");
   }
 
-  fn initialize_executor() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "hajimari",
-      arguments: Json::parse("{\"pool_contract\":\"0x01\",\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"executor_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\",\"sale_factory_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\",\"guardian\":\"sorauﾛ1NfｷgﾉﾓﾉBｦKﾌﾘﾒoﾇﾂﾛrG81ﾋjWﾎﾕVncwﾌSｱ3pﾘﾋﾉhUS9Q76\"}")
-    );
+  fn hajimari_arguments() -> Json {
+    return Json::parse("{\"pool_contract\":\"0x01\",\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"sale_factory_account\":\"sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV\",\"guardian\":\"sorauﾛ1Nﾓf6sfﾈPLMRED1Vr5zｸCﾘｳgｹ7ﾉrMxﾀ2ﾂL9YAｾHUDD6F42\"}");
   }
 
   #[test(fixture = "executor_actors")]
-  fn lifecycle_starts_paused_and_has_no_seed_records() {
-    initialize_executor();
+  fn lifecycle_derives_custody_and_starts_paused_with_zero_aggregates() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: hajimari_arguments()
+    );
     test::assert(ExecutorInitialized == 1);
     test::assert(ExecutorPaused == 1);
+    test::assert(ExecutorContractAccount != ExecutorOwner);
+    test::assert(ExecutorContractAccount != test::actor_account("factory"));
+    test::assert(ExecutorContractAccount != test::actor_account("guardian"));
     test::assert(SeedCount == 0);
-    test::assert(ExecutorOwner == test::actor_account("owner"));
+    test::assert(TotalBaseAmount == zero_quantity());
+    test::assert(TotalQuoteAmount == zero_quantity());
+    test::assert(TotalShares == zero_quantity());
+    test::assert(LastSeedSlot == 0);
   }
 
   #[test(fixture = "executor_actors")]
-  fn owner_account_cannot_be_configured_as_executor_custody() {
+  fn owner_cannot_also_be_the_sale_factory() {
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "hajimari",
-      arguments: Json::parse("{\"pool_contract\":\"0x01\",\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"executor_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"sale_factory_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\",\"guardian\":\"sorauﾛ1NfｷgﾉﾓﾉBｦKﾌﾘﾒoﾇﾂﾛrG81ﾋjWﾎﾕVncwﾌSｱ3pﾘﾋﾉhUS9Q76\"}")
+      kotoage: "hajimari",
+      arguments: Json::parse("{\"pool_contract\":\"0x01\",\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"sale_factory_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"guardian\":\"sorauﾛ1Nﾓf6sfﾈPLMRED1Vr5zｸCﾘｳgｹ7ﾉrMxﾀ2ﾂL9YAｾHUDD6F42\"}")
     );
   }
 
   #[test(fixture = "executor_actors")]
   fn paused_executor_rejects_factory_before_asset_staging() {
-    initialize_executor();
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: hajimari_arguments()
+    );
     test::expect_reject_as(
       actor: "factory",
-      entrypoint: "seed_liquidity",
-      arguments: Json::parse("{\"position_id\":\"sale1\",\"funding_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\",\"bin_id\":\"0\",\"base_amount\":\"1\",\"quote_amount\":\"1\"}")
+      kotoage: "seed_liquidity",
+      arguments: Json::parse("{\"amount_in\":\"1\",\"min_out\":\"1\"}")
     );
     test::assert(SeedCount == 0);
   }
 
   #[test(fixture = "executor_actors")]
   fn non_factory_caller_is_rejected_before_asset_staging() {
-    initialize_executor();
-    test::invoke_entrypoint_as(
+    test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "set_paused",
+      kotoage: "hajimari",
+      arguments: hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "set_paused",
       arguments: Json::parse("{\"paused\":\"0\"}")
     );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "seed_liquidity",
-      arguments: Json::parse("{\"position_id\":\"sale1\",\"funding_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"bin_id\":\"0\",\"base_amount\":\"1\",\"quote_amount\":\"1\"}")
+      kotoage: "seed_liquidity",
+      arguments: Json::parse("{\"amount_in\":\"1\",\"min_out\":\"1\"}")
     );
     test::assert(SeedCount == 0);
   }
 
   #[test(fixture = "executor_actors")]
-  fn zero_liquidity_is_rejected_before_nested_call() {
-    initialize_executor();
-    test::invoke_entrypoint_as(
+  fn both_quantity2_legs_must_be_positive() {
+    test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "set_paused",
+      kotoage: "hajimari",
+      arguments: hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "set_paused",
       arguments: Json::parse("{\"paused\":\"0\"}")
     );
     test::expect_reject_as(
       actor: "factory",
-      entrypoint: "seed_liquidity",
-      arguments: Json::parse("{\"position_id\":\"sale1\",\"funding_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\",\"bin_id\":\"0\",\"base_amount\":\"0\",\"quote_amount\":\"0\"}")
+      kotoage: "seed_liquidity",
+      arguments: Json::parse("{\"amount_in\":\"0\",\"min_out\":\"1\"}")
     );
-    test::assert(!SeedCompleted.contains(Name::parse("sale1")));
-  }
-
-  #[test(fixture = "executor_actors")]
-  fn duplicate_position_is_rejected_before_nested_call() {
-    initialize_executor();
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "set_paused",
-      arguments: Json::parse("{\"paused\":\"0\"}")
-    );
-    SeedCompleted[Name::parse("sale1")] = 1;
     test::expect_reject_as(
       actor: "factory",
-      entrypoint: "seed_liquidity",
-      arguments: Json::parse("{\"position_id\":\"sale1\",\"funding_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\",\"bin_id\":\"0\",\"base_amount\":\"1\",\"quote_amount\":\"1\"}")
+      kotoage: "seed_liquidity",
+      arguments: Json::parse("{\"amount_in\":\"1\",\"min_out\":\"0\"}")
     );
     test::assert(SeedCount == 0);
+    test::assert(TotalShares == zero_quantity());
   }
 
   #[test(fixture = "executor_actors")]
   fn guardian_can_pause_but_cannot_resume() {
-    initialize_executor();
-    test::invoke_entrypoint_as(
+    test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "set_paused",
+      kotoage: "hajimari",
+      arguments: hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "set_paused",
       arguments: Json::parse("{\"paused\":\"0\"}")
     );
-    test::invoke_entrypoint_as(
+    test::invoke_kotoage_as(
       actor: "guardian",
-      entrypoint: "set_paused",
+      kotoage: "set_paused",
       arguments: Json::parse("{\"paused\":\"1\"}")
     );
     test::expect_reject_as(
       actor: "guardian",
-      entrypoint: "set_paused",
+      kotoage: "set_paused",
       arguments: Json::parse("{\"paused\":\"0\"}")
     );
     test::assert(ExecutorPaused == 1);

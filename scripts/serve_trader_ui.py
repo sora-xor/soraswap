@@ -82,6 +82,8 @@ def bounded_read_proxy_query(
     upstream_path: str,
     query_params: dict[str, list[str]],
 ) -> dict[str, str | list[str]]:
+    if upstream_path.startswith("/v1/assets/definitions/"):
+        return {}
     if upstream_path not in READ_PROXY_ALLOWLIST_PATHS:
         return contract_console.query_dict_from_pairs(query_params)
 
@@ -227,6 +229,7 @@ class TraderUiState:
             config_path=None,
             authority=None,
             torii_url=None,
+            network_id=None,
             private_key=None,
             public_key=None,
             basic_auth=None,
@@ -289,8 +292,9 @@ class TraderUiHandler(BaseHTTPRequestHandler):
                 query=query,
                 basic_auth=signer.basic_auth,
                 timeout=timeout,
+                canonical_signer=signer,
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             raise ConnectionError(f"failed to reach {torii_url}{path}: {exc}") from exc
 
         return contract_console.build_proxy_result(
@@ -468,10 +472,9 @@ class TraderUiHandler(BaseHTTPRequestHandler):
                 return
             payload["status_kind"] = typed_status["kind"]
             payload["status_scope"] = typed_status["scope"]
-            payload["status_summary"] = typed_status["summary"]
-            payload["status_diagnostics"] = typed_status["diagnostics"]
-            if typed_status["rejection_reason"] is not None:
-                payload["rejection_reason"] = typed_status["rejection_reason"]
+            payload["status_resolved_from"] = typed_status["resolved_from"]
+            if typed_status["block_height"] is not None:
+                payload["status_block_height"] = typed_status["block_height"]
         contract_console.json_response(self, HTTPStatus.OK, payload)
 
     def serve_static(self, request_path: str) -> None:
@@ -505,6 +508,23 @@ class TraderUiHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/api/catalog":
             contract_console.json_response(self, HTTPStatus.OK, self.state.load_catalog())
+            return
+        if parsed.path.startswith("/api/assets/definitions/"):
+            selector, selector_error = contract_console.normalize_asset_definition_selector(
+                parsed.path.removeprefix("/api/assets/definitions/")
+            )
+            if selector_error:
+                contract_console.json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": selector_error},
+                )
+                return
+            encoded_selector = urllib.parse.quote(selector or "", safe="")
+            self.handle_torii_read_proxy(
+                parsed,
+                f"/v1/assets/definitions/{encoded_selector}",
+            )
             return
         if parsed.path == "/api/contracts/activity":
             self.handle_torii_read_proxy(parsed, "/v1/contracts/activity")
@@ -572,7 +592,7 @@ class TraderUiHandler(BaseHTTPRequestHandler):
         environment = str(body.get("environment") or "").strip()
         if parsed.path == "/api/view/batch":
             try:
-                _, signer, torii_url = self.resolve_proxy_environment(environment)
+                env_record, signer, torii_url = self.resolve_proxy_environment(environment)
             except KeyError as exc:
                 contract_console.json_response(self, HTTPStatus.NOT_FOUND, {"ok": False, "error": str(exc)})
                 return
@@ -590,6 +610,38 @@ class TraderUiHandler(BaseHTTPRequestHandler):
                         "ok": False,
                         "error": "environment, authority, and a non-empty items list are required",
                     },
+                )
+                return
+            try:
+                contract_console.require_bound_request_signer(
+                    signer,
+                    authority=authority,
+                    environment=environment,
+                )
+            except ValueError as exc:
+                contract_console.json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": str(exc)},
+                )
+                return
+
+            try:
+                for index, item in enumerate(items):
+                    if not isinstance(item, dict):
+                        raise ValueError(f"items[{index}] must be a JSON object")
+                    contract_console.validate_manifest_numeric_arguments(
+                        env_record,
+                        contract_address=str(item.get("contract_address") or "").strip(),
+                        entrypoint_name=str(item.get("entrypoint") or "").strip(),
+                        payload=item.get("payload"),
+                        context=f"items[{index}].payload",
+                    )
+            except ValueError as exc:
+                contract_console.json_response(
+                    self,
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": str(exc)},
                 )
                 return
 
@@ -659,9 +711,37 @@ class TraderUiHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        try:
+            contract_console.require_bound_request_signer(
+                signer,
+                authority=authority,
+                environment=environment,
+            )
+        except ValueError as exc:
+            contract_console.json_response(
+                self,
+                HTTPStatus.BAD_REQUEST,
+                {"ok": False, "error": str(exc)},
+            )
+            return
 
         try:
             gas_limit = contract_console.normalize_browser_gas_limit(body.get("gas_limit"))
+        except ValueError as exc:
+            contract_console.json_response(
+                self,
+                HTTPStatus.BAD_REQUEST,
+                {"ok": False, "error": str(exc)},
+            )
+            return
+
+        try:
+            contract_console.validate_manifest_numeric_arguments(
+                env_record,
+                contract_address=contract_address,
+                entrypoint_name=entrypoint,
+                payload=body.get("payload"),
+            )
         except ValueError as exc:
             contract_console.json_response(
                 self,
@@ -674,35 +754,40 @@ class TraderUiHandler(BaseHTTPRequestHandler):
             "authority": authority,
             "contract_address": contract_address,
             "entrypoint": entrypoint,
-            "gas_limit": gas_limit,
         }
         if "payload" in body and body["payload"] is not None:
             request_payload["payload"] = body["payload"]
 
         mode = "view"
-        path = "/v1/contracts/view"
         if parsed.path == "/api/call":
             try:
                 self.require_mutations_allowed(env_record)
             except PermissionError as exc:
                 contract_console.json_response(self, HTTPStatus.FORBIDDEN, {"ok": False, "error": str(exc)})
                 return
-            if not signer.private_key:
+            request_payload["fee_payment"] = contract_console.authority_fee_payment_intent(gas_limit)
+            try:
+                payload = contract_console.execute_detached_contract_call(
+                    self.execute_upstream_request,
+                    environment=environment,
+                    signer=signer,
+                    torii_url=torii_url,
+                    request_payload=request_payload,
+                    timeout=45,
+                )
+            except ConnectionError as exc:
                 contract_console.json_response(
-                    self,
-                    HTTPStatus.BAD_REQUEST,
-                    {
-                        "ok": False,
-                        "error": (
-                            f"no signer config with private key is bound for environment {environment}; "
-                            "start the trader with --signer ENV=/path/to/client.toml"
-                        ),
-                    },
+                    self, HTTPStatus.BAD_GATEWAY, {"ok": False, "error": str(exc)}
                 )
                 return
-            request_payload["private_key"] = signer.private_key
-            mode = "call"
-            path = "/v1/contracts/call"
+            contract_console.json_response(
+                self,
+                HTTPStatus.OK if payload.get("ok") else HTTPStatus.BAD_GATEWAY,
+                payload,
+            )
+            return
+
+        request_payload["gas_limit"] = gas_limit
 
         try:
             payload = self.execute_upstream_request(
@@ -710,7 +795,7 @@ class TraderUiHandler(BaseHTTPRequestHandler):
                 signer=signer,
                 torii_url=torii_url,
                 mode=mode,
-                path=path,
+                path="/v1/contracts/view",
                 request_payload=request_payload,
                 timeout=45 if mode == "call" else 30,
             )

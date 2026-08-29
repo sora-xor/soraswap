@@ -2,10 +2,9 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 import { CoverManagerModel } from "../cover/manager";
-import { OptionsStackModel } from "../options/stack";
+import { OptionsFactoryModel } from "../options/factory";
 import { PerpsEngineModel } from "../perps/engine";
 import { runDefi2026Scenario } from "../system/defi2026";
-import { runCrossProductStressScenario } from "../system/crossProduct";
 
 function expectLaunchReadyDefi2026Telemetry(snapshot: any) {
   expect(snapshot.launchReady).toBe(true);
@@ -49,26 +48,23 @@ function expectLaunchReadyDefi2026Telemetry(snapshot: any) {
 }
 
 describe("Simulation smoke", () => {
-  test("runs all scenario entrypoints and writes telemetry artifacts", () => {
+  test("runs all current product scenarios and writes first-release telemetry artifacts", () => {
     const perps = PerpsEngineModel.runScenario() as any;
-    const options = OptionsStackModel.runScenario() as any;
+    const options = OptionsFactoryModel.runScenario() as any;
     const cover = CoverManagerModel.runScenario() as any;
-    const cross = runCrossProductStressScenario() as any;
     const defi2026 = runDefi2026Scenario() as any;
 
-    expect(perps.bucket.settledPayouts).toBeGreaterThan(0);
-    expect(options.collateralConservation.bucket.settledPayouts).toBeGreaterThan(0);
-    expect(cover.claimRouting.payout).toBeGreaterThan(0);
-    expect(cross.solvency.totalSettledPayouts).toBeGreaterThan(0);
+    expect(perps.collateralPool.settledCollateral).toBeGreaterThan(0);
+    expect(options.treasury.settledPayouts).toBeGreaterThan(0);
+    expect(cover.reserve.settledPayouts).toBeGreaterThan(0);
     expect(defi2026.launchReady).toBe(true);
     expectLaunchReadyDefi2026Telemetry(defi2026);
 
     const telemetryDir = join(process.cwd(), "artifacts", "telemetry");
     const latestFiles = [
-      "perps_shared_risk_latest.json",
-      "options_shared_risk_latest.json",
-      "cover_shared_risk_latest.json",
-      "cross_product_shared_risk_latest.json",
+      "perps_engine_latest.json",
+      "options_factory_latest.json",
+      "cover_manager_latest.json",
       "defi_2026_primitives_latest.json"
     ];
 

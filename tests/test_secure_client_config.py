@@ -3,6 +3,7 @@ import os
 import shutil
 import stat
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -10,6 +11,8 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MODULE_PATH = REPO_ROOT / "scripts" / "secure_client_config.py"
+TAIRA_NETWORK_ID = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
+PRODUCTION_NETWORK_ID = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 spec = importlib.util.spec_from_file_location("soraswap_secure_client_config", MODULE_PATH)
 secure_config = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -24,10 +27,11 @@ class SecureClientConfigTests(unittest.TestCase):
         self.config.parent.mkdir(parents=True)
         self.config.write_text(
             """chain = "production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://production.sora.org/"
 
 [account]
-domain = "operator.universal"
+domain = "universal"
 public_key = "ed0120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 private_key = "802620bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 chain_discriminant = 991
@@ -49,6 +53,7 @@ password = "fixture-password"
             production=True,
             repo_root=str(self.root),
             taira_chain_id="fc56984b-2be7-431d-840e-21514d1883f0",
+            taira_network_id=TAIRA_NETWORK_ID,
             taira_discriminant=369,
         )
 
@@ -56,6 +61,7 @@ password = "fixture-password"
         data, opened, metadata = self.load()
         self.assertEqual(data["chain"], "production-chain")
         self.assertEqual(metadata["torii_origin"], "https://production.sora.org")
+        self.assertEqual(metadata["network_id"], PRODUCTION_NETWORK_ID)
         self.assertTrue(metadata["basic_auth_configured"])
         self.assertEqual(stat.S_IMODE(opened.st_mode), 0o600)
 
@@ -68,6 +74,7 @@ password = "fixture-password"
                 production=True,
                 repo_root=str(self.root),
                 taira_chain_id="taira",
+                taira_network_id=TAIRA_NETWORK_ID,
                 taira_discriminant=369,
             )
 
@@ -205,10 +212,158 @@ password = "fixture-password"
                     metadata,
                     public_env="production",
                     taira_chain_id="taira",
+                    taira_network_id=TAIRA_NETWORK_ID,
                     taira_discriminant=369,
                     public_key_override=None,
                     private_key_override=None,
                 )
+
+    def test_render_preserves_network_id_and_domainless_alias_scope(self) -> None:
+        data, _, metadata = self.load()
+        rendered = secure_config._render_config(
+            data,
+            metadata,
+            public_env="production",
+            taira_chain_id="taira",
+            taira_network_id=TAIRA_NETWORK_ID,
+            taira_discriminant=369,
+            public_key_override=None,
+            private_key_override=None,
+        )
+        materialized = tomllib.loads(rendered.decode("utf-8"))
+        self.assertEqual(materialized["network_id"], PRODUCTION_NETWORK_ID)
+        self.assertEqual(materialized["account"]["domain"], "universal")
+
+    def test_render_requires_exact_current_taira_identity(self) -> None:
+        data = {
+            "account": {
+                "domain": "universal",
+                "profile": "taira",
+                "public_key": "ed0120" + "a" * 64,
+                "private_key": "802620" + "b" * 64,
+            }
+        }
+        metadata = {
+            "chain": "fc56984b-2be7-431d-840e-21514d1883f0",
+            "network_id": TAIRA_NETWORK_ID,
+            "torii_url": "https://taira.sora.org/",
+            "torii_origin": "https://taira.sora.org",
+            "chain_discriminant": None,
+        }
+        rendered = secure_config._render_config(
+            data,
+            metadata,
+            public_env="testnet",
+            taira_chain_id="fc56984b-2be7-431d-840e-21514d1883f0",
+            taira_network_id=TAIRA_NETWORK_ID,
+            taira_discriminant=369,
+            public_key_override=None,
+            private_key_override=None,
+        )
+        materialized = tomllib.loads(rendered.decode("utf-8"))
+        self.assertEqual(materialized["chain"], metadata["chain"])
+        self.assertEqual(materialized["account"]["chain_discriminant"], 369)
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "SORASWAP_TESTNET_CHAIN_ID": "retired-chain-override",
+                "SORASWAP_TESTNET_CHAIN_DISCRIMINANT": "991",
+            },
+            clear=False,
+        ), self.assertRaisesRegex(secure_config.ConfigError, "unsupported Taira identity override"):
+            secure_config._render_config(
+                data,
+                metadata,
+                public_env="testnet",
+                taira_chain_id="fc56984b-2be7-431d-840e-21514d1883f0",
+                taira_network_id=TAIRA_NETWORK_ID,
+                taira_discriminant=369,
+                public_key_override=None,
+                private_key_override=None,
+            )
+
+        for retired_name in (
+            "SORASWAP_TESTNET_CHAIN_ID",
+            "SORASWAP_TESTNET_CHAIN_DISCRIMINANT",
+        ):
+            with self.subTest(retired_name=retired_name), mock.patch.dict(
+                os.environ,
+                {retired_name: ""},
+                clear=False,
+            ), self.assertRaisesRegex(
+                secure_config.ConfigError, "unsupported Taira identity override"
+            ):
+                secure_config._render_config(
+                    data,
+                    metadata,
+                    public_env="testnet",
+                    taira_chain_id="fc56984b-2be7-431d-840e-21514d1883f0",
+                    taira_network_id=TAIRA_NETWORK_ID,
+                    taira_discriminant=369,
+                    public_key_override=None,
+                    private_key_override=None,
+                )
+
+        for field, value, message in (
+            ("chain", "wrong-chain", "canonical Taira chain"),
+            ("network_id", PRODUCTION_NETWORK_ID, "canonical Taira network"),
+            ("chain_discriminant", 991, "canonical Taira"),
+        ):
+            invalid = dict(metadata)
+            invalid[field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(secure_config.ConfigError, message):
+                secure_config._render_config(
+                    data,
+                    invalid,
+                    public_env="testnet",
+                    taira_chain_id="fc56984b-2be7-431d-840e-21514d1883f0",
+                    taira_network_id=TAIRA_NETWORK_ID,
+                    taira_discriminant=369,
+                    public_key_override=None,
+                    private_key_override=None,
+                )
+
+    def test_secure_load_requires_canonical_network_id(self) -> None:
+        original = self.config.read_text(encoding="utf-8")
+        self.config.write_text(original.replace(f'network_id = "{PRODUCTION_NETWORK_ID}"\n', ""), encoding="utf-8")
+        with self.assertRaisesRegex(secure_config.ConfigError, "network_id must be a non-empty string"):
+            self.load()
+
+        self.config.write_text(
+            original.replace(PRODUCTION_NETWORK_ID, PRODUCTION_NETWORK_ID.lower()),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(secure_config.ConfigError, "must be canonical"):
+            self.load()
+
+    def test_nonproduction_load_rejects_flat_account_credentials(self) -> None:
+        flat_config = self.root / "flat.client.toml"
+        flat_config.write_text(
+            f'''chain = "local-chain"
+network_id = "{PRODUCTION_NETWORK_ID}"
+torii_url = "http://127.0.0.1:8080/"
+domain = "universal"
+public_key = "ed0120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+private_key = "802620bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+''',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(secure_config.ConfigError, "account must be a table"):
+            secure_config.load_config(
+                str(flat_config),
+                production=False,
+                repo_root=str(self.root),
+                taira_chain_id="fc56984b-2be7-431d-840e-21514d1883f0",
+                taira_network_id=TAIRA_NETWORK_ID,
+                taira_discriminant=369,
+            )
+
+    def test_production_rejects_taira_network_id(self) -> None:
+        original = self.config.read_text(encoding="utf-8")
+        self.config.write_text(original.replace(PRODUCTION_NETWORK_ID, TAIRA_NETWORK_ID), encoding="utf-8")
+        with self.assertRaisesRegex(secure_config.ConfigError, "canonical Taira network"):
+            self.load()
 
     def test_output_check_rejects_config_and_file_secret_echoes(self) -> None:
         data, _, _ = self.load()

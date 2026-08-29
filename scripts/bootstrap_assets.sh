@@ -37,25 +37,10 @@ fi
 
 ensure_domain_sns_lease "$config" soraswap
 
-if ! iroha_cli_json --config "$config" ledger domain get --id "$domain_id" >/dev/null 2>&1; then
-  domain_register_output=""
-  domain_register_status=0
-  set +e
-  domain_register_output="$(iroha_cli_with_gas_metadata "$config" ledger domain register --id "$domain_id" 2>&1)"
-  domain_register_status=$?
-  set -e
-  if (( domain_register_status != 0 )); then
-    if [[ "$domain_register_output" == *"Repeated instruction"* || "$domain_register_output" == *"Repetition of \`Register\`"* ]] \
-      && iroha_cli_json --config "$config" ledger domain get --id "$domain_id" >/dev/null 2>&1; then
-      echo "domain already present after duplicate register rejection: $domain_id"
-    else
-      soraswap_redact_sensitive_text "$domain_register_output" >&2
-      exit "$domain_register_status"
-    fi
-  elif [[ -n "$domain_register_output" ]]; then
-    printf '%s\n' "$domain_register_output"
-  fi
-fi
+iroha_cli_json --config "$config" ledger domain get --id "$domain_id" >/dev/null || {
+  echo "SNS registration did not materialize expected domain: $domain_id" >&2
+  exit 1
+}
 
 ensure_account_registered "$config" "$treasury_account" "$domain_id"
 

@@ -130,16 +130,11 @@ seiyaku DlmmRouter {
     AssetDefinitionId base_asset,
     AssetDefinitionId quote_asset,
     int default_fee_pips,
-    AccountId router_contract_account,
     bytes pool_contract,
     AccountId guardian
   ) {
     require(base_asset != quote_asset, DlmmRouterError::IdenticalAssets);
     assert_valid_fee(default_fee_pips);
-    require(
-      router_contract_account != context::authority(),
-      DlmmRouterError::RouterAccountIsOwner
-    );
 
     RouterInitialized = 1;
     RouterOwner = context::authority();
@@ -148,7 +143,7 @@ seiyaku DlmmRouter {
     BaseAsset = base_asset;
     QuoteAsset = quote_asset;
     DefaultFeePips = default_fee_pips;
-    RouterContractAccount = router_contract_account;
+    RouterContractAccount = context::seiyaku_subject();
     PoolContract = pool_contract;
     SwapHistoryHead = 0;
   }
@@ -282,11 +277,11 @@ seiyaku DlmmRouter {
     return via_base_out;
   }
 
-  kotoage fn route_swap(
+  fn route_swap_impl(
     quantity amount_in,
     int input_is_base,
     quantity min_out
-  ) -> quantity authorize("AssetOps") {
+  ) -> quantity {
     assert_not_paused();
     require(amount_in > zero_quantity(), DlmmRouterError::InvalidAmount);
     let trader = context::authority();
@@ -301,11 +296,17 @@ seiyaku DlmmRouter {
       );
       let amount_out = contract::invoke(
         contract: PoolContract,
-        entrypoint: "swap_exact_in_base_for",
+        entrypoint: "swap_exact_in_base",
         returns: "quantity",
-        recipient: trader,
         amount_in: amount_in,
         min_out: min_out
+      );
+      ledger::asset::transfer(
+        source: RouterContractAccount,
+        destination: trader,
+        asset_definition: QuoteAsset,
+        amount: amount_out,
+        dataspace: universal_dataspace()
       );
       record_swap_history(
         trader: trader,
@@ -327,11 +328,17 @@ seiyaku DlmmRouter {
     );
     let amount_out = contract::invoke(
       contract: PoolContract,
-      entrypoint: "swap_exact_in_quote_for",
+      entrypoint: "swap_exact_in_quote",
       returns: "quantity",
-      recipient: trader,
       amount_in: amount_in,
       min_out: min_out
+    );
+    ledger::asset::transfer(
+      source: RouterContractAccount,
+      destination: trader,
+      asset_definition: BaseAsset,
+      amount: amount_out,
+      dataspace: universal_dataspace()
     );
     record_swap_history(
       trader: trader,
@@ -341,5 +348,33 @@ seiyaku DlmmRouter {
       min_out: min_out
     );
     return amount_out;
+  }
+
+  // Unified direct-user surface. Contract callers use the two exact typed
+  // entrypoints below so every nested call is bound to Iroha's Quantity2 ABI.
+  kotoage fn route_swap(
+    quantity amount_in,
+    int input_is_base,
+    quantity min_out
+  ) -> quantity authorize("AssetOps") {
+    return route_swap_impl(
+      amount_in: amount_in,
+      input_is_base: input_is_base,
+      min_out: min_out
+    );
+  }
+
+  kotoage fn route_exact_in_base(
+    quantity amount_in,
+    quantity min_out
+  ) -> quantity authorize("AssetOps") {
+    return route_swap_impl(amount_in: amount_in, input_is_base: 1, min_out: min_out);
+  }
+
+  kotoage fn route_exact_in_quote(
+    quantity amount_in,
+    quantity min_out
+  ) -> quantity authorize("AssetOps") {
+    return route_swap_impl(amount_in: amount_in, input_is_base: 0, min_out: min_out);
   }
 }

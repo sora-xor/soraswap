@@ -1,6 +1,6 @@
 # State Layouts
 
-These notes capture the tracked state surfaces in the current repo. The derivatives stack is split across multiple contracts, so the derivatives notes are grouped by subsystem instead of by the old single-contract scaffolds.
+These notes capture the tracked state surfaces in the current repo. Perps, options, and cover each document their own first-release custody and accounting state.
 
 - [`n3x_hub.md`](./n3x_hub.md)
 - [`bridge.md`](./bridge.md)
@@ -10,7 +10,6 @@ These notes capture the tracked state surfaces in the current repo. The derivati
 - [`referral.md`](./referral.md)
 - [`automation.md`](./automation.md)
 - [`farms.md`](./farms.md)
-- [`risk_vault.md`](./risk_vault.md)
 - [`perps.md`](./perps.md)
 - [`options.md`](./options.md)
 - [`cover.md`](./cover.md)

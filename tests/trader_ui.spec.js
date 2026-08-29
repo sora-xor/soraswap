@@ -6,6 +6,8 @@ const path = require("path");
 const SELECTED_ENVIRONMENT_KEY = "soraswap.trader.selectedEnvironment.v1";
 const AUTHORITY_BY_ENVIRONMENT_KEY = "soraswap.trader.authorityByEnvironment.v1";
 const LIVE_MODE_ENABLED_KEY = "soraswap.trader.liveModeEnabled.v1";
+const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+const TAIRA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 
 let fixtureServer;
 let fixtureServerUrl;
@@ -156,6 +158,50 @@ test("keeps the trader cockpit viewport-safe on mobile", async ({ page }) => {
   await expectNoHorizontalOverflow(page);
 });
 
+test("scopes the exact XOR identity guard to canonical Taira", async ({ page }) => {
+  await page.goto(fixtureServerUrl);
+  await expect(page.locator("#status-banner")).toContainText("Loaded 3 executed fills");
+
+  await page.route("**/api/catalog", async (route) => {
+    const response = await route.fetch();
+    const catalog = await response.json();
+    catalog.environments[0].chain_fingerprint.chain = TAIRA_CHAIN_ID;
+    await route.fulfill({
+      status: response.status(),
+      contentType: "application/json",
+      body: JSON.stringify(catalog),
+    });
+  });
+
+  await page.reload();
+  await expect(page.locator("#status-banner")).toContainText(
+    "Base Taira XOR must resolve to its exact permanent asset definition with scale 9.",
+  );
+
+  await page.route("**/api/assets/definitions/xor%23universal?*", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        response_json: {
+          id: TAIRA_XOR_ASSET_DEFINITION_ID,
+          alias: "xor#universal",
+          spec: { scale: 9 },
+          alias_binding: {
+            alias: "xor#universal",
+            status: "permanent",
+            bound_at_ms: 1,
+          },
+        },
+      }),
+    });
+  });
+
+  await page.reload();
+  await expect(page.locator("#status-banner")).toContainText("Loaded 3 executed fills");
+});
+
 test("keeps the action submit reachable in the 1280px cockpit", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(fixtureServerUrl);
@@ -186,6 +232,25 @@ test("does not submit or confirm invalid trader mutations", async ({ page }) => 
   expect(callRequests).toHaveLength(0);
 
   await page.locator("#trade-gas-limit-input").fill("100000");
+  await page.getByLabel("Spend Base Amount").fill("0.1234567891");
+  await expect(page.locator("#trade-submit")).toBeDisabled();
+  await expect(page.locator("#trade-submit")).toHaveAttribute(
+    "title",
+    "Spend Base Amount exceeds the current XOR scale of 9 fractional digits.",
+  );
+
+  await page.getByLabel("Spend Base Amount").fill("0.123456789");
+  await page.getByLabel("Minimum Quote Out").fill("0.1234567");
+  await expect(page.locator("#trade-submit")).toBeDisabled();
+  await expect(page.locator("#trade-submit")).toHaveAttribute(
+    "title",
+    "Minimum Quote Out exceeds the current USDT scale of 6 fractional digits.",
+  );
+
+  await page.getByLabel("Spend Base Amount").fill("0.5000");
+  await page.getByLabel("Minimum Quote Out").fill("0.40");
+  await expect(page.locator("#trade-preview")).toContainText('"amount_in": "0.5"');
+  await expect(page.locator("#trade-preview")).toContainText('"min_out": "0.4"');
   await expect(page.locator("#trade-submit")).toBeEnabled();
   await page.locator("#trade-submit").click();
   await expect(page.locator("#signed-confirmation-dialog")).toBeVisible();
@@ -226,6 +291,46 @@ test("sanitizes sensitive fields in trader confirmation JSON", async ({ page }) 
   expect(sanitizedJson).not.toContain("bearer-secret");
   expect(sanitizedJson).not.toContain("password-secret");
   expect(sanitizedJson).not.toContain("passphrase-secret");
+});
+
+test("accepts only current proxy status and transaction hash fields", async ({ page }) => {
+  await page.goto(fixtureServerUrl);
+
+  const result = await page.evaluate(() => {
+    const txHashHex = "ab".repeat(32);
+    const errorMessage = (callback) => {
+      try {
+        callback();
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    };
+
+    return {
+      canonicalStatus: requireCurrentPipelineStatusKind({ status_kind: "Queued" }),
+      canonicalHash: requireCurrentTransactionHash({ tx_hash_hex: txHashHex }),
+      stringStatusError: errorMessage(() => requireCurrentPipelineStatusKind({
+        response_json: { status: "Queued" },
+      })),
+      nestedStatusError: errorMessage(() => requireCurrentPipelineStatusKind({
+        response_json: { content: { status: { kind: "Queued" } } },
+      })),
+      responseHashError: errorMessage(() => requireCurrentTransactionHash({
+        response_json: { tx_hash_hex: txHashHex },
+      })),
+      entrypointHashError: errorMessage(() => requireCurrentTransactionHash({
+        entrypoint_hash: txHashHex,
+      })),
+    };
+  });
+
+  expect(result.canonicalStatus).toBe("Queued");
+  expect(result.canonicalHash).toBe("ab".repeat(32));
+  expect(result.stringStatusError).toContain("current status_kind");
+  expect(result.nestedStatusError).toContain("current status_kind");
+  expect(result.responseHashError).toContain("current tx_hash_hex");
+  expect(result.entrypointHashError).toContain("current tx_hash_hex");
 });
 
 test("clears browser-local trader preferences in one action", async ({ page }) => {
@@ -359,6 +464,18 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#focus-feed")).toContainText("Opened perp");
   await expect(page.locator("#trade-title")).toHaveText("Perps Rails");
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "open_position"');
+  await expect(page.locator("#trade-preview")).toContainText('"requested_leverage_bps": "40000"');
+  await expect(page.locator("#trade-preview")).not.toContainText('"position_id"');
+  await page.getByLabel("Signed Size").fill("-520");
+  await expect(page.locator("#trade-preview")).toContainText('"size": "-520"');
+  await expect(page.locator("#trade-submit")).toBeEnabled();
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Modify$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "modify_position"');
+  await expect(page.locator("#trade-preview")).toContainText('"position_id": "7"');
+  await expect(page.locator("#trade-preview")).toContainText('"requested_leverage_bps": "40000"');
+  await page.getByLabel("Signed Size Delta").fill("-40");
+  await page.getByLabel("Signed Margin Delta").fill("-10");
+  await expect(page.locator("#trade-submit")).toBeEnabled();
   await expect(page.locator("#activity-body")).toContainText("Opened perp");
   await expect(page.locator("#activity-body")).not.toContainText("Minted n3x");
 
@@ -380,6 +497,11 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
 
   await submitTraderAction(page);
   await expect.poll(() => callRequests.length).toBe(1);
+  expect(callRequests[0].payload).toEqual({
+    amount_in: "90",
+    input_is_base: "1",
+    min_out: "80",
+  });
 
   await expect(page.locator("#trade-result")).toContainText("committed");
   await expect(page.locator("#status-banner")).toContainText("Loaded 4 executed fills");
@@ -392,7 +514,7 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await page.locator("#module-grid").getByRole("button", { name: /Batch Auction/i }).click();
   await expect(page.locator("#trade-title")).toHaveText("Epoch Auction");
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "submit_order"');
-  await expect(page.locator("#trade-preview")).toContainText('"side": 1');
+  await expect(page.locator("#trade-preview")).toContainText('"side": "1"');
   await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
   await page.locator("#trade-mode-bar").getByRole("button", { name: /^Settle$/i }).click();
@@ -402,6 +524,56 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "contribute_recorded"');
   await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
+
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Claim$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "claim_allocation"');
+  await expect(page.locator("#trade-preview")).toContainText('"allocation": "alloc-alpha"');
+  await expect(page.locator("#trade-preview")).not.toContainText('"sale"');
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  expect(callRequests.at(-1).payload).toEqual({ allocation: "alloc-alpha" });
+
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Refund$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "refund_allocation"');
+  await expect(page.locator("#trade-preview")).toContainText('"allocation": "alloc-alpha"');
+  await expect(page.locator("#trade-preview")).not.toContainText('"sale"');
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  expect(callRequests.at(-1).payload).toEqual({ allocation: "alloc-alpha" });
+
+  await page.locator("#module-grid").getByRole("button", { name: /Options/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "buy_shout"');
+  await expect(page.locator("#trade-preview")).not.toContainText('"position_id"');
+  await expect(page.locator("#trade-preview")).not.toContainText('"premium_paid"');
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  expect(callRequests.at(-1).payload).toEqual({ series_id: "12", notional: "220" });
+
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Exercise Shout$/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "exercise_shout_position"');
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  expect(callRequests.at(-1).payload).toEqual({ position_id: "77" });
+
+  await page.locator("#module-grid").getByRole("button", { name: /Cover/i }).click();
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "register_policy"');
+  await expect(page.locator("#trade-preview")).not.toContainText('"policy_id"');
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  expect(callRequests.at(-1).payload).toEqual({
+    lower_bound: "9000",
+    upper_bound: "11000",
+    payout_amount: "260",
+    monitoring_window_slots: "3",
+    required_observations: "2",
+    covered_notional: "1100",
+    premium_paid: "32",
+  });
+
+  await page.locator("#trade-mode-bar").getByRole("button", { name: /^Claim$/i }).click();
+  await submitTraderAction(page);
+  await expect(page.locator("#trade-result")).toContainText("committed");
+  expect(callRequests.at(-1).payload).toEqual({ policy_id: "5" });
 
   await page.locator("#module-grid").getByRole("button", { name: /Intents/i }).click();
   await page.locator("#trade-mode-bar").getByRole("button", { name: /^Fill$/i }).click();
@@ -450,9 +622,18 @@ test("renders the trader cockpit and submits a routed swap through the real Pyth
   await page.locator("#module-grid").getByRole("button", { name: /DLMM Hooks/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "place_limit_order"');
   await page.locator("#trade-mode-bar").getByRole("button", { name: /^TWAMM$/i }).click();
-  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "schedule_twamm_v2"');
+  await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "schedule_twamm"');
   await submitTraderAction(page);
   await expect(page.locator("#trade-result")).toContainText("committed");
+  expect(callRequests.at(-1).payload).toEqual({
+    order_id: "twamm-1",
+    input_is_base: "1",
+    total_in: "1000",
+    slice_in: "100",
+    min_total_out: "950",
+    interval_slots: "2",
+    start_slot: "1",
+  });
   await page.locator("#trade-mode-bar").getByRole("button", { name: /^Claim TWAMM$/i }).click();
   await expect(page.locator("#trade-preview")).toContainText('"entrypoint": "claim_twamm"');
 });

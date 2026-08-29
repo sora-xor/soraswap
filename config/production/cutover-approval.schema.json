@@ -50,7 +50,7 @@
     "bindings": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["chain_fingerprint", "soraswap_git_sha", "soraswap_tree_sha", "soraswap_source_sha256", "iroha_git_sha", "bundle_name", "checksums_sha256", "manifest_sha256", "irohad_sha256", "iroha_sha256", "kagami_sha256", "archive_sha256", "archive_sidecar_sha256", "irohad_features"],
+      "required": ["chain_fingerprint", "soraswap_git_sha", "soraswap_tree_sha", "soraswap_source_sha256", "iroha_git_sha", "bundle_name", "checksums_sha256", "manifest_sha256", "iroha3d_sha256", "iroha_sha256", "kagami_sha256", "archive_sha256", "archive_sidecar_sha256", "iroha3d_features"],
       "properties": {
         "chain_fingerprint": {
           "type": "object",
@@ -69,12 +69,12 @@
         "bundle_name": {"type": "string", "pattern": "^taira-rollout-[A-Za-z0-9._-]+-release$"},
         "checksums_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "irohad_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "iroha3d_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "iroha_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "kagami_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "archive_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "archive_sidecar_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "irohad_features": {"const": ["embedded-soracloud-runtime", "sccp-test-fixtures"]}
+        "iroha3d_features": {"const": ["embedded-soracloud-runtime", "sccp-test-fixtures"]}
       }
     },
     "authorities": {
@@ -112,7 +112,6 @@
         "maximum_monitoring_sample_age_seconds",
         "validator_count",
         "validator_set_sha256",
-        "maximum_canonical_lead",
         "maximum_finality_age_ms",
         "maximum_oracle_age_seconds",
         "oracle_watch_sha256",
@@ -130,7 +129,6 @@
         "maximum_monitoring_sample_age_seconds": {"const": 30},
         "validator_count": {"type": "integer", "minimum": 4},
         "validator_set_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "maximum_canonical_lead": {"const": 1},
         "maximum_finality_age_ms": {"const": 30000},
         "maximum_oracle_age_seconds": {"type": "integer", "minimum": 1, "maximum": 300},
         "oracle_watch_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},

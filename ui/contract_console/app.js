@@ -5,6 +5,9 @@ const DEFAULT_TRANSACTION_POLL_TIMEOUT_MS = 5 * 60 * 1000;
 const TRANSACTION_TIMEOUT_STATUS = "TimedOut";
 const SUCCESS_STATUSES = new Set(["Approved", "Committed", "Applied"]);
 const FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
+const TAIRA_XOR_ALIAS = "xor#universal";
+const TAIRA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const TAIRA_XOR_SCALE = 9;
 const STORAGE_KEYS = {
   recentRequests: "soraswap.contractConsole.recentRequests.v1",
   transactionStatuses: "soraswap.contractConsole.transactionStatuses.v1",
@@ -20,7 +23,10 @@ const state = {
   filteredContracts: [],
   currentContract: null,
   currentEntrypoint: null,
+  readIdentity: null,
   bridgeSnapshot: null,
+  bridgeAssetDefinition: null,
+  bridgeAssetResolutionTimer: null,
   sccpCapabilities: null,
   sccpRegistry: null,
   proofLookup: {
@@ -89,9 +95,7 @@ const copyBridgeSnapshotButton = document.querySelector("#copy-bridge-snapshot")
 const bridgeTemplateButtons = Array.from(document.querySelectorAll("[data-bridge-template]"));
 const bridgeActionSelect = document.querySelector("#bridge-action-select");
 const bridgeAssetDefinitionInput = document.querySelector("#bridge-asset-definition-input");
-const bridgeLocalAssetInput = document.querySelector("#bridge-local-asset-input");
 const bridgeVaultAccountInput = document.querySelector("#bridge-vault-account-input");
-const bridgeRegistrantInput = document.querySelector("#bridge-registrant-input");
 const bridgeRecipientInput = document.querySelector("#bridge-recipient-input");
 const bridgeHomeDomainInput = document.querySelector("#bridge-home-domain-input");
 const bridgeRemoteDomainInput = document.querySelector("#bridge-remote-domain-input");
@@ -295,6 +299,8 @@ function collectGenericPayloadWarnings(payload) {
     if (typeof value === "string") {
       if (value.trim() === "") {
         blankStrings.push(label);
+      } else if (value === "0") {
+        zeroNumbers.push(label);
       }
       return;
     }
@@ -360,8 +366,8 @@ function inferDefaultValue(typeName) {
   if (!type) {
     return "";
   }
-  if (type.includes("int") || type.includes("u32") || type.includes("u64") || type.includes("i32") || type.includes("i64")) {
-    return 0;
+  if (["int", "quantity", "decimal"].includes(type)) {
+    return "0";
   }
   if (type.includes("bool")) {
     return false;
@@ -373,6 +379,51 @@ function inferDefaultValue(typeName) {
     return {};
   }
   return "";
+}
+
+function canonicalIntegerArgument(value) {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? String(value) : null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!/^-?\d+$/.test(trimmed)) {
+    return null;
+  }
+  try {
+    return BigInt(trimmed).toString();
+  } catch (_error) {
+    return null;
+  }
+}
+
+function integerArgumentAtLeast(value, minimum) {
+  return value !== null && BigInt(value) >= BigInt(minimum);
+}
+
+function canonicalQuantityArgument(value) {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    value = String(value);
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (!match || match[1] === "-") {
+    return null;
+  }
+  const integer = BigInt(match[2]).toString();
+  const fraction = (match[3] || "").replace(/0+$/, "");
+  return `${integer}${fraction ? `.${fraction}` : ""}`;
+}
+
+function isPositiveQuantityArgument(value) {
+  return value !== null && value !== "0";
 }
 
 function buildPayloadTemplate(entrypoint) {
@@ -433,6 +484,185 @@ function currentAuthority() {
   return authorityInput.value.trim() || state.currentEnvironment?.signer?.authority || "";
 }
 
+function currentReadIdentity() {
+  const environment = requestEnvironmentName();
+  const authority = currentAuthority();
+  return environment && authority ? `${environment}\u0000${authority}` : "";
+}
+
+function clearRemoteReadCaches() {
+  state.bridgeSnapshot = null;
+  state.bridgeAssetDefinition = null;
+  state.sccpCapabilities = null;
+  state.sccpRegistry = null;
+  state.proofLookup = {
+    bundle: null,
+    proofRequest: null,
+  };
+  state.remoteTransactionHistory = null;
+  bridgeDecimalsInput.value = "";
+}
+
+function synchronizeReadIdentity() {
+  const nextIdentity = currentReadIdentity();
+  if (state.readIdentity === nextIdentity) {
+    return nextIdentity;
+  }
+  state.readIdentity = nextIdentity;
+  clearRemoteReadCaches();
+  return nextIdentity;
+}
+
+function isCurrentReadIdentity(identity) {
+  return identity === currentReadIdentity();
+}
+
+function isCompleteProxyRead(response, result) {
+  return Boolean(response?.ok) && result?.ok === true;
+}
+
+function requireCompleteProxyRead(response, result, label) {
+  if (isCompleteProxyRead(response, result)) {
+    return result;
+  }
+  throw new Error(
+    result?.error
+      || result?.response_json?.error
+      || result?.response_text
+      || `${label} returned an incomplete response.`,
+  );
+}
+
+function isExplicitRemoteHistoryUnavailable(response, result) {
+  if (
+    !response?.ok
+    || !result
+    || typeof result !== "object"
+    || Array.isArray(result)
+    || result.ok !== false
+    || result.available !== false
+    || result.supported !== false
+    || !Number.isSafeInteger(result.upstream_status)
+    || result.upstream_status < 400
+    || result.upstream_status > 599
+    || typeof result.unsupported_reason !== "string"
+    || !result.unsupported_reason.trim()
+  ) {
+    return false;
+  }
+  return result.error_code == null || result.error_code === result.unsupported_reason;
+}
+
+function validateAssetDefinitionScale(result, selector) {
+  const definition = result?.response_json;
+  if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
+    throw new Error("Asset definition response_json must be an object.");
+  }
+  const spec = definition.spec;
+  if (
+    !spec
+    || typeof spec !== "object"
+    || Array.isArray(spec)
+    || Object.keys(spec).length !== 1
+    || !Object.prototype.hasOwnProperty.call(spec, "scale")
+    || !Number.isInteger(spec.scale)
+    || spec.scale < 0
+    || spec.scale > 28
+  ) {
+    throw new Error("Asset definition spec.scale must be the exact JSON integer from 0 through 28.");
+  }
+  if (selector.includes("#")) {
+    if (definition.alias !== selector) {
+      throw new Error("Asset definition response is not bound to the requested alias.");
+    }
+    const binding = definition.alias_binding;
+    if (
+      !binding
+      || typeof binding !== "object"
+      || Array.isArray(binding)
+      || binding.alias !== selector
+      || !["permanent", "leased_active"].includes(binding.status)
+    ) {
+      throw new Error("Asset definition alias binding is not active for the requested alias.");
+    }
+    if (
+      selector === TAIRA_XOR_ALIAS
+      && (
+        definition.id !== TAIRA_XOR_ASSET_DEFINITION_ID
+        || binding.status !== "permanent"
+        || spec.scale !== TAIRA_XOR_SCALE
+      )
+    ) {
+      throw new Error("Taira XOR must resolve to its exact permanent asset definition with scale 9.");
+    }
+  } else if (definition.id !== selector) {
+    throw new Error("Asset definition response id does not match the requested selector.");
+  }
+  return {
+    selector,
+    id: definition.id,
+    alias: definition.alias || null,
+    scale: spec.scale,
+  };
+}
+
+async function resolveBridgeAssetDefinition({ silent = false } = {}) {
+  const environment = requestEnvironmentName();
+  const selector = bridgeAssetDefinitionInput.value.trim();
+  const identity = synchronizeReadIdentity();
+  if (!environment || !identity || !selector) {
+    if (state.bridgeAssetDefinition?.selector !== selector) {
+      state.bridgeAssetDefinition = null;
+      bridgeDecimalsInput.value = "";
+    }
+    return null;
+  }
+
+  const cached = state.bridgeAssetDefinition;
+  if (cached?.identity === identity && cached.selector === selector) {
+    bridgeDecimalsInput.value = String(cached.scale);
+    return cached;
+  }
+
+  if (cached?.selector !== selector || cached?.identity !== identity) {
+    state.bridgeAssetDefinition = null;
+    bridgeDecimalsInput.value = "";
+  }
+  if (!silent) {
+    setBanner(bridgeValidationSummary, `Resolving ${selector} from ${environment}...`, "muted");
+  }
+
+  const { response, result } = await requestJson(
+    `/api/assets/definitions/${encodeURIComponent(selector)}?${new URLSearchParams({ environment }).toString()}`,
+  );
+  requireCompleteProxyRead(response, result, "Asset definition lookup");
+  const resolution = validateAssetDefinitionScale(result, selector);
+  if (!isCurrentReadIdentity(identity) || bridgeAssetDefinitionInput.value.trim() !== selector) {
+    return null;
+  }
+  state.bridgeAssetDefinition = { ...resolution, identity };
+  bridgeDecimalsInput.value = String(resolution.scale);
+  renderBridgeActionSummary();
+  return state.bridgeAssetDefinition;
+}
+
+function queueBridgeAssetDefinitionResolution() {
+  if (state.bridgeAssetResolutionTimer) {
+    window.clearTimeout(state.bridgeAssetResolutionTimer);
+  }
+  const selector = bridgeAssetDefinitionInput.value.trim();
+  if (state.bridgeAssetDefinition?.selector !== selector) {
+    state.bridgeAssetDefinition = null;
+    bridgeDecimalsInput.value = "";
+  }
+  state.bridgeAssetResolutionTimer = window.setTimeout(() => {
+    state.bridgeAssetResolutionTimer = null;
+    resolveBridgeAssetDefinition({ silent: true }).catch((error) => {
+      setBanner(bridgeValidationSummary, `Asset definition lookup failed: ${error.message || error}`, "error");
+    });
+  }, 200);
+}
+
 function bridgeWorkspaceValues() {
   return {
     assetKey: bridgeAssetKeyInput.value.trim(),
@@ -441,14 +671,15 @@ function bridgeWorkspaceValues() {
     messageId: bridgeMessageIdInput.value.trim(),
     action: bridgeActionSelect.value,
     assetDefinition: bridgeAssetDefinitionInput.value.trim(),
-    localAsset: bridgeLocalAssetInput.value.trim(),
     vaultAccount: bridgeVaultAccountInput.value.trim(),
-    registrant: bridgeRegistrantInput.value.trim(),
     recipient: bridgeRecipientInput.value.trim(),
-    homeDomain: Number(bridgeHomeDomainInput.value || 0),
-    remoteDomain: Number(bridgeRemoteDomainInput.value || 0),
-    decimals: Number(bridgeDecimalsInput.value || 0),
-    amount: Number(bridgeAmountInput.value || 0),
+    homeDomain: canonicalIntegerArgument(bridgeHomeDomainInput.value),
+    remoteDomain: canonicalIntegerArgument(bridgeRemoteDomainInput.value),
+    decimals: state.bridgeAssetDefinition?.identity === currentReadIdentity()
+      && state.bridgeAssetDefinition?.selector === bridgeAssetDefinitionInput.value.trim()
+      ? String(state.bridgeAssetDefinition.scale)
+      : null,
+    amount: canonicalQuantityArgument(bridgeAmountInput.value),
   };
 }
 
@@ -654,6 +885,7 @@ function selectEntrypointByName(entrypointName) {
 }
 
 function renderEnvironmentOptions() {
+  const preferredEnvironment = state.currentEnvironment?.name || environmentSelect.value;
   environmentSelect.innerHTML = "";
   for (const environment of state.environments) {
     const option = document.createElement("option");
@@ -661,7 +893,9 @@ function renderEnvironmentOptions() {
     option.textContent = `${environment.name} (${environment.contracts.length})`;
     environmentSelect.append(option);
   }
-  if (state.environments.length && !environmentSelect.value) {
+  if (preferredEnvironment && state.environments.some((environment) => environment.name === preferredEnvironment)) {
+    environmentSelect.value = preferredEnvironment;
+  } else if (state.environments.length) {
     environmentSelect.value = state.environments[0].name;
   }
 }
@@ -726,7 +960,10 @@ function applyContractFilter() {
 function renderContractMeta() {
   const contract = state.currentContract;
   contractAddressDisplay.textContent = contract?.contract_address || "-";
-  contractDataspaceDisplay.textContent = contract?.dataspace || "-";
+  contractDataspaceDisplay.textContent =
+    contract?.dataspace_alias && contract?.dataspace_id
+      ? `${contract.dataspace_alias} (${contract.dataspace_id})`
+      : "-";
   contractDeployNonceDisplay.textContent = contract?.deploy_nonce ?? "-";
   contractVerificationDisplay.textContent = contract?.verification || "-";
   contractSourceDisplay.textContent = contract?.contract_source || "-";
@@ -911,18 +1148,33 @@ function validateBridgeAction() {
   let counterparty = null;
 
   switch (values.action) {
-    case "register_asset":
-      if (!values.assetKey) errors.push("Asset Key is required for register_asset.");
-      if (!values.assetDefinition) errors.push("Asset Definition is required for register_asset.");
-      if (!(values.decimals >= 0)) errors.push("Decimals must be zero or greater.");
-      if (!values.registrant && !authority) warnings.push("Registrant will fall back to the current authority.");
+    case "register_bridge_asset":
+      if (!values.assetKey) errors.push("Asset Key is required for register_bridge_asset.");
+      if (!values.assetDefinition) errors.push("Asset Definition is required for register_bridge_asset.");
+      if (!integerArgumentAtLeast(values.homeDomain, 0)) errors.push("Home Domain must be a canonical non-negative integer string.");
+      if (
+        !state.bridgeAssetDefinition
+        || state.bridgeAssetDefinition.identity !== currentReadIdentity()
+        || state.bridgeAssetDefinition.selector !== values.assetDefinition
+        || values.decimals !== String(state.bridgeAssetDefinition.scale)
+      ) {
+        errors.push("Resolve the current Asset Definition before registering its exact scale.");
+      }
+      break;
+    case "bind_asset_vault":
+      if (!values.assetKey) errors.push("Asset Key is required for bind_asset_vault.");
+      if (!(values.vaultAccount || authority)) errors.push("Vault Account or Authority is required for bind_asset_vault.");
       break;
     case "activate_route":
+    case "activate_route_governed":
       if (!values.route) errors.push("Route is required for activate_route.");
       if (!values.assetKey) errors.push("Asset Key is required for activate_route.");
-      if (!(values.remoteDomain > 0)) errors.push("Remote Domain must be greater than zero for activate_route.");
-      if (!(values.localAsset || values.assetDefinition)) errors.push("Local Asset or Asset Definition is required for activate_route.");
-      if (!values.vaultAccount && !authority) warnings.push("Vault Account will fall back to the current authority.");
+      if (values.action === "activate_route_governed" && !values.messageId) {
+        errors.push("Inbound Message Id is required for activate_route_governed.");
+      }
+      if (!integerArgumentAtLeast(values.remoteDomain, 1)) {
+        errors.push("Remote Domain must be a canonical positive integer string for route activation.");
+      }
       counterparty = sccpCounterpartyForDomain(values.remoteDomain);
       break;
     case "pause_route":
@@ -932,8 +1184,12 @@ function validateBridgeAction() {
     case "lock_to_remote": {
       if (!values.route) errors.push("Route is required for lock_to_remote.");
       if (!values.transfer) errors.push("Transfer Id is required for lock_to_remote.");
-      if (!(values.amount > 0)) errors.push("Amount must be greater than zero for lock_to_remote.");
-      const remoteDomain = values.remoteDomain > 0 ? values.remoteDomain : deriveRouteRemoteDomain(values.route);
+      if (!isPositiveQuantityArgument(values.amount)) {
+        errors.push("Amount must be a canonical positive quantity string for lock_to_remote.");
+      }
+      const remoteDomain = integerArgumentAtLeast(values.remoteDomain, 1)
+        ? values.remoteDomain
+        : deriveRouteRemoteDomain(values.route);
       if (!remoteDomain) {
         warnings.push("Remote Domain is unknown; recipient validation will be skipped until SCCP discovery or a bridge snapshot resolves the route.");
       } else {
@@ -952,14 +1208,16 @@ function validateBridgeAction() {
     case "finalize_inbound":
       if (!values.route) errors.push("Route is required for finalize_inbound.");
       if (!values.messageId) errors.push("Inbound Message Id is required for finalize_inbound.");
-      if (!(values.amount > 0)) errors.push("Amount must be greater than zero for finalize_inbound.");
+      if (!isPositiveQuantityArgument(values.amount)) {
+        errors.push("Amount must be a canonical positive quantity string for finalize_inbound.");
+      }
       if (!(values.recipient || authority)) errors.push("Recipient or Authority is required for finalize_inbound.");
       break;
     default:
       warnings.push("Select a supported bridge action.");
   }
 
-  if (values.remoteDomain > 0 && !counterparty) {
+  if (integerArgumentAtLeast(values.remoteDomain, 1) && !counterparty) {
     counterparty = sccpCounterpartyForDomain(values.remoteDomain);
   }
 
@@ -969,8 +1227,10 @@ function validateBridgeAction() {
 function renderBridgeActionSummary() {
   const { values, warnings, counterparty } = validateBridgeAction();
   const summaries = {
-    register_asset: "register_asset uses Asset Key, Asset Definition, Registrant, Home Domain, and Decimals.",
-    activate_route: "activate_route uses Route, Asset Key, Remote Domain, Local Asset, and Vault Account.",
+    register_bridge_asset: "register_bridge_asset derives Decimals from the current Asset Definition; registrant is the current authority.",
+    bind_asset_vault: "bind_asset_vault binds Asset Key to Vault Account in a separate mutation.",
+    activate_route: "activate_route uses Route, Asset Key, and Remote Domain after the asset vault is bound.",
+    activate_route_governed: "activate_route_governed uses Inbound Message Id, Route, Asset Key, and Remote Domain.",
     pause_route: "pause_route only needs Route.",
     resume_route: "resume_route only needs Route.",
     lock_to_remote: "lock_to_remote uses Route, Transfer Id, Recipient, Amount, and current Authority as sender.",
@@ -1031,9 +1291,6 @@ function renderBridgeWorkspace() {
     return;
   }
 
-  if (!bridgeRegistrantInput.value.trim() && authority) {
-    bridgeRegistrantInput.value = authority;
-  }
   if (!bridgeVaultAccountInput.value.trim() && authority) {
     bridgeVaultAccountInput.value = authority;
   }
@@ -1079,6 +1336,7 @@ function renderSelectionState() {
   renderEntrypointMeta();
 
   authorityInput.value = authorityInput.value || state.currentEnvironment?.signer?.authority || "";
+  synchronizeReadIdentity();
   renderBridgeWorkspace();
   renderProofLookupHistory();
   renderTransactionTracker();
@@ -1117,15 +1375,22 @@ function bridgeTemplatePayload(templateName) {
   const values = bridgeWorkspaceValues();
   const authority = currentAuthority();
   switch (templateName) {
-    case "register_asset":
+    case "register_bridge_asset":
       return {
-        entrypoint: "register_asset",
+        entrypoint: "register_bridge_asset",
         payload: {
           asset_key: values.assetKey,
-          registrant: authority,
-          asset: "",
-          home_domain: 0,
-          decimals: 18,
+          asset: values.assetDefinition,
+          home_domain: "0",
+          decimals: values.decimals,
+        },
+      };
+    case "bind_asset_vault":
+      return {
+        entrypoint: "bind_asset_vault",
+        payload: {
+          asset_key: values.assetKey,
+          vault_account: authority,
         },
       };
     case "activate_route":
@@ -1134,9 +1399,17 @@ function bridgeTemplatePayload(templateName) {
         payload: {
           route: values.route,
           asset_key: values.assetKey,
-          remote_domain: 0,
-          local_asset: "",
-          vault_account: authority,
+          remote_domain: "0",
+        },
+      };
+    case "activate_route_governed":
+      return {
+        entrypoint: "activate_route_governed",
+        payload: {
+          message_id: values.messageId,
+          route: values.route,
+          asset_key: values.assetKey,
+          remote_domain: "0",
         },
       };
     case "pause_route":
@@ -1159,9 +1432,8 @@ function bridgeTemplatePayload(templateName) {
         payload: {
           route: values.route,
           transfer: values.transfer,
-          sender: authority,
           recipient: "",
-          amount: 0,
+          amount: "0",
         },
       };
     case "finalize_inbound":
@@ -1171,7 +1443,7 @@ function bridgeTemplatePayload(templateName) {
           route: values.route,
           message_id: values.messageId,
           recipient: authority,
-          amount: 0,
+          amount: "0",
         },
       };
     default:
@@ -1182,15 +1454,22 @@ function bridgeTemplatePayload(templateName) {
 function buildBridgeAction(templateName) {
   const { values, authority } = validateBridgeAction();
   switch (templateName) {
-    case "register_asset":
+    case "register_bridge_asset":
       return {
-        entrypoint: "register_asset",
+        entrypoint: "register_bridge_asset",
         payload: {
           asset_key: values.assetKey,
-          registrant: values.registrant || authority,
           asset: values.assetDefinition,
           home_domain: values.homeDomain,
           decimals: values.decimals,
+        },
+      };
+    case "bind_asset_vault":
+      return {
+        entrypoint: "bind_asset_vault",
+        payload: {
+          asset_key: values.assetKey,
+          vault_account: values.vaultAccount || authority,
         },
       };
     case "activate_route":
@@ -1200,8 +1479,16 @@ function buildBridgeAction(templateName) {
           route: values.route,
           asset_key: values.assetKey,
           remote_domain: values.remoteDomain,
-          local_asset: values.localAsset || values.assetDefinition,
-          vault_account: values.vaultAccount || authority,
+        },
+      };
+    case "activate_route_governed":
+      return {
+        entrypoint: "activate_route_governed",
+        payload: {
+          message_id: values.messageId,
+          route: values.route,
+          asset_key: values.assetKey,
+          remote_domain: values.remoteDomain,
         },
       };
     case "pause_route":
@@ -1224,7 +1511,6 @@ function buildBridgeAction(templateName) {
         payload: {
           route: values.route,
           transfer: values.transfer,
-          sender: authority,
           recipient: values.recipient,
           amount: values.amount,
         },
@@ -1270,13 +1556,21 @@ function applyBridgeTemplate(templateName) {
   );
 }
 
-function buildBridgeRequestFromForm() {
+async function buildBridgeRequestFromForm() {
   const bridgeContract = bridgeContractForEnvironment(state.currentEnvironment);
   if (!bridgeContract) {
     setBanner(bridgeSummary, "No bridge contract is deployed in the selected environment.", "error");
     return;
   }
 
+  if (bridgeActionSelect.value === "register_bridge_asset") {
+    try {
+      await resolveBridgeAssetDefinition();
+    } catch (error) {
+      setBanner(bridgeValidationSummary, `Asset definition lookup failed: ${error.message || error}`, "error");
+      return;
+    }
+  }
   const validation = validateBridgeAction();
   if (validation.errors.length) {
     setBanner(bridgeValidationSummary, validation.errors.join(" | "), "error");
@@ -1347,16 +1641,12 @@ function updateTrackedStatus(txHashHex, patch) {
 }
 
 function statusKindFromTracker(tracker) {
-  return tracker?.statusKind || tracker?.status_kind || null;
+  return tracker?.statusKind || null;
 }
 
 function statusKindFromResponse(result) {
   if (typeof result?.status_kind === "string" && result.status_kind) {
     return result.status_kind;
-  }
-  const direct = result?.response_json?.status;
-  if (direct && typeof direct === "object" && typeof direct.kind === "string") {
-    return direct.kind;
   }
   if (result?.upstream_status === 404) {
     return "NotFound";
@@ -1440,7 +1730,7 @@ async function pollTransactionStatus(txHashHex, { immediate = false } = {}) {
       const query = new URLSearchParams({
         environment: current.environment,
         hash: txHashHex,
-        scope: current.scope || "auto",
+        scope: "global",
       });
       const { result } = await requestJson(`/api/pipeline/transactions/status?${query.toString()}`);
       const statusKind = statusKindFromResponse(result) || current.statusKind || "Queued";
@@ -1448,7 +1738,6 @@ async function pollTransactionStatus(txHashHex, { immediate = false } = {}) {
       updateTrackedStatus(txHashHex, {
         statusKind,
         statusPayload: result,
-        rejectionReason: result.rejection_reason || current.rejectionReason || null,
         trackingStartedAtMs: startedAtMs,
         timeoutAtMs,
         lastUpdatedAtMs: Date.now(),
@@ -1505,7 +1794,7 @@ function enqueueTransactionTracking(record, result) {
     environment: record.environment,
     actionType: record.actionType,
     bridgeRelated: record.bridgeRelated,
-    scope: "auto",
+    scope: "global",
     statusKind: statusKindFromResponse(result) || "Queued",
     statusPayload: result,
     trackingStartedAtMs: startedAtMs,
@@ -1583,25 +1872,16 @@ function renderTransactionTracker() {
         line.textContent = lineText;
         meta.append(line);
       }
-      if (tracker?.rejectionReason) {
+      if (Number.isSafeInteger(tracker?.statusPayload?.status_block_height)) {
         const line = document.createElement("div");
         line.className = "record-line";
-        const rejectionText = typeof tracker.rejectionReason === "string"
-          ? tracker.rejectionReason
-          : JSON.stringify(tracker.rejectionReason);
-        line.textContent = `Rejection: ${rejectionText}`;
+        line.textContent = `Committed block: ${tracker.statusPayload.status_block_height}`;
         meta.append(line);
       }
-      if (tracker?.statusPayload?.status_summary) {
+      if (typeof tracker?.statusPayload?.status_resolved_from === "string") {
         const line = document.createElement("div");
         line.className = "record-line";
-        line.textContent = `Status: ${tracker.statusPayload.status_summary}`;
-        meta.append(line);
-      }
-      if (Array.isArray(tracker?.statusPayload?.status_diagnostics) && tracker.statusPayload.status_diagnostics.length) {
-        const line = document.createElement("div");
-        line.className = "record-line";
-        line.textContent = `Diagnostics: ${JSON.stringify(tracker.statusPayload.status_diagnostics)}`;
+        line.textContent = `Resolved from: ${tracker.statusPayload.status_resolved_from}`;
         meta.append(line);
       }
       if (tracker?.statusKind === TRANSACTION_TIMEOUT_STATUS) {
@@ -1626,8 +1906,8 @@ function renderTransactionTracker() {
 
 async function refreshRemoteTransactionHistory({ silent = false } = {}) {
   const environment = requestEnvironmentName();
+  const identity = synchronizeReadIdentity();
   if (!environment) {
-    state.remoteTransactionHistory = null;
     renderTransactionTracker();
     return;
   }
@@ -1639,17 +1919,20 @@ async function refreshRemoteTransactionHistory({ silent = false } = {}) {
     limit: "10",
   });
   try {
-    const { result } = await requestJson(`/api/transactions/history?${query.toString()}`);
+    const { response, result } = await requestJson(`/api/transactions/history?${query.toString()}`);
+    if (!isExplicitRemoteHistoryUnavailable(response, result)) {
+      requireCompleteProxyRead(response, result, "Remote transaction history");
+    }
+    if (!isCurrentReadIdentity(identity)) {
+      return;
+    }
     state.remoteTransactionHistory = result;
     renderTransactionTracker();
   } catch (error) {
-    state.remoteTransactionHistory = {
-      ok: false,
-      available: false,
-      supported: false,
-      error: String(error),
-    };
     renderTransactionTracker();
+    if (!silent) {
+      setBanner(transactionSummary, `Remote history refresh failed; retaining the last complete result: ${error.message || error}`, "warning");
+    }
   }
 }
 
@@ -1770,6 +2053,7 @@ async function refreshBridgeSnapshot({ silent = false } = {}) {
     setBanner(bridgeSummary, "Set an authority before requesting a bridge snapshot.", "error");
     return;
   }
+  const identity = synchronizeReadIdentity();
 
   const requestBody = {
     environment: environment.name,
@@ -1781,7 +2065,9 @@ async function refreshBridgeSnapshot({ silent = false } = {}) {
     message_id: bridgeMessageIdInput.value.trim() || undefined,
   };
 
-  bridgeSnapshotPreview.textContent = prettyJson(requestBody);
+  if (!state.bridgeSnapshot) {
+    bridgeSnapshotPreview.textContent = prettyJson(requestBody);
+  }
   if (!silent) {
     setBanner(bridgeSummary, "Refreshing bridge snapshot...", "muted");
   }
@@ -1793,17 +2079,10 @@ async function refreshBridgeSnapshot({ silent = false } = {}) {
       },
       body: JSON.stringify(requestBody),
     });
+    requireCompleteProxyRead(response, result, "Bridge snapshot");
+    if (!isCurrentReadIdentity(identity)) return;
     state.bridgeSnapshot = result;
     bridgeSnapshotPreview.textContent = prettyJson(result);
-
-    if (!response.ok || !result.ok) {
-      setBanner(
-        bridgeSummary,
-        `Bridge snapshot failed${result.error ? `: ${result.error}` : "."}`,
-        "error"
-      );
-      return;
-    }
 
     bookmarkCurrentBridgeValues();
     setBanner(
@@ -1812,11 +2091,8 @@ async function refreshBridgeSnapshot({ silent = false } = {}) {
       "success"
     );
   } catch (error) {
-    bridgeSnapshotPreview.textContent = prettyJson({
-      ok: false,
-      error: String(error),
-    });
-    setBanner(bridgeSummary, `Bridge snapshot failed: ${error}`, "error");
+    bridgeSnapshotPreview.textContent = prettyJson(state.bridgeSnapshot || {});
+    setBanner(bridgeSummary, `Bridge snapshot failed; retaining the last complete result: ${error.message || error}`, "warning");
   }
 }
 
@@ -1882,9 +2158,8 @@ function renderSccpDiscovery() {
 
 async function refreshSccpDiscovery({ silent = false } = {}) {
   const environment = requestEnvironmentName();
+  const identity = synchronizeReadIdentity();
   if (!environment) {
-    state.sccpCapabilities = null;
-    state.sccpRegistry = null;
     renderSccpDiscovery();
     return;
   }
@@ -1897,14 +2172,18 @@ async function refreshSccpDiscovery({ silent = false } = {}) {
       requestJson(`/api/sccp/capabilities?${query.toString()}`),
       requestJson(`/api/sccp/registry?${query.toString()}`),
     ]);
+    requireCompleteProxyRead(capabilitiesResponse.response, capabilitiesResponse.result, "SCCP capabilities");
+    requireCompleteProxyRead(registryResponse.response, registryResponse.result, "SCCP registry");
+    if (!isCurrentReadIdentity(identity)) return;
     state.sccpCapabilities = capabilitiesResponse.result;
     state.sccpRegistry = registryResponse.result;
     renderSccpDiscovery();
     renderBridgeWorkspace();
   } catch (error) {
-    state.sccpCapabilities = { ok: false, error: String(error) };
-    state.sccpRegistry = { ok: false, error: String(error) };
     renderSccpDiscovery();
+    if (!silent) {
+      setBanner(proofStatusSummary, `SCCP discovery refresh failed; retaining the last complete result: ${error.message || error}`, "warning");
+    }
   }
 }
 
@@ -1964,14 +2243,15 @@ async function lookupSccpResource(kind) {
     proofRequest: `/api/sccp/proof-requests/${messageId}`,
   };
   const query = new URLSearchParams({ environment });
+  const identity = synchronizeReadIdentity();
   setBanner(proofLookupSummary, `Loading ${kind}...`, "muted");
-  const { result } = await requestJson(`${pathMap[kind]}?${query.toString()}`);
+  const { response, result } = await requestJson(`${pathMap[kind]}?${query.toString()}`);
+  requireCompleteProxyRead(response, result, `SCCP ${kind}`);
+  if (!isCurrentReadIdentity(identity)) return;
   state.proofLookup[kind] = result;
-  if (result.ok) {
-    upsertBookmark("messageIds", messageId);
-    rememberProofLookup(messageId, [kind]);
-    renderBridgeBookmarks();
-  }
+  upsertBookmark("messageIds", messageId);
+  rememberProofLookup(messageId, [kind]);
+  renderBridgeBookmarks();
   renderProofLookupResults();
 }
 
@@ -1983,18 +2263,20 @@ async function lookupAllSccpResources() {
     return;
   }
   setBanner(proofLookupSummary, "Loading canonical bundle and proof request...", "muted");
+  const identity = synchronizeReadIdentity();
   const query = new URLSearchParams({ environment });
   const [bundle, proofRequest] = await Promise.all([
     requestJson(`/api/sccp/proofs/message/${messageId}?${query.toString()}`),
     requestJson(`/api/sccp/proof-requests/${messageId}?${query.toString()}`),
   ]);
+  requireCompleteProxyRead(bundle.response, bundle.result, "SCCP bundle");
+  requireCompleteProxyRead(proofRequest.response, proofRequest.result, "SCCP proof request");
+  if (!isCurrentReadIdentity(identity)) return;
   state.proofLookup.bundle = bundle.result;
   state.proofLookup.proofRequest = proofRequest.result;
-  if (bundle.result.ok || proofRequest.result.ok) {
-    upsertBookmark("messageIds", messageId);
-    rememberProofLookup(messageId, ["bundle", "proofRequest"]);
-    renderBridgeBookmarks();
-  }
+  upsertBookmark("messageIds", messageId);
+  rememberProofLookup(messageId, ["bundle", "proofRequest"]);
+  renderBridgeBookmarks();
   renderProofLookupResults();
 }
 
@@ -2083,13 +2365,7 @@ async function fetchCatalog() {
   initializeEditors();
   requestPreview.textContent = prettyJson({});
   responsePreview.textContent = prettyJson({});
-  bridgeSnapshotPreview.textContent = prettyJson({});
-  state.bridgeSnapshot = null;
-  state.proofLookup = {
-    bundle: null,
-    artifact: null,
-    job: null,
-  };
+  bridgeSnapshotPreview.textContent = prettyJson(state.bridgeSnapshot || {});
   renderProofLookupResults();
   await Promise.all([
     refreshRemoteTransactionHistory({ silent: true }),
@@ -2168,13 +2444,6 @@ function resumeTrackedTransactions() {
 
 environmentSelect.addEventListener("change", async () => {
   authorityInput.value = "";
-  state.bridgeSnapshot = null;
-  state.remoteTransactionHistory = null;
-  state.proofLookup = {
-    bundle: null,
-    artifact: null,
-    job: null,
-  };
   renderSelectionState();
   renderProofLookupResults();
   initializeEditors();
@@ -2204,20 +2473,25 @@ entrypointSelect.addEventListener("change", () => {
 });
 
 authorityInput.addEventListener("input", () => {
+  synchronizeReadIdentity();
+  bridgeSnapshotPreview.textContent = prettyJson(state.bridgeSnapshot || {});
+  renderSccpDiscovery();
+  renderProofLookupResults();
+  renderTransactionTracker();
+  queueBridgeAssetDefinitionResolution();
   renderBridgeWorkspace();
 });
 
 bridgeActionSelect.addEventListener("change", renderBridgeWorkspace);
+
+bridgeAssetDefinitionInput.addEventListener("input", queueBridgeAssetDefinitionResolution);
 
 [
   bridgeAssetKeyInput,
   bridgeRouteInput,
   bridgeTransferInput,
   bridgeMessageIdInput,
-  bridgeAssetDefinitionInput,
-  bridgeLocalAssetInput,
   bridgeVaultAccountInput,
-  bridgeRegistrantInput,
   bridgeRecipientInput,
   bridgeHomeDomainInput,
   bridgeRemoteDomainInput,

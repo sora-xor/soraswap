@@ -24,6 +24,131 @@ sys.modules[MODULE_NAME] = contract_console
 assert spec.loader is not None
 spec.loader.exec_module(contract_console)
 
+TAIRA_NETWORK_ID = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
+PRODUCTION_NETWORK_ID = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
+
+
+def canonical_hash_literal(raw_hash: str) -> str:
+    body = raw_hash.upper()
+    return f"hash:{body}#{contract_console.iroha_literal_crc16('hash', body):04X}"
+
+
+def current_deploy_response(
+    *,
+    contract_address: str,
+    contract_alias: str,
+    dataspace_id: str,
+    deploy_nonce: int,
+    code_hash_hex: str,
+    chain_id: str,
+    torii_url: str,
+) -> dict[str, object]:
+    commit_hash_hex = "a" * 64
+    commit_hash = canonical_hash_literal(commit_hash_hex)
+    authority = "0x02000120" + "b" * 64
+    deployment_state: dict[str, object] = {
+        "authority": authority,
+        "contract_alias": contract_alias,
+        "deploy_nonce": str(deploy_nonce),
+        "dataspace_alias": "universal",
+        "dataspace_id": dataspace_id,
+        "previous_contract_address": None,
+        "observed_block_height": "1",
+        "observed_block_hash": "f" * 64,
+        "ledger_time_ms": "1000",
+        "chain_discriminant": "0",
+    }
+    fee_quotes: list[object] = []
+    operation_receipt = {
+        "operation_kind": "contract_deploy",
+        "status": "committed",
+        "transport": "ivm-contract-deploy-helper",
+        "torii_url": torii_url,
+        "chain_id": chain_id,
+        "authority": authority,
+        "chain_discriminant": 0,
+        "dataspace": dataspace_id,
+        "contract_alias": contract_alias,
+        "contract_address": contract_address,
+        "contract_subject_account": contract_address,
+        "code_hash_hex": code_hash_hex,
+        "abi_hash_hex": None,
+        "tx_hash_hex": commit_hash_hex,
+        "entrypoint": None,
+        "entrypoint_hash_hex": None,
+        "gas_limit": None,
+        "gas_used": None,
+        "fee_payment": {},
+        "fee_quotes": fee_quotes,
+        "payload_digest_hex": "e" * 64,
+        "deployment_state": deployment_state,
+    }
+    return {
+        "authority": authority,
+        "chain_discriminant": 0,
+        "chain_id": chain_id,
+        "code_hash_hex": code_hash_hex,
+        "commit_deployment_tx_hash": commit_hash,
+        "contract_address": contract_address,
+        "contract_alias": contract_alias,
+        "contract_subject_account": contract_address,
+        "dataspace": dataspace_id,
+        "deploy_nonce": deploy_nonce,
+        "deployment_state": deployment_state,
+        "expected_previous_contract_address": None,
+        "fee_quotes": fee_quotes,
+        "final": {"kind": "Committed", "hash": commit_hash},
+        "next_deploy_nonce": deploy_nonce + 1,
+        "ok": True,
+        "operation_receipt": operation_receipt,
+        "register_bytes_chunk_count": 1,
+        "register_bytes_chunk_size": 65_536,
+        "register_bytes_stage_tx_hashes": [],
+        "register_bytes_tx_hash": "c" * 64,
+        "register_bytes_tx_strategy": "native_chunks",
+        "register_manifest_tx_hash": canonical_hash_literal("d" * 64),
+        "submitted": True,
+        "terminal_kind": "Committed",
+        "torii_url": torii_url,
+    }
+
+
+def current_deployment_record(
+    *,
+    environment: str,
+    contract_address: str,
+    deploy_nonce: int,
+    chain_fingerprint: dict[str, object],
+) -> dict[str, object]:
+    contract_alias = "sccp_bridge::bridge.universal"
+    dataspace_alias = "universal"
+    dataspace_id = "0"
+    code_hash_hex = "1" * 64
+    return {
+        "contract_key": "bridge.sccp_bridge",
+        "generated_at": "20260406T000000Z",
+        "environment": environment,
+        "contract_source": "contracts/bridge/sccp_bridge.ko",
+        "contract_alias": contract_alias,
+        "dataspace_alias": dataspace_alias,
+        "dataspace_id": dataspace_id,
+        "contract_address": contract_address,
+        "deploy_nonce": deploy_nonce,
+        "code_hash_hex": code_hash_hex,
+        "abi_hash_hex": "2" * 64,
+        "deploy_strategy": "ivm_contract_deploy",
+        "chain_fingerprint": chain_fingerprint,
+        "response": current_deploy_response(
+            contract_address=contract_address,
+            contract_alias=contract_alias,
+            dataspace_id=dataspace_id,
+            deploy_nonce=deploy_nonce,
+            code_hash_hex=code_hash_hex,
+            chain_id=str(chain_fingerprint["chain"]),
+            torii_url=str(chain_fingerprint["torii_url"]),
+        ),
+    }
+
 
 def write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,11 +205,11 @@ def write_public_readiness_evidence(
             "warnings": [],
             "environment": {
                 "mutations_allowed": True,
-                "oracle_public_key_present": True,
-                "oracle_private_key_present": True,
-                "oracle_keypair_verified": True,
-                "oracle_public_key_source": "fixture",
-                "oracle_private_key_source": "fixture",
+                "oracle_client_config_present": True,
+                "oracle_client_config_valid": True,
+                "oracle_account_derivable": True,
+                "oracle_account_distinct": True,
+                "oracle_client_config_source": "fixture",
             },
             "endpoint": {
                 "mcp_http_status": "200",
@@ -181,24 +306,31 @@ class ContractConsoleFixture:
                     "block_1_hash": "block-1",
                 },
                 "contracts": [
-                    {
-                        "contract_key": "bridge.sccp_bridge",
-                        "environment": "testnet",
-                        "contract_source": "contracts/bridge/sccp_bridge.ko",
-                        "dataspace": "universal",
-                        "contract_address": "tairac1bridgefixture",
-                        "deploy_nonce": 11,
-                        "code_hash_hex": "1" * 64,
-                        "abi_hash_hex": "2" * 64,
-                        "instance": {
-                            "verification": "transaction_and_manifest",
-                            "tx_hash_hex": "deadbeef",
-                            "code_hash_hex": "1" * 64,
-                            "abi_hash_hex": "2" * 64,
+                    current_deployment_record(
+                        environment="testnet",
+                        contract_address="tairac1bridgefixture",
+                        deploy_nonce=11,
+                        chain_fingerprint={
+                            "torii_url": "https://taira.sora.org",
+                            "chain": "test-chain",
+                            "block_1_hash": "block-1",
                         },
-                    }
+                    )
                 ],
             },
+        )
+        write_json(
+            environment / "bridge.sccp_bridge.deploy.json",
+            current_deployment_record(
+                environment="testnet",
+                contract_address="tairac1bridgefixture",
+                deploy_nonce=11,
+                chain_fingerprint={
+                    "torii_url": "https://taira.sora.org",
+                    "chain": "test-chain",
+                    "block_1_hash": "block-1",
+                },
+            ),
         )
         write_json(
             environment / "bridge.sccp_bridge.manifest.json",
@@ -206,8 +338,8 @@ class ContractConsoleFixture:
                 "generated_at": "20260406T000200Z",
                 "environment": "testnet",
                 "contract_key": "bridge.sccp_bridge",
-                "code_hash": "hash:" + "1" * 64,
-                "abi_hash": "hash:" + "2" * 64,
+                "code_hash": canonical_hash_literal("1" * 64),
+                "abi_hash": canonical_hash_literal("2" * 64),
                 "entrypoints": [
                     {"name": "listing_config", "kind": {"kind": "View"}, "params": [], "return_type": "tuple"},
                     {
@@ -272,16 +404,15 @@ class ContractConsoleFixture:
                     },
                     {
                         "name": "lock_to_remote",
-                        "kind": {"kind": "Public"},
+                        "kind": {"kind": "Kotoage"},
                         "params": [
                             {"name": "route", "type_name": "Name"},
                             {"name": "transfer", "type_name": "Name"},
-                            {"name": "sender", "type_name": "AccountId"},
                             {"name": "recipient", "type_name": "Name"},
-                            {"name": "amount", "type_name": "int"},
+                            {"name": "amount", "type_name": "quantity"},
                         ],
                         "return_type": "int",
-                        "permission": "Admin",
+                        "permission": "AssetOps",
                     },
                 ]
             },
@@ -324,24 +455,31 @@ class ContractConsoleFixture:
                     "block_1_hash": f"{environment_name}-block-1",
                 },
                 "contracts": [
-                    {
-                        "contract_key": "bridge.sccp_bridge",
-                        "environment": environment_name,
-                        "contract_source": "contracts/bridge/sccp_bridge.ko",
-                        "dataspace": "universal",
-                        "contract_address": contract_address,
-                        "deploy_nonce": 11,
-                        "code_hash_hex": "1" * 64,
-                        "abi_hash_hex": "2" * 64,
-                        "instance": {
-                            "verification": "transaction_and_manifest",
-                            "tx_hash_hex": "deadbeef",
-                            "code_hash_hex": "1" * 64,
-                            "abi_hash_hex": "2" * 64,
+                    current_deployment_record(
+                        environment=environment_name,
+                        contract_address=contract_address,
+                        deploy_nonce=11,
+                        chain_fingerprint={
+                            "torii_url": torii_url,
+                            "chain": f"{environment_name}-chain",
+                            "block_1_hash": f"{environment_name}-block-1",
                         },
-                    }
+                    )
                 ],
             },
+        )
+        write_json(
+            environment / "bridge.sccp_bridge.deploy.json",
+            current_deployment_record(
+                environment=environment_name,
+                contract_address=contract_address,
+                deploy_nonce=11,
+                chain_fingerprint={
+                    "torii_url": torii_url,
+                    "chain": f"{environment_name}-chain",
+                    "block_1_hash": f"{environment_name}-block-1",
+                },
+            ),
         )
         write_json(
             environment / "bridge.sccp_bridge.manifest.json",
@@ -349,22 +487,21 @@ class ContractConsoleFixture:
                 "generated_at": "20260406T000200Z",
                 "environment": environment_name,
                 "contract_key": "bridge.sccp_bridge",
-                "code_hash": "hash:" + "1" * 64,
-                "abi_hash": "hash:" + "2" * 64,
+                "code_hash": canonical_hash_literal("1" * 64),
+                "abi_hash": canonical_hash_literal("2" * 64),
                 "entrypoints": [
                     {"name": "listing_config", "kind": {"kind": "View"}, "params": [], "return_type": "tuple"},
                     {
                         "name": "lock_to_remote",
-                        "kind": {"kind": "Public"},
+                        "kind": {"kind": "Kotoage"},
                         "params": [
                             {"name": "route", "type_name": "Name"},
                             {"name": "transfer", "type_name": "Name"},
-                            {"name": "sender", "type_name": "AccountId"},
                             {"name": "recipient", "type_name": "Name"},
-                            {"name": "amount", "type_name": "int"},
+                            {"name": "amount", "type_name": "quantity"},
                         ],
                         "return_type": "int",
-                        "permission": "Admin",
+                        "permission": "AssetOps",
                     },
                 ]
             },
@@ -383,7 +520,6 @@ class ContractConsoleFixture:
             "torii_url": "https://taira.sora.org" if environment_name == "testnet" else "https://production.example.invalid",
             "chain": f"{environment_name}-chain" if environment_name != "testnet" else "test-chain",
             "block_1_hash": f"{environment_name}-block-1" if environment_name != "testnet" else "block-1",
-            "environment": environment_name,
         }
         write_json(
             environment / "deploy.latest.json",
@@ -410,82 +546,18 @@ class ContractConsoleFixture:
             },
         )
         if not include_contract_record:
+            (environment / "bridge.sccp_bridge.deploy.json").unlink(missing_ok=True)
             return
         write_json(
             environment / "bridge.sccp_bridge.deploy.json",
             {
+                **current_deployment_record(
+                    environment=environment_name,
+                    contract_address=contract_address,
+                    deploy_nonce=deploy_nonce,
+                    chain_fingerprint=chain,
+                ),
                 "generated_at": "20260406T000200Z",
-                "contract_key": "bridge.sccp_bridge",
-                "environment": environment_name,
-                "contract_source": "contracts/bridge/sccp_bridge.ko",
-                "dataspace": "universal",
-                "contract_address": contract_address,
-                "deploy_nonce": deploy_nonce,
-                "code_hash_hex": "1" * 64,
-                "abi_hash_hex": "2" * 64,
-                "chain_fingerprint": chain,
-                "deploy_strategy": "bundle",
-                "bundle_receipt": {
-                    "name": "bridge.sccp_bridge",
-                    "status": "deployed",
-                    "contract_address": contract_address,
-                    "deploy_nonce": deploy_nonce,
-                    "code_hash_hex": "1" * 64,
-                    "abi_hash_hex": "2" * 64,
-                },
-                "response": {
-                    "ok": True,
-                    "contract_address": contract_address,
-                    "deploy_nonce": deploy_nonce,
-                    "code_hash_hex": "1" * 64,
-                    "abi_hash_hex": "2" * 64,
-                },
-                "instance": {
-                    "contract_id": contract_address,
-                    "contract_address": contract_address,
-                    "deploy_nonce": deploy_nonce,
-                    "code_hash_hex": "1" * 64,
-                    "abi_hash_hex": "2" * 64,
-                    "verification": "transaction_and_manifest",
-                    "tx_hash_hex": "deadbeef",
-                },
-            },
-        )
-
-    def write_aggregate_bundle_receipt(
-        self,
-        environment_name: str = "testnet",
-        *,
-        contract_address: str = "tairac1bridgefixture",
-        deploy_nonce: int = 11,
-        code_hash_hex: str | None = None,
-        abi_hash_hex: str | None = None,
-    ) -> None:
-        environment = self.root / "deployments" / environment_name
-        write_json(
-            environment / "soraswap.bundle.deploy.json",
-            {
-                "ok": True,
-                "generated_at": "20260406T000200Z",
-                "environment": environment_name,
-                "chain_fingerprint": {
-                    "torii_url": "https://taira.sora.org"
-                    if environment_name == "testnet"
-                    else "https://production.example.invalid",
-                    "chain": f"{environment_name}-chain" if environment_name != "testnet" else "test-chain",
-                    "block_1_hash": f"{environment_name}-block-1" if environment_name != "testnet" else "block-1",
-                },
-                "bundle_digest": "fixture-bundle-digest",
-                "contracts": [
-                    {
-                        "name": "bridge.sccp_bridge",
-                        "status": "deployed",
-                        "contract_address": contract_address,
-                        "deploy_nonce": deploy_nonce,
-                        "code_hash_hex": code_hash_hex or "1" * 64,
-                        "abi_hash_hex": abi_hash_hex or "2" * 64,
-                    }
-                ],
             },
         )
 
@@ -499,37 +571,27 @@ class ContractConsoleFixture:
         torii_url: str | None,
         public_key: str,
         private_key: str,
-        account_section: bool = True,
     ) -> Path:
         path = self.root / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         lines = [
             f'chain = "fixture-chain"',
+            f'network_id = "{PRODUCTION_NETWORK_ID if "/production/" in f"/{relative_path}" else TAIRA_NETWORK_ID}"',
         ]
         if torii_url is not None:
             lines.append(f'torii_url = "{torii_url}"')
-        if account_section:
-            chain_discriminant = 991 if "/production/" in f"/{relative_path}" else 369
-            lines.extend(
-                [
-                    "",
-                    "[account]",
-                    'domain = "fixture.universal"',
-                    f'public_key = "{public_key}"',
-                    f'private_key = "{private_key}"',
-                    f"chain_discriminant = {chain_discriminant}",
-                    "",
-                ]
-            )
-        else:
-            lines.extend(
-                [
-                    'domain = "fixture.universal"',
-                    f'public_key = "{public_key}"',
-                    f'private_key = "{private_key}"',
-                    "",
-                ]
-            )
+        chain_discriminant = 991 if "/production/" in f"/{relative_path}" else 369
+        lines.extend(
+            [
+                "",
+                "[account]",
+                'domain = "fixture.universal"',
+                f'public_key = "{public_key}"',
+                f'private_key = "{private_key}"',
+                f"chain_discriminant = {chain_discriminant}",
+                "",
+            ]
+        )
         path.write_text(
             "\n".join(lines),
             encoding="utf-8",
@@ -605,17 +667,19 @@ def make_signer(
     environment: str = "testnet",
     authority: str | None = "i105fixture",
     torii_url: str | None = "https://taira.sora.org",
-    private_key: str | None = None,
+    private_key: str | None = "8026209d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
     public_key: str | None = None,
     config_path: Path | None = Path("/tmp/test-signer.toml"),
     source: str = "explicit",
     warnings: list[str] | None = None,
+    network_id: str | None = TAIRA_NETWORK_ID,
 ):
     return contract_console.SignerBinding(
         environment=environment,
         config_path=config_path,
         authority=authority,
         torii_url=torii_url,
+        network_id=network_id,
         private_key=private_key,
         public_key=public_key or "ed0120d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
         basic_auth=("user", "pass"),
@@ -665,6 +729,48 @@ def bridge_submission_response() -> dict[str, object]:
     }
 
 
+def contract_call_response(
+    *,
+    contract_address: str,
+    entrypoint: str,
+    submitted: bool,
+    gas_limit: int = contract_console.DEFAULT_GAS_LIMIT,
+    creation_time_ms: int = 1_750_000_000_002,
+) -> dict[str, object]:
+    fee_payment = contract_console.authority_fee_payment_intent(gas_limit)
+    receipt = {
+        "operation_kind": "contract_call",
+        "status": "submitted" if submitted else "pending_signature",
+        "transport": "torii",
+        "dataspace": "apps",
+        "contract_address": contract_address,
+        "code_hash_hex": "45" * 32,
+        "abi_hash_hex": "67" * 32,
+        "entrypoint": entrypoint,
+        "gas_limit": gas_limit,
+        "fee_payment": fee_payment,
+        "payload_digest_hex": "89" * 32,
+    }
+    if submitted:
+        receipt["tx_hash_hex"] = "ab" * 32
+        receipt["entrypoint_hash_hex"] = "cd" * 32
+    return {
+        "ok": True,
+        "submitted": submitted,
+        "dataspace": "apps",
+        "contract_address": contract_address,
+        "code_hash_hex": "45" * 32,
+        "abi_hash_hex": "67" * 32,
+        "creation_time_ms": creation_time_ms,
+        "tx_hash_hex": "ab" * 32 if submitted else None,
+        "entrypoint_hash_hex": "cd" * 32 if submitted else None,
+        "transaction_payload_b64": None if submitted else BRIDGE_TEST_TRANSACTION_B64,
+        "signing_message_b64": None if submitted else BRIDGE_TEST_SIGNING_MESSAGE_B64,
+        "entrypoint": entrypoint,
+        "operation_receipt": receipt,
+    }
+
+
 class ContractConsoleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.fixture = ContractConsoleFixture()
@@ -702,6 +808,92 @@ class ContractConsoleTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(ValueError, "gas_limit must be an integer"):
                     contract_console.normalize_browser_gas_limit(value)
+
+    def test_fee_payment_validator_accepts_only_current_quoted_charge_limits(self) -> None:
+        gas_limit = 123_456
+        charge_limits = [
+            {
+                "kind": {"kind": "nexus", "value": None},
+                "asset_definition_id": "62Fk4FPcMuLvW5QjDGNF2a4jAmjM",
+                "max_amount": "1.25",
+            },
+            {
+                "kind": {"kind": "pipeline_gas", "value": None},
+                "asset_definition_id": "7EAD8EFYUx1aVKZPUU1fyKvr8dF1",
+                "max_amount": str((1 << 511) - 1),
+            },
+        ]
+        quoted = {
+            "payer": "authority",
+            "value": {"charge_limits": charge_limits, "gas_limit": gas_limit},
+        }
+
+        self.assertEqual(
+            contract_console.validate_authority_fee_payment_intent(
+                quoted,
+                expected_gas_limit=gas_limit,
+                context="quoted fee",
+                allow_quoted_charge_limits=True,
+            ),
+            quoted,
+        )
+        with self.assertRaisesRegex(ValueError, "must be empty before fee quotation"):
+            contract_console.validate_authority_fee_payment_intent(
+                quoted,
+                expected_gas_limit=gas_limit,
+                context="request fee",
+            )
+
+        invalid_limits = {
+            "unknown field": [{**charge_limits[0], "legacy": True}],
+            "untagged kind": [{**charge_limits[0], "kind": "nexus"}],
+            "non-null tag": [{**charge_limits[0], "kind": {"kind": "nexus", "value": {}}}],
+            "unknown kind": [{**charge_limits[0], "kind": {"kind": "storage", "value": None}}],
+            "duplicate kind": [charge_limits[0], dict(charge_limits[0])],
+            "wrong order": [charge_limits[1], charge_limits[0]],
+            "blank asset": [{**charge_limits[0], "asset_definition_id": " "}],
+            "numeric quantity": [{**charge_limits[0], "max_amount": 1}],
+            "zero quantity": [{**charge_limits[0], "max_amount": "0"}],
+            "leading zero": [{**charge_limits[0], "max_amount": "01"}],
+            "trailing fractional zero": [{**charge_limits[0], "max_amount": "1.0"}],
+            "excess scale": [{**charge_limits[0], "max_amount": "0." + "0" * 28 + "1"}],
+            "signed overflow": [{**charge_limits[0], "max_amount": str(1 << 511)}],
+        }
+        for label, limits in invalid_limits.items():
+            with self.subTest(label=label):
+                candidate = {
+                    "payer": "authority",
+                    "value": {"charge_limits": limits, "gas_limit": gas_limit},
+                }
+                with self.assertRaises(ValueError):
+                    contract_console.validate_authority_fee_payment_intent(
+                        candidate,
+                        expected_gas_limit=gas_limit,
+                        context="quoted fee",
+                        allow_quoted_charge_limits=True,
+                    )
+
+    def test_contract_call_response_rejects_non_null_gas_used(self) -> None:
+        expected_request = {
+            "contract_address": "tairac1bridgefixture",
+            "entrypoint": "listing_config",
+            "fee_payment": contract_console.authority_fee_payment_intent(
+                contract_console.DEFAULT_GAS_LIMIT
+            ),
+        }
+        response = contract_call_response(
+            contract_address="tairac1bridgefixture",
+            entrypoint="listing_config",
+            submitted=False,
+        )
+        response["operation_receipt"]["gas_used"] = 1
+
+        with self.assertRaisesRegex(ValueError, "gas_used must be absent or null"):
+            contract_console.validate_contract_call_response(
+                response,
+                expected_request=expected_request,
+                submitted=False,
+            )
 
     def test_contract_proxy_rejects_out_of_range_browser_gas_limit(self) -> None:
         signer = make_signer()
@@ -1073,6 +1265,41 @@ class ContractConsoleTests(unittest.TestCase):
                         timeout=1,
                     )
 
+    def test_proxy_torii_request_rejects_incomplete_successful_fanout(self) -> None:
+        upstream = mock.MagicMock()
+        upstream.__enter__.return_value = upstream
+        upstream.status = 200
+        upstream.headers = {
+            "Content-Type": "application/json",
+            "x-iroha-fanout-routes-failed": "1",
+        }
+        opener = mock.Mock()
+        opener.open.return_value = upstream
+
+        with mock.patch.object(contract_console.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaisesRegex(OSError, "incomplete Torii routed response"):
+                contract_console.proxy_torii_request(
+                    "https://taira.sora.org",
+                    "/v1/assets/definitions/xor%23universal",
+                    method="GET",
+                    payload=None,
+                    query=None,
+                    basic_auth=None,
+                    timeout=1,
+                )
+        upstream.read.assert_not_called()
+
+    def test_complete_fanout_headers_accept_exact_zero_counts(self) -> None:
+        contract_console.reject_incomplete_fanout_response(
+            200,
+            {
+                "x-iroha-fanout-routes-failed": "0",
+                "x-iroha-fanout-routes-denied": "0",
+                "x-iroha-fanout-routes-unavailable": "0",
+                "x-iroha-fanout-routes-not-found": "0",
+            },
+        )
+
     def test_load_environment_reads_manifest_entrypoints(self) -> None:
         contracts_path = self.fixture.root / "deployments" / "testnet" / "contracts.latest.json"
         contracts_latest = json.loads(contracts_path.read_text(encoding="utf-8"))
@@ -1091,13 +1318,123 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertEqual(len(environment["contracts"]), 1)
         contract = environment["contracts"][0]
         self.assertEqual(contract["contract_key"], "bridge.sccp_bridge")
-        self.assertEqual(contract["evidence_source"], "contracts_latest")
+        self.assertEqual(contract["evidence_source"], "deploy_record")
         self.assertEqual(contract["contract_address"], "tairac1bridgefixture")
+        self.assertEqual(contract["dataspace_alias"], "universal")
+        self.assertEqual(contract["dataspace_id"], "0")
+        self.assertNotIn("dataspace", contract)
         self.assertEqual(contract["contract_source"], "contracts/bridge/sccp_bridge.ko")
-        self.assertIsNone(contract["deployment_path"])
+        self.assertEqual(contract["deployment_path"], "deployments/testnet/bridge.sccp_bridge.deploy.json")
         self.assertEqual(contract["manifest_path"], "deployments/testnet/bridge.sccp_bridge.manifest.json")
         self.assertEqual(contract["entrypoints"][0]["name"], "listing_config")
-        self.assertEqual(contract["entrypoints"][-1]["kind"], "Public")
+        self.assertEqual(contract["entrypoints"][-1]["kind"], "Kotoage")
+        self.assertIn("commit_deployment_tx_hash", contract)
+        self.assertNotIn("verification", contract)
+        self.assertNotIn("tx_hash_hex", contract)
+
+    def test_current_deployment_record_shape_rejects_legacy_compatibility_forms(self) -> None:
+        chain = {
+            "torii_url": "https://taira.sora.org",
+            "chain": "test-chain",
+            "block_1_hash": "block-1",
+        }
+        current = current_deployment_record(
+            environment="testnet",
+            contract_address="tairac1bridgefixture",
+            deploy_nonce=11,
+            chain_fingerprint=chain,
+        )
+        self.assertTrue(contract_console.current_deployment_record_shape(current))
+
+        legacy_variants: dict[str, dict[str, object]] = {}
+        legacy_variants["instance"] = {**current, "instance": {"contract_id": "tairac1bridgefixture"}}
+
+        ambiguous_dataspace = dict(current)
+        ambiguous_dataspace["dataspace"] = ambiguous_dataspace.pop("dataspace_id")
+        legacy_variants["ambiguous_top_level_dataspace"] = ambiguous_dataspace
+
+        wrong_dataspace_alias = dict(current)
+        wrong_dataspace_alias["dataspace_alias"] = "apps"
+        legacy_variants["wrong_dataspace_alias"] = wrong_dataspace_alias
+
+        wrong_dataspace_id = dict(current)
+        wrong_dataspace_id["dataspace_id"] = "7"
+        legacy_variants["wrong_dataspace_id"] = wrong_dataspace_id
+
+        response_dataspace_mismatch = dict(current)
+        response_dataspace_mismatch["response"] = dict(current["response"])
+        response_dataspace_mismatch["response"]["dataspace"] = "7"
+        legacy_variants["response_dataspace_mismatch"] = response_dataspace_mismatch
+
+        deployment_state_mismatch = dict(current)
+        deployment_state_mismatch["response"] = dict(current["response"])
+        deployment_state_mismatch["response"]["deployment_state"] = dict(
+            current["response"]["deployment_state"]
+        )
+        deployment_state_mismatch["response"]["deployment_state"]["dataspace_alias"] = "apps"
+        legacy_variants["deployment_state_dataspace_mismatch"] = deployment_state_mismatch
+
+        deployment_state_id_mismatch = dict(current)
+        deployment_state_id_mismatch["response"] = dict(current["response"])
+        deployment_state_id_mismatch["response"]["deployment_state"] = dict(
+            current["response"]["deployment_state"]
+        )
+        deployment_state_id_mismatch["response"]["deployment_state"]["dataspace_id"] = "7"
+        legacy_variants["deployment_state_dataspace_id_mismatch"] = deployment_state_id_mismatch
+
+        name_alias = dict(current)
+        name_alias["name"] = name_alias.pop("contract_key")
+        legacy_variants["name"] = name_alias
+
+        address_alias = dict(current)
+        address_alias["contract_id"] = address_alias.pop("contract_address")
+        legacy_variants["contract_id"] = address_alias
+
+        code_hash_alias = dict(current)
+        code_hash_alias["code_hash"] = code_hash_alias.pop("code_hash_hex")
+        legacy_variants["code_hash"] = code_hash_alias
+
+        abi_hash_alias = dict(current)
+        abi_hash_alias["abi_hash"] = abi_hash_alias.pop("abi_hash_hex")
+        legacy_variants["abi_hash"] = abi_hash_alias
+
+        recovered = dict(current)
+        recovered["deploy_strategy"] = "recovered_from_alias_resolve"
+        legacy_variants["recovered_strategy"] = recovered
+
+        chain_alias = dict(current)
+        chain_alias["chain_fingerprint"] = {**chain, "environment": "testnet"}
+        legacy_variants["expanded_chain_fingerprint"] = chain_alias
+
+        response_alias = dict(current)
+        response_alias["response"] = dict(current["response"])
+        response_alias["response"]["tx_hash_hex"] = response_alias["response"].pop(
+            "commit_deployment_tx_hash"
+        )
+        legacy_variants["response_tx_hash"] = response_alias
+
+        for label, record in legacy_variants.items():
+            with self.subTest(label=label):
+                self.assertFalse(contract_console.current_deployment_record_shape(record))
+
+    def test_manifest_hash_requires_current_checksummed_hash_literal(self) -> None:
+        raw_hash = "1" * 64
+        canonical = canonical_hash_literal(raw_hash)
+        self.assertEqual(contract_console.manifest_hash({"code_hash": canonical}, "code_hash"), raw_hash)
+        for legacy in (raw_hash, f"hash:{raw_hash}", f"0x{raw_hash}", canonical[:-4] + "0000"):
+            with self.subTest(legacy=legacy):
+                self.assertIsNone(contract_console.manifest_hash({"code_hash": legacy}, "code_hash"))
+
+    def test_catalog_does_not_treat_contracts_snapshot_as_a_deploy_record(self) -> None:
+        contracts_path = self.fixture.root / "deployments" / "testnet" / "contracts.latest.json"
+        contracts = json.loads(contracts_path.read_text(encoding="utf-8"))
+        contracts["legacy"] = True
+        write_json(contracts_path, contracts)
+        (self.fixture.root / "deployments" / "testnet" / "bridge.sccp_bridge.deploy.json").unlink()
+
+        environment = self.state.load_environment("testnet")
+
+        self.assertEqual(environment["contracts"], [])
 
     def test_load_environment_uses_current_deploy_record_when_manifest_matches(self) -> None:
         self.fixture.write_completed_deploy_evidence(contract_address="tairac1deploycurrent")
@@ -1120,16 +1457,12 @@ class ContractConsoleTests(unittest.TestCase):
 
         environment = self.state.load_environment("testnet")
 
-        self.assertEqual(len(environment["contracts"]), 1)
-        contract = environment["contracts"][0]
-        self.assertEqual(contract["evidence_source"], "contracts_latest")
-        self.assertEqual(contract["contract_address"], "tairac1bridgefixture")
-        self.assertIsNone(contract["deployment_path"])
+        self.assertEqual(environment["contracts"], [])
 
-    def test_load_environment_ignores_snapshot_when_hashes_do_not_match_manifest(self) -> None:
+    def test_load_environment_ignores_deploy_record_when_manifest_hashes_do_not_match(self) -> None:
         manifest_path = self.fixture.root / "deployments" / "testnet" / "bridge.sccp_bridge.manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["code_hash"] = "hash:" + "9" * 64
+        manifest["code_hash"] = canonical_hash_literal("9" * 64)
         write_json(manifest_path, manifest)
 
         environment = self.state.load_environment("testnet")
@@ -1144,7 +1477,8 @@ class ContractConsoleTests(unittest.TestCase):
 
         environment = self.state.load_environment("testnet")
 
-        self.assertEqual(environment["contracts"], [])
+        self.assertEqual(len(environment["contracts"]), 1)
+        self.assertEqual(environment["contracts"][0]["evidence_source"], "deploy_record")
 
     def test_load_environment_ignores_duplicate_contracts_latest_snapshot(self) -> None:
         contracts_path = self.fixture.root / "deployments" / "testnet" / "contracts.latest.json"
@@ -1154,7 +1488,8 @@ class ContractConsoleTests(unittest.TestCase):
 
         environment = self.state.load_environment("testnet")
 
-        self.assertEqual(environment["contracts"], [])
+        self.assertEqual(len(environment["contracts"]), 1)
+        self.assertEqual(environment["contracts"][0]["evidence_source"], "deploy_record")
 
     def test_load_environment_ignores_stale_and_bundle_deploy_records(self) -> None:
         environment_path = self.fixture.root / "deployments" / "testnet"
@@ -1182,41 +1517,17 @@ class ContractConsoleTests(unittest.TestCase):
                 "deploy_nonce": 99,
             },
         )
-        write_json(
-            environment_path / "soraswap.bundle.deploy.json",
-            {
-                "bundle_name": "soraswap",
-                "contracts": [{"name": "options.series_manager", "contract_address": "tairac1stale"}],
-            },
-        )
-        write_json(
-            environment_path / "soraswap.foundation.bundle.deploy.json",
-            {
-                "bundle_name": "soraswap-foundation",
-                "generated_at": "20260406T000400Z",
-                "contract_key": "bridge.sccp_bridge",
-                "environment": "testnet",
-                "contract_address": "tairac1foundationaggregate",
-                "deploy_nonce": 100,
-                "code_hash_hex": "1" * 64,
-                "abi_hash_hex": "2" * 64,
-                "chain_fingerprint": {
-                    "torii_url": "https://taira.sora.org",
-                    "chain": "test-chain",
-                    "block_1_hash": "block-1",
-                },
-                "contracts": [
-                    {"name": "bridge.sccp_bridge", "contract_address": "tairac1foundationaggregate"}
-                ],
-            },
-        )
+        environment = self.state.load_environment("testnet")
+
+        self.assertEqual(environment["contracts"], [])
+
+    def test_load_environment_does_not_recover_chain_from_contracts_snapshot(self) -> None:
+        chain_path = self.fixture.root / "deployments" / "testnet" / "chain.latest.json"
+        chain_path.unlink()
 
         environment = self.state.load_environment("testnet")
 
-        self.assertEqual([contract["contract_key"] for contract in environment["contracts"]], ["bridge.sccp_bridge"])
-        self.assertEqual(environment["contracts"][0]["evidence_source"], "contracts_latest")
-        self.assertEqual(environment["contracts"][0]["contract_address"], "tairac1bridgefixture")
-        self.assertIsNone(environment["contracts"][0]["deployment_path"])
+        self.assertEqual(environment["contracts"], [])
 
     def test_load_environment_marks_testnet_as_flag_gated(self) -> None:
         state = contract_console.ContractConsoleState(self.fixture.root, {})
@@ -1331,101 +1642,6 @@ class ContractConsoleTests(unittest.TestCase):
 
         self.assertEqual(issues, [])
 
-    def test_mutation_enabled_console_accepts_matching_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence("testnet")
-        self.fixture.write_aggregate_bundle_receipt("testnet")
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(self.state)
-
-        self.assertEqual(issues, [])
-
-    def test_mutation_enabled_console_rejects_unsuccessful_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence("testnet")
-        self.fixture.write_aggregate_bundle_receipt("testnet")
-        bundle_path = self.fixture.root / "deployments" / "testnet" / "soraswap.bundle.deploy.json"
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-        bundle["ok"] = False
-        write_json(bundle_path, bundle)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(self.state)
-
-        self.assertTrue(any("soraswap.bundle.deploy.json is not successful" in issue for issue in issues))
-
-    def test_mutation_enabled_console_rejects_stale_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence("testnet")
-        self.fixture.write_aggregate_bundle_receipt("testnet", deploy_nonce=99)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(self.state)
-
-        self.assertTrue(
-            any(
-                "soraswap.bundle.deploy.json does not match contracts.latest.json: bridge.sccp_bridge" in issue
-                for issue in issues
-            )
-        )
-
-    def test_mutation_enabled_console_rejects_untimestamped_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence("testnet")
-        self.fixture.write_aggregate_bundle_receipt("testnet")
-        bundle_path = self.fixture.root / "deployments" / "testnet" / "soraswap.bundle.deploy.json"
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-        bundle.pop("generated_at")
-        write_json(bundle_path, bundle)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(self.state)
-
-        self.assertTrue(any("soraswap.bundle.deploy.json is missing generated_at" in issue for issue in issues))
-
-    def test_mutation_enabled_console_rejects_wrong_chain_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence("testnet")
-        self.fixture.write_aggregate_bundle_receipt("testnet")
-        bundle_path = self.fixture.root / "deployments" / "testnet" / "soraswap.bundle.deploy.json"
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-        bundle["chain_fingerprint"]["block_1_hash"] = "other-block"
-        write_json(bundle_path, bundle)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(self.state)
-
-        self.assertTrue(any("soraswap.bundle.deploy.json does not match chain.latest.json" in issue for issue in issues))
-
-    def test_mutation_enabled_console_rejects_path_leaking_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence("testnet")
-        self.fixture.write_aggregate_bundle_receipt("testnet")
-        bundle_path = self.fixture.root / "deployments" / "testnet" / "soraswap.bundle.deploy.json"
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-        bundle["diagnostics"] = {"file://localhost/Users/operator/dev/soraswap/private.log": "redact me"}
-        write_json(bundle_path, bundle)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(self.state)
-
-        self.assertTrue(
-            any("soraswap.bundle.deploy.json contains raw local path diagnostics" in issue for issue in issues)
-        )
-
-    def test_mutation_enabled_console_rejects_sensitive_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence("testnet")
-        self.fixture.write_aggregate_bundle_receipt("testnet")
-        bundle_path = self.fixture.root / "deployments" / "testnet" / "soraswap.bundle.deploy.json"
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-        bundle["diagnostics"] = {"stderr": "deployment failed with private_key=fixture-secret"}
-        write_json(bundle_path, bundle)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(self.state)
-
-        self.assertTrue(
-            any(
-                "soraswap.bundle.deploy.json contains unredacted sensitive diagnostics" in issue
-                for issue in issues
-            )
-        )
-
     def test_mutation_enabled_console_rejects_sensitive_core_public_evidence(self) -> None:
         self.fixture.write_completed_deploy_evidence("testnet")
         environment = self.fixture.root / "deployments" / "testnet"
@@ -1513,17 +1729,16 @@ class ContractConsoleTests(unittest.TestCase):
 
         self.assertTrue(any("preflight.latest.json is not ready for the current chain" in issue for issue in issues))
 
-    def test_mutation_enabled_console_rejects_unverified_oracle_keypair(self) -> None:
+    def test_mutation_enabled_console_rejects_invalid_oracle_client_config(self) -> None:
         self.fixture.write_completed_deploy_evidence("testnet")
         preflight_path = self.fixture.root / "deployments" / "testnet" / "preflight.latest.json"
         preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
-        preflight["environment"]["oracle_keypair_verified"] = False
+        preflight["environment"]["oracle_client_config_valid"] = False
         write_json(preflight_path, preflight)
 
         with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
             issues = contract_console.mutation_enabled_public_deployment_evidence_issues(self.state)
 
-        self.assertTrue(any("preflight.latest.json oracle_keypair_verified must be true" in issue for issue in issues))
         self.assertTrue(any("preflight.latest.json is not ready for the current chain" in issue for issue in issues))
 
     def test_mutation_enabled_console_rejects_preflight_health_issues(self) -> None:
@@ -1825,8 +2040,8 @@ class ContractConsoleTests(unittest.TestCase):
         write_json(
             self.fixture.root / "deployments" / "testnet" / "options.series_manager.manifest.json",
             {
-                "code_hash": "hash:" + "9" * 64,
-                "abi_hash": "hash:" + "0" * 64,
+                "code_hash": canonical_hash_literal("9" * 64),
+                "abi_hash": canonical_hash_literal("0" * 64),
                 "entrypoints": [],
             },
         )
@@ -1844,8 +2059,6 @@ class ContractConsoleTests(unittest.TestCase):
         deploy_record = json.loads(deploy_record_path.read_text(encoding="utf-8"))
         deploy_record.pop("deploy_nonce")
         deploy_record["response"].pop("deploy_nonce")
-        deploy_record["instance"].pop("deploy_nonce")
-        deploy_record["bundle_receipt"].pop("deploy_nonce")
         write_json(deploy_record_path, deploy_record)
 
         with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
@@ -1859,11 +2072,25 @@ class ContractConsoleTests(unittest.TestCase):
             )
         )
 
+    def test_mutation_enabled_console_rejects_recovered_alias_deploy_strategy(self) -> None:
+        self.fixture.write_completed_deploy_evidence("testnet")
+        deploy_record_path = self.fixture.root / "deployments" / "testnet" / "bridge.sccp_bridge.deploy.json"
+        deploy_record = json.loads(deploy_record_path.read_text(encoding="utf-8"))
+        deploy_record["deploy_strategy"] = "recovered_from_alias_resolve"
+        write_json(deploy_record_path, deploy_record)
+
+        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
+            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(self.state)
+
+        self.assertTrue(
+            any("bridge.sccp_bridge.deploy.json does not use a current deploy strategy" in issue for issue in issues)
+        )
+
     def test_mutation_enabled_console_rejects_manifest_hash_mismatch(self) -> None:
         self.fixture.write_completed_deploy_evidence("testnet")
         manifest_path = self.fixture.root / "deployments" / "testnet" / "bridge.sccp_bridge.manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest["code_hash"] = "hash:" + "f" * 64
+        manifest["code_hash"] = canonical_hash_literal("f" * 64)
         write_json(manifest_path, manifest)
 
         with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
@@ -1996,8 +2223,12 @@ class ContractConsoleTests(unittest.TestCase):
 
     def test_bridge_inspect_aggregates_requested_views(self) -> None:
         calls: list[tuple[str, dict]] = []
+        state = contract_console.ContractConsoleState(
+            self.fixture.root,
+            {"testnet": make_signer()},
+        )
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             calls.append((path, payload))
             body = {
                 "ok": True,
@@ -2007,7 +2238,7 @@ class ContractConsoleTests(unittest.TestCase):
             return 200, json.dumps(body), "application/json"
 
         with mock.patch.object(contract_console, "proxy_torii_request", side_effect=fake_proxy):
-            with RunningServer(self.state) as server:
+            with RunningServer(state) as server:
                 status, payload = request_json(
                     f"{server.base_url}/api/bridge/inspect",
                     {
@@ -2068,72 +2299,79 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertEqual(signer.authority, "i105fixture")
         self.assertTrue(signer.can_call)
 
-    def test_build_signer_bindings_auto_discovers_legacy_flat_default_config(self) -> None:
-        self.fixture.write_signer_config(
-            "config/testnet/taira.client.toml",
-            torii_url="https://taira.sora.org/",
-            public_key="ed0120legacy",
-            private_key="802620legacy",
-            account_section=False,
-        )
-        with mock.patch.object(
-            contract_console,
-            "derive_authority_from_public_key",
-            return_value=("i105legacy", None),
-        ) as derive_authority:
-            signers = contract_console.build_signer_bindings(
-                self.fixture.root,
-                {},
-                {},
-                auto_discover=True,
-            )
-
-        derive_authority.assert_called_once_with("ed0120legacy", "testnet")
-        signer = signers["testnet"]
-        self.assertEqual(signer.source, "auto")
-        self.assertEqual(signer.authority, "i105legacy")
-        self.assertEqual(signer.public_key, "ed0120legacy")
-        self.assertEqual(signer.private_key, "802620legacy")
-        self.assertTrue(signer.can_call)
-
-    def test_account_scoped_signer_keys_override_flat_legacy_keys(self) -> None:
+    def test_explicit_signer_config_requires_account_credentials(self) -> None:
         config_path = self.fixture.root / "config" / "testnet" / "taira.client.toml"
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(
             "\n".join(
                 [
                     'chain = "fixture-chain"',
+                    f'network_id = "{TAIRA_NETWORK_ID}"',
                     'torii_url = "https://taira.sora.org/"',
-                    'public_key = "ed0120flatwrong"',
-                    'private_key = "802620flatwrong"',
+                    'public_key = "ed0120flat"',
+                    'private_key = "802620flat"',
                     "",
                     "[account]",
                     'domain = "fixture.universal"',
-                    'public_key = "ed0120account"',
-                    'private_key = "802620account"',
                     "",
                 ]
             ),
             encoding="utf-8",
         )
+        config_path.chmod(0o600)
 
+        with self.assertRaisesRegex(
+            ValueError,
+            "account .* requires non-empty public_key and private_key",
+        ):
+            contract_console.build_signer_bindings(
+                self.fixture.root,
+                {"testnet": str(config_path)},
+                {},
+                auto_discover=False,
+            )
+
+    def test_explicit_signer_config_requires_canonical_network_id(self) -> None:
+        config_path = self.fixture.write_signer_config(
+            "config/testnet/taira.client.toml",
+            torii_url="https://taira.sora.org/",
+            public_key=BRIDGE_TEST_PUBLIC_KEY,
+            private_key=BRIDGE_TEST_PRIVATE_KEY,
+        )
+        config_path.write_text(
+            config_path.read_text(encoding="utf-8").replace(
+                f'network_id = "{TAIRA_NETWORK_ID}"\n',
+                "",
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "network_id must be canonical"):
+            contract_console.build_signer_bindings(
+                self.fixture.root,
+                {"testnet": str(config_path)},
+                {},
+                auto_discover=False,
+            )
+
+    def test_authority_override_must_match_key_derived_authority(self) -> None:
+        config_path = self.fixture.write_signer_config(
+            "config/testnet/taira.client.toml",
+            torii_url="https://taira.sora.org/",
+            public_key=BRIDGE_TEST_PUBLIC_KEY,
+            private_key=BRIDGE_TEST_PRIVATE_KEY,
+        )
         with mock.patch.object(
             contract_console,
             "derive_authority_from_public_key",
-            return_value=("i105account", None),
-        ) as derive_authority:
-            signers = contract_console.build_signer_bindings(
-                self.fixture.root,
-                {},
-                {},
-                auto_discover=True,
-            )
-
-        derive_authority.assert_called_once_with("ed0120account", "testnet")
-        signer = signers["testnet"]
-        self.assertEqual(signer.public_key, "ed0120account")
-        self.assertEqual(signer.private_key, "802620account")
-        self.assertEqual(signer.authority, "i105account")
+            return_value=("i105-derived", None),
+        ):
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                contract_console.build_signer_bindings(
+                    self.fixture.root,
+                    {"testnet": str(config_path)},
+                    {"testnet": "i105-override"},
+                    auto_discover=False,
+                )
 
     def test_build_signer_bindings_ignores_placeholder_default_config(self) -> None:
         self.fixture.write_signer_config(
@@ -2451,7 +2689,7 @@ class ContractConsoleTests(unittest.TestCase):
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
         calls: list[tuple[str, str, dict | None]] = []
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(torii_url, "https://taira.sora.org")
             self.assertEqual(method, "GET")
             self.assertIsNone(payload)
@@ -2480,13 +2718,66 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertEqual(registry["response_json"]["version"], 1)
         self.assertEqual([entry[0] for entry in calls], ["/v1/sccp/capabilities", "/v1/sccp/registry"])
 
+    def test_asset_definition_proxy_reencodes_one_selector_segment(self) -> None:
+        signer = make_signer()
+        state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
+
+        def fake_proxy(
+            torii_url,
+            path,
+            *,
+            method,
+            payload,
+            query,
+            basic_auth,
+            timeout,
+            accept="application/json",
+            canonical_signer=None,
+        ):
+            self.assertEqual(path, "/v1/assets/definitions/xor%23universal")
+            self.assertEqual(method, "GET")
+            self.assertIsNone(payload)
+            self.assertEqual(query, {})
+            return 200, json.dumps({
+                "id": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+                "alias": "xor#universal",
+                "alias_binding": {"alias": "xor#universal", "status": "permanent"},
+                "spec": {"scale": 9},
+            }), "application/json"
+
+        with mock.patch.object(contract_console, "proxy_torii_request", side_effect=fake_proxy):
+            with RunningServer(state) as server:
+                status, response = request_json(
+                    f"{server.base_url}/api/assets/definitions/xor%23universal"
+                    "?environment=testnet&private_key=drop"
+                )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["response_json"]["spec"]["scale"], 9)
+
+    def test_asset_definition_proxy_rejects_path_escape_selector(self) -> None:
+        signer = make_signer()
+        state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
+
+        with mock.patch.object(contract_console, "proxy_torii_request") as proxy:
+            with RunningServer(state) as server:
+                status, response = request_json(
+                    f"{server.base_url}/api/assets/definitions/xor%2Funiversal?environment=testnet"
+                )
+
+        self.assertEqual(status, 400)
+        self.assertFalse(response["ok"])
+        self.assertIn("one path segment", response["error"])
+        proxy.assert_not_called()
+
     def test_message_bundle_and_proof_request_proxy_routes_pass_through(self) -> None:
         signer = make_signer()
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
         message_id = "ab" * 32
         observed_paths: list[str] = []
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(method, "GET")
             self.assertEqual(query, {})
             observed_paths.append(path)
@@ -2546,7 +2837,7 @@ class ContractConsoleTests(unittest.TestCase):
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
         observed_calls: list[tuple[str, dict[str, str]]] = []
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(method, "GET")
             observed_calls.append((path, query))
             return 200, json.dumps({"items": [{"message_id_hex": "aa"}]}), "application/json"
@@ -2570,7 +2861,7 @@ class ContractConsoleTests(unittest.TestCase):
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
         observed_queries: list[dict[str, str]] = []
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(path, "/v1/sccp/messages/recent")
             self.assertEqual(method, "GET")
             observed_queries.append(query)
@@ -2621,6 +2912,16 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertIn("query string exceeds", long_payload["error"])
         proxy.assert_not_called()
 
+    def test_bridge_preparation_accepts_current_solana_testnet_profile(self) -> None:
+        response = bridge_preparation_response()
+        response["counterparty_domain"] = 3
+        response["counterparty_chain"] = "solana-testnet"
+
+        prepared = contract_console.validate_bridge_preparation_response(response)
+
+        self.assertEqual(prepared["metadata"]["counterparty_domain"], 3)
+        self.assertEqual(prepared["metadata"]["counterparty_chain"], "solana-testnet")
+
     def test_bridge_proof_submit_uses_exact_two_phase_detached_signing(self) -> None:
         signer = make_signer(
             private_key=BRIDGE_TEST_PRIVATE_KEY,
@@ -2629,7 +2930,7 @@ class ContractConsoleTests(unittest.TestCase):
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
         captured_payloads: list[dict] = []
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(path, "/v1/bridge/proofs/submit")
             self.assertEqual(method, "POST")
             captured_payloads.append(payload)
@@ -2652,13 +2953,21 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertEqual(payload["tx_hash_hex"], "ab" * 32)
         self.assertEqual(
             captured_payloads[0],
-            {"authority": "i105fixture", "destination_proof_b64": BRIDGE_TEST_PROOF_B64},
+            {
+                "authority": "i105fixture",
+                "fee_payment": contract_console.authority_fee_payment_intent(
+                    contract_console.DEFAULT_GAS_LIMIT
+                ),
+                "destination_proof_b64": BRIDGE_TEST_PROOF_B64,
+            },
         )
         self.assertEqual(captured_payloads[1]["transaction_payload_b64"], BRIDGE_TEST_TRANSACTION_B64)
         self.assertEqual(captured_payloads[1]["creation_time_ms"], 1_750_000_000_001)
+        self.assertEqual(captured_payloads[1]["fee_payment"], captured_payloads[0]["fee_payment"])
         self.assertEqual(captured_payloads[1]["destination_proof_b64"], BRIDGE_TEST_PROOF_B64)
         self.assertEqual(set(captured_payloads[1]), {
             "authority",
+            "fee_payment",
             "destination_proof_b64",
             "transaction_payload_b64",
             "signature_b64",
@@ -2667,7 +2976,6 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertNotIn("private_key", json.dumps(captured_payloads))
         self.assertTrue(payload["detached_signing"]["transaction_payload_reused_exactly"])
         self.assertFalse(payload["detached_signing"]["private_key_forwarded"])
-        self.assertFalse(payload["detached_signing"]["fallback_used"])
 
     def test_bridge_native_message_uses_native_proof_closed_dto(self) -> None:
         signer = make_signer(
@@ -2677,7 +2985,7 @@ class ContractConsoleTests(unittest.TestCase):
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
         captured_payloads: list[dict] = []
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(path, "/v1/bridge/messages")
             captured_payloads.append(payload)
             response = bridge_preparation_response() if len(captured_payloads) == 1 else bridge_submission_response()
@@ -2695,6 +3003,9 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(captured_payloads[0], {
             "authority": "i105fixture",
+            "fee_payment": contract_console.authority_fee_payment_intent(
+                contract_console.DEFAULT_GAS_LIMIT
+            ),
             "native_proof_b64": BRIDGE_TEST_PROOF_B64,
         })
         self.assertEqual(captured_payloads[1]["native_proof_b64"], BRIDGE_TEST_PROOF_B64)
@@ -2849,7 +3160,7 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertIn("does not match preparation", payload["error"])
         self.assertEqual(calls, 2)
 
-    def test_pipeline_status_proxy_surfaces_typed_scope_rejection_and_diagnostics(self) -> None:
+    def test_pipeline_status_proxy_accepts_only_the_current_status_only_dto(self) -> None:
         signer = make_signer()
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
         queued_hash = "11" * 32
@@ -2857,7 +3168,7 @@ class ContractConsoleTests(unittest.TestCase):
         rejected_hash = "33" * 32
         missing_hash = "44" * 32
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(path, "/v1/pipeline/transactions/status")
             self.assertEqual(method, "GET")
             self.assertEqual(accept, "application/json")
@@ -2868,27 +3179,18 @@ class ContractConsoleTests(unittest.TestCase):
                     "resolved_from": "queue",
                     "scope": query["scope"],
                     "status": {"kind": "Queued"},
-                    "summary": "Queued",
-                    "diagnostics": [],
                 }),
                 committed_hash: (200, {
                     "hash": committed_hash,
                     "resolved_from": "state",
-                    "scope": "global" if query["scope"] == "auto" else query["scope"],
+                    "scope": query["scope"],
                     "status": {"kind": "Committed", "block_height": 91},
-                    "summary": "Committed in block 91",
-                    "diagnostics": [],
                 }),
                 rejected_hash: (200, {
                     "hash": rejected_hash,
                     "resolved_from": "state",
                     "scope": query["scope"],
-                    "status": {
-                        "kind": "Rejected",
-                        "rejection_reason": {"Validation": {"NotPermitted": "denied"}},
-                    },
-                    "summary": "Rejected: denied",
-                    "diagnostics": [{"code": "not_permitted", "message": "denied"}],
+                    "status": {"kind": "Rejected"},
                 }),
                 missing_hash: (404, {"code": "status_missing", "message": "status not found"}),
             }
@@ -2917,19 +3219,18 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertEqual(committed_status, 200)
         self.assertEqual(committed["status_kind"], "Committed")
         self.assertEqual(committed["status_scope"], "global")
-        self.assertEqual(committed["status_summary"], "Committed in block 91")
+        self.assertEqual(committed["status_resolved_from"], "state")
+        self.assertEqual(committed["status_block_height"], 91)
         self.assertEqual(rejected_status, 200)
         self.assertEqual(rejected["status_kind"], "Rejected")
         self.assertEqual(rejected["status_scope"], "global")
-        self.assertEqual(
-            rejected["rejection_reason"],
-            {"Validation": {"NotPermitted": "denied"}},
-        )
-        self.assertEqual(rejected["status_diagnostics"][0]["code"], "not_permitted")
+        self.assertNotIn("rejection_reason", rejected)
+        self.assertNotIn("status_summary", rejected)
+        self.assertNotIn("status_diagnostics", rejected)
         self.assertEqual(missing_status, 200)
         self.assertFalse(missing["ok"])
         self.assertEqual(missing["status_kind"], "NotFound")
-        self.assertEqual(missing["status_scope"], "auto")
+        self.assertEqual(missing["status_scope"], "global")
 
     def test_pipeline_status_proxy_requires_hash(self) -> None:
         signer = make_signer()
@@ -2948,6 +3249,9 @@ class ContractConsoleTests(unittest.TestCase):
             scope_status, scope_payload = request_json(
                 f"{server.base_url}/api/pipeline/transactions/status?environment=testnet&hash={'a' * 64}&scope=state"
             )
+            alias_status, alias_payload = request_json(
+                f"{server.base_url}/api/pipeline/transactions/status?environment=testnet&hash={'a' * 64}&scope=auto"
+            )
 
         self.assertEqual(status, 400)
         self.assertFalse(payload["ok"])
@@ -2960,7 +3264,10 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertIn("nonzero lowercase 32-byte", unsafe_payload["error"])
         self.assertEqual(scope_status, 400)
         self.assertFalse(scope_payload["ok"])
-        self.assertIn("scope must be local, auto, or global", scope_payload["error"])
+        self.assertIn("scope must be local or global", scope_payload["error"])
+        self.assertEqual(alias_status, 400)
+        self.assertFalse(alias_payload["ok"])
+        self.assertIn("scope must be local or global", alias_payload["error"])
 
     def test_pipeline_status_proxy_rejects_unknown_upstream_kind(self) -> None:
         signer = make_signer()
@@ -2973,8 +3280,6 @@ class ContractConsoleTests(unittest.TestCase):
                 "scope": "global",
                 "resolved_from": "cache",
                 "status": {"kind": "Pending"},
-                "summary": "Pending",
-                "diagnostics": [],
             }), "application/json"
 
         with mock.patch.object(contract_console, "proxy_torii_request", side_effect=fake_proxy):
@@ -2987,6 +3292,53 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["error_code"], "invalid_upstream_status_payload")
         self.assertIn("unknown typed status kind", payload["error"])
+
+    def test_pipeline_status_proxy_rejects_retired_public_detail_fields(self) -> None:
+        signer = make_signer()
+        state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
+        tx_hash = "66" * 32
+
+        for retired_field, retired_value in (
+            ("summary", "Rejected"),
+            ("diagnostics", []),
+        ):
+            with self.subTest(field=retired_field):
+                def fake_proxy(*args, **kwargs):
+                    response = {
+                        "hash": tx_hash,
+                        "scope": "global",
+                        "resolved_from": "state",
+                        "status": {"kind": "Rejected"},
+                        retired_field: retired_value,
+                    }
+                    return 200, json.dumps(response), "application/json"
+
+                with mock.patch.object(contract_console, "proxy_torii_request", side_effect=fake_proxy):
+                    with RunningServer(state) as server:
+                        status, payload = request_json(
+                            f"{server.base_url}/api/pipeline/transactions/status?environment=testnet&hash={tx_hash}"
+                        )
+                self.assertEqual(status, 502)
+                self.assertFalse(payload["ok"])
+                self.assertIn("current status-only DTO", payload["error"])
+
+        def fake_rejection_reason(*args, **kwargs):
+            response = {
+                "hash": tx_hash,
+                "scope": "global",
+                "resolved_from": "state",
+                "status": {"kind": "Rejected", "rejection_reason": "retired"},
+            }
+            return 200, json.dumps(response), "application/json"
+
+        with mock.patch.object(contract_console, "proxy_torii_request", side_effect=fake_rejection_reason):
+            with RunningServer(state) as server:
+                status, payload = request_json(
+                    f"{server.base_url}/api/pipeline/transactions/status?environment=testnet&hash={tx_hash}"
+                )
+        self.assertEqual(status, 502)
+        self.assertFalse(payload["ok"])
+        self.assertIn("current status-only DTO", payload["error"])
 
     def test_testnet_call_requires_mutation_gate(self) -> None:
         signer = make_signer(private_key="802620fixture")
@@ -3007,15 +3359,57 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("SORASWAP_ALLOW_TESTNET_MUTATIONS=1", payload["error"])
 
-    def test_testnet_call_is_allowed_when_mutation_gate_is_enabled(self) -> None:
-        signer = make_signer(private_key="802620fixture")
+    def test_contract_console_rejects_json_number_manifest_numeric_arguments(self) -> None:
+        signer = make_signer(
+            private_key=BRIDGE_TEST_PRIVATE_KEY,
+            public_key=BRIDGE_TEST_PUBLIC_KEY,
+        )
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        with mock.patch.object(contract_console, "proxy_torii_request") as proxy:
+            with RunningServer(state) as server:
+                status, payload = request_json(
+                    f"{server.base_url}/api/call",
+                    {
+                        "environment": "testnet",
+                        "contract_address": "tairac1bridgefixture",
+                        "entrypoint": "lock_to_remote",
+                        "payload": {
+                            "route": "testnet_lane",
+                            "transfer": "transfer-1",
+                            "recipient": "recipient-1",
+                            "amount": 25,
+                        },
+                    },
+                )
+
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["ok"])
+        self.assertIn(
+            "payload.amount for manifest type quantity must be an exact canonical JSON string",
+            payload["error"],
+        )
+        proxy.assert_not_called()
+
+    def test_testnet_call_is_allowed_when_mutation_gate_is_enabled(self) -> None:
+        signer = make_signer(
+            private_key=BRIDGE_TEST_PRIVATE_KEY,
+            public_key=BRIDGE_TEST_PUBLIC_KEY,
+        )
+        state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
+        captured_payloads: list[dict] = []
+
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(torii_url, "https://taira.sora.org")
             self.assertEqual(path, "/v1/contracts/call")
             self.assertEqual(method, "POST")
-            return 200, json.dumps({"submitted": True, "tx_hash_hex": "facefeed"}), "application/json"
+            captured_payloads.append(payload)
+            response = contract_call_response(
+                contract_address="tairac1bridgefixture",
+                entrypoint="lock_to_remote",
+                submitted=len(captured_payloads) == 2,
+            )
+            return 200, json.dumps(response), "application/json"
 
         with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=False):
             with mock.patch.object(contract_console, "proxy_torii_request", side_effect=fake_proxy):
@@ -3026,13 +3420,28 @@ class ContractConsoleTests(unittest.TestCase):
                             "environment": "testnet",
                             "contract_address": "tairac1bridgefixture",
                             "entrypoint": "lock_to_remote",
-                            "payload": {"route": "testnet_lane"},
+                            "payload": {
+                                "route": "testnet_lane",
+                                "transfer": "transfer-1",
+                                "recipient": "recipient-1",
+                                "amount": "1",
+                            },
                         },
                     )
 
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["tx_hash_hex"], "facefeed")
+        self.assertEqual(payload["tx_hash_hex"], "ab" * 32)
+        self.assertEqual(len(captured_payloads), 2)
+        self.assertEqual(
+            captured_payloads[0]["fee_payment"],
+            contract_console.authority_fee_payment_intent(contract_console.DEFAULT_GAS_LIMIT),
+        )
+        self.assertNotIn("gas_limit", captured_payloads[0])
+        self.assertNotIn("private_key", json.dumps(captured_payloads))
+        self.assertEqual(captured_payloads[1]["public_key_hex"], BRIDGE_TEST_PUBLIC_KEY.removeprefix("ed0120"))
+        self.assertEqual(captured_payloads[1]["creation_time_ms"], 1_750_000_000_002)
+        self.assertEqual(captured_payloads[1]["fee_payment"], captured_payloads[0]["fee_payment"])
 
     def test_production_call_requires_mutation_gate(self) -> None:
         self.fixture.add_environment(
@@ -3044,7 +3453,8 @@ class ContractConsoleTests(unittest.TestCase):
             environment="production",
             authority="i105production",
             torii_url="https://production.example.invalid",
-            private_key="802620fixture",
+            private_key=BRIDGE_TEST_PRIVATE_KEY,
+            public_key=BRIDGE_TEST_PUBLIC_KEY,
         )
         state = contract_console.ContractConsoleState(self.fixture.root, {"production": signer})
 
@@ -3063,6 +3473,43 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1", payload["error"])
 
+    def test_contract_call_rejects_tampered_prepared_signing_message(self) -> None:
+        signer = make_signer(
+            private_key=BRIDGE_TEST_PRIVATE_KEY,
+            public_key=BRIDGE_TEST_PUBLIC_KEY,
+        )
+        state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
+        calls = 0
+
+        def fake_proxy(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            response = contract_call_response(
+                contract_address="tairac1bridgefixture",
+                entrypoint="lock_to_remote",
+                submitted=False,
+            )
+            response["signing_message_b64"] = base64.b64encode(b"x" * 32).decode("ascii")
+            return 200, json.dumps(response), "application/json"
+
+        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=False):
+            with mock.patch.object(contract_console, "proxy_torii_request", side_effect=fake_proxy):
+                with RunningServer(state) as server:
+                    status, payload = request_json(
+                        f"{server.base_url}/api/call",
+                        {
+                            "environment": "testnet",
+                            "contract_address": "tairac1bridgefixture",
+                            "entrypoint": "lock_to_remote",
+                        },
+                    )
+
+        self.assertEqual(status, 502)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["error_code"], "contract_call_detached_signing_failed")
+        self.assertIn("canonical transaction payload", payload["error"])
+        self.assertEqual(calls, 1)
+
     def test_production_call_is_allowed_when_mutation_gate_is_enabled(self) -> None:
         self.fixture.add_environment(
             "production",
@@ -3073,15 +3520,23 @@ class ContractConsoleTests(unittest.TestCase):
             environment="production",
             authority="i105production",
             torii_url="https://production.example.invalid",
-            private_key="802620fixture",
+            private_key=BRIDGE_TEST_PRIVATE_KEY,
+            public_key=BRIDGE_TEST_PUBLIC_KEY,
         )
         state = contract_console.ContractConsoleState(self.fixture.root, {"production": signer})
+        captured_payloads: list[dict] = []
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(torii_url, "https://production.example.invalid")
             self.assertEqual(path, "/v1/contracts/call")
             self.assertEqual(method, "POST")
-            return 200, json.dumps({"submitted": True, "tx_hash_hex": "prodfeed"}), "application/json"
+            captured_payloads.append(payload)
+            response = contract_call_response(
+                contract_address="prodc1bridgefixture",
+                entrypoint="lock_to_remote",
+                submitted=len(captured_payloads) == 2,
+            )
+            return 200, json.dumps(response), "application/json"
 
         with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_PRODUCTION_MUTATIONS": "1"}, clear=False):
             with mock.patch.object(contract_console, "proxy_torii_request", side_effect=fake_proxy):
@@ -3092,19 +3547,25 @@ class ContractConsoleTests(unittest.TestCase):
                             "environment": "production",
                             "contract_address": "prodc1bridgefixture",
                             "entrypoint": "lock_to_remote",
-                            "payload": {"route": "production_lane"},
+                            "payload": {
+                                "route": "production_lane",
+                                "transfer": "transfer-1",
+                                "recipient": "recipient-1",
+                                "amount": "1",
+                            },
                         },
                     )
 
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
-        self.assertEqual(payload["tx_hash_hex"], "prodfeed")
+        self.assertEqual(payload["tx_hash_hex"], "ab" * 32)
+        self.assertEqual(len(captured_payloads), 2)
 
     def test_transaction_history_unavailable_degrades_cleanly(self) -> None:
         signer = make_signer()
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(path, "/v1/transactions/history")
             self.assertEqual(method, "GET")
             self.assertEqual(query, {"limit": "5"})
@@ -3130,7 +3591,7 @@ class ContractConsoleTests(unittest.TestCase):
         state = contract_console.ContractConsoleState(self.fixture.root, {"testnet": signer})
         observed_queries: list[dict[str, str]] = []
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(path, "/v1/transactions/history")
             self.assertEqual(method, "GET")
             observed_queries.append(query)
@@ -3205,6 +3666,110 @@ class ContractConsoleTests(unittest.TestCase):
         self.assertEqual(opener.open.call_count, 1)
         self.assertTrue(any(isinstance(arg, contract_console.NoRedirectHandler) for arg in build.call_args.args))
 
+    def test_canonical_request_message_matches_current_iroha_wire_oracle(self) -> None:
+        network_id = (
+            "hash:7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B7B#EB7B"
+        )
+        raw_query = "b=%FF&a=%E2%82%AC&literal=%GG&space=a+b&&empty"
+        message = contract_console.canonical_account_request_message(
+            network_id,
+            "POST",
+            f"https://torii.example/v1/contracts/view?{raw_query}",
+            b"wire body",
+            1_902_345_678_901,
+            "bounded-message-parity",
+        )
+        expected = b"iroha.app.request.network.v1\0" + bytes([0x7B]) * 32
+        expected += (
+            b"POST\n/v1/contracts/view\n"
+            b"a=%E2%82%AC&b=%EF%BF%BD&empty=&literal=%25GG&space=a+b\n"
+            b"6119ee2a454af16109eb044507a4dcaa39ae21297562f996e8d0dea6de66094c\n"
+            b"1902345678901\nbounded-message-parity"
+        )
+        self.assertEqual(message, expected)
+
+    def test_canonical_account_headers_bind_exact_transmitted_request(self) -> None:
+        signer = make_signer(
+            private_key=BRIDGE_TEST_PRIVATE_KEY,
+            public_key=BRIDGE_TEST_PUBLIC_KEY,
+        )
+        upstream = mock.MagicMock()
+        upstream.__enter__.return_value = upstream
+        upstream.read.return_value = b"{}"
+        upstream.status = 200
+        upstream.headers = {"Content-Type": "application/json"}
+        opener = mock.Mock()
+        opener.open.return_value = upstream
+        payload = {"authority": "i105fixture", "payload": {"note": "\u20ac"}}
+
+        with mock.patch.object(contract_console.urllib.request, "build_opener", return_value=opener):
+            status, _, _ = contract_console.proxy_torii_request(
+                "https://taira.sora.org",
+                "/v1/contracts/view",
+                method="POST",
+                payload=payload,
+                query=None,
+                basic_auth=signer.basic_auth,
+                timeout=1,
+                canonical_signer=signer,
+            )
+
+        self.assertEqual(status, 200)
+        request = opener.open.call_args.args[0]
+        self.assertEqual(
+            request.data,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        )
+        headers = {key.lower(): value for key, value in request.header_items()}
+        self.assertEqual(
+            headers["x-iroha-account"],
+            "0x02000120" + BRIDGE_TEST_PUBLIC_KEY.removeprefix("ed0120"),
+        )
+        self.assertEqual(set(contract_console.CANONICAL_ACCOUNT_AUTH_HEADERS), {
+            "X-Iroha-Account",
+            "X-Iroha-Signature",
+            "X-Iroha-Timestamp-Ms",
+            "X-Iroha-Nonce",
+        })
+        message = contract_console.canonical_account_request_message(
+            signer.network_id,
+            request.method,
+            request.full_url,
+            request.data,
+            int(headers["x-iroha-timestamp-ms"]),
+            headers["x-iroha-nonce"],
+        )
+        self.assertTrue(
+            contract_console.verify_ed25519_signature_b64(
+                signer.public_key,
+                message,
+                headers["x-iroha-signature"],
+            )
+        )
+        self.assertNotIn(signer.private_key, json.dumps(headers))
+
+    def test_protected_torii_routes_never_fall_back_to_unsigned_http(self) -> None:
+        with mock.patch.object(contract_console.urllib.request, "build_opener") as build_opener:
+            for path in sorted(contract_console.CANONICAL_ACCOUNT_AUTH_PATHS):
+                with self.subTest(path=path), self.assertRaisesRegex(
+                    ValueError,
+                    "canonical account request authentication is required",
+                ):
+                    contract_console.proxy_torii_request(
+                        "https://taira.sora.org",
+                        path,
+                        method="POST",
+                        payload={"authority": "i105fixture"},
+                        query=None,
+                        basic_auth=None,
+                        timeout=1,
+                    )
+        build_opener.assert_not_called()
+
+    def test_canonical_network_id_rejects_checksum_mismatch(self) -> None:
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            contract_console.canonical_network_id_bytes(TAIRA_NETWORK_ID[:-4] + "0000")
+
     def test_authenticated_proxy_suppresses_basic_auth_response_echoes(self) -> None:
         login = "operator"
         password = "do-not-echo-this-password"
@@ -3246,7 +3811,7 @@ class ContractConsoleTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "credential material") as raised:
                 contract_console.proxy_torii_request(
                     "https://production.sora.org",
-                    "/v1/contracts/call",
+                    "/v1/contracts/activity",
                     method="POST",
                     payload={"authority": "i105fixture", "private_key": private_key},
                     query=None,

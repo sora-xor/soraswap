@@ -1,58 +1,27 @@
 # Cover State Layout
 
-Singleton scalar state:
-- `CoverInitialized`
-- `CoverOwner`
-- `CoverSettlementAsset`
-- `CoverRiskVaultContract`
-- `CoverContractBound`
-- `CoverContractId`
-- `CoverWithdrawalOnly`
-- `CoverOraclePublicKey`
-- `CoverOracleScheme`
-- `CoverDefaultRequiredObservations`
-- `CoverOracleStaleSlots`
-- `CoverAutomationExecutor`
-- `CoverObservationJobId`
-- `CoverAutomationCadence`
-- `CoverAutomationBacklogCap`
-- `CoverAutomationBacklog`
-- `CoverAutomationSafeMode`
-- `CoverNextPolicyId`
-- `CoverLifecycleCadenceSlots`
-- `CoverLifecycleMaxItems`
-- `CoverLifecycleEnabled`
-- `CoverLifecycleNextSlot`
-- `CoverLifecycleCursor`
-- `CoverLifecycleLastSlot`
-- `CoverLifecycleLastProcessed`
+Singleton state:
+
+- initialization and authority: `CoverInitialized`, `CoverOwner`, `CoverGuardian`, `CoverOracleAuthority`
+- custody and safety: `CoverAccount`, `CoverSettlementAsset`, `CoverWithdrawalOnly`
+- reserve accounting: `CoverReservedPayout`, `CoverPremiumCollected`, `CoverSettledPayouts`
+- oracle policy: `CoverDefaultRequiredObservations`, `CoverOracleStaleSlots`
+- automation: `CoverAutomationExecutor`, `CoverObservationJobId`, `CoverAutomationCadence`, `CoverAutomationBacklogCap`, `CoverAutomationBacklog`, `CoverAutomationSafeMode`
+- lifecycle: `CoverLifecycleCadenceSlots`, `CoverLifecycleMaxItems`, `CoverLifecycleEnabled`, `CoverLifecycleNextSlot`, `CoverLifecycleCursor`, `CoverLifecycleLastSlot`, `CoverLifecycleLastProcessed`
+- append-only cursor: `CoverNextPolicyId`
 
 Per-policy maps:
-- `CoverPolicyOwner`
-- `CoverPolicyLowerBound`
-- `CoverPolicyUpperBound`
-- `CoverPolicyPayoutAmount`
-- `CoverPolicyMonitoringWindowSlots`
-- `CoverPolicyRequiredObservations`
-- `CoverPolicyCoveredNotional`
-- `CoverPolicyPremiumPaid`
-- `CoverPolicyStatus`
-- `CoverPolicyRegistrationSlot`
-- `CoverPolicyBreachStartSlot`
-- `CoverPolicyBreachElapsedSlots`
-- `CoverPolicyObservationCount`
-- `CoverPolicyLastObservationSlot`
-- `CoverPolicyLastOracleSlot`
-- `CoverPolicyLastObservedPrice`
-- `CoverPolicyClaimPayout`
-- `CoverPolicyClaimCount`
 
-View tuple fields returned by `manager_config()`, `policy_state()`, and `automation_state()` cover:
-- settlement asset, risk-vault contract, withdrawal-only flag, default observation threshold, stale-oracle threshold, and automation config
-- per-policy status, bounds, payout amount, monitoring window, observation counts, latest observed price, and claim payout
-- automation executor/job binding, backlog, cadence, and safe-mode state
-- bucket `3` liability routing through `risk_vault`, keyed by `policy_id`
-- `CoverRiskVaultContract` stores the deployed `risk_vault` contract address literal as UTF-8 `bytes` for the ABI v1 `call_contract(...)` target; `bind_risk_vault(...)` rewrites that target without disturbing live policy state. `manager_config()` exposes the stored bytes as a hex string.
-- `CoverOraclePublicKey` and `CoverOracleScheme` are init-only for v1. `CoverOracleStaleSlots` is owner-configurable through `configure_oracle_stale_slots(...)` so public deploys can widen oracle freshness windows without resetting policy maps. `CoverNextPolicyId` is owner-advanceable through `configure_next_policy_id(...)`; bootstrap scans cover policy rows plus `risk_vault` bucket-3 liability rows and advances the cursor beyond used exposure ids so public code refreshes do not reuse a risk-vault liability id. Observation payloads must use domain `4` and include `policy_id`, `observed_price`, `oracle_slot`, `status_flags`, and `attestation_hash`. `CoverPolicyLastOracleSlot` enforces monotonic signed observations per policy.
+- identity and terms: `CoverPolicyOwner`, `CoverPolicyLowerBound`, `CoverPolicyUpperBound`, `CoverPolicyPayoutAmount`, `CoverPolicyCoveredNotional`, `CoverPolicyPremiumPaid`
+- timing and status: `CoverPolicyMonitoringWindowSlots`, `CoverPolicyRequiredObservations`, `CoverPolicyStatus`, `CoverPolicyRegistrationSlot`
+- breach state: `CoverPolicyBreachStartSlot`, `CoverPolicyBreachElapsedSlots`, `CoverPolicyObservationCount`
+- oracle audit state: `CoverPolicyLastOracleSlot`, `CoverPolicyLastObservedPrice`, `CoverPolicyLastAttestationHash`
+- settlement: `CoverPolicyClaimPayout`
 
-Automation state is split intentionally: `sync_automation(...)` binds the observation job and cap settings, while `heartbeat(...)` updates the live backlog/safe-mode fields and reports bucket `3` telemetry into `risk_vault`.
+Reserve invariant:
+
+`ledger::asset::balance(CoverAccount, CoverSettlementAsset) >= CoverReservedPayout`
+
+Registration checks the invariant against the projected post-premium balance before reserving a new payout. Claim and expiry atomically remove exactly one policy's payout from `CoverReservedPayout`; only a claim also transfers that amount and increments `CoverSettledPayouts`.
+
+There is no risk-vault contract binding or cross-contract liability key in the first-release layout. `reserve_state()` exposes live balance, reserved payout, surplus, cumulative premiums, and cumulative paid claims.

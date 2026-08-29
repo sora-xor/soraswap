@@ -6,16 +6,6 @@ source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 stopped=0
 setopt null_glob
 
-legacy_pid_matches_localnet() {
-  local pid="$1"
-  local command_line
-
-  [[ "$pid" == <-> ]] || return 1
-  command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-  [[ -n "$command_line" ]] || return 1
-  [[ "$command_line" == *"/irohad"* && "$command_line" == *"$SORASWAP_ROOT/tmp/"* ]]
-}
-
 peer_pid_matches_localnet_dir() {
   local pid="$1"
   local config="$2"
@@ -24,7 +14,7 @@ peer_pid_matches_localnet_dir() {
   [[ "$pid" == <-> ]] || return 1
   command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
   [[ -n "$command_line" ]] || return 1
-  [[ "$command_line" == *"/irohad"* ]] || return 1
+  [[ "$command_line" == *"/iroha3d"* ]] || return 1
   [[ "$command_line" == *"--config $config"* || "$command_line" == *"--config=$config"* ]]
 }
 
@@ -58,19 +48,6 @@ if [[ -x "$DEFAULT_LOCALNET_DIR/stop.sh" ]]; then
     echo "removed stale local Nexus pid files in $DEFAULT_LOCALNET_DIR"
     stopped=1
   fi
-fi
-
-legacy_pid_file="$SORASWAP_ROOT/tmp/irohad.local.pid"
-if [[ -f "$legacy_pid_file" ]]; then
-  pid="$(cat "$legacy_pid_file")"
-  if legacy_pid_matches_localnet "$pid"; then
-    kill "$pid" || true
-    echo "stopped legacy local Nexus pid $pid"
-    stopped=1
-  else
-    echo "removed stale legacy local Nexus pid file $legacy_pid_file"
-  fi
-  rm -f "$legacy_pid_file"
 fi
 
 if [[ "$stopped" -eq 0 ]]; then

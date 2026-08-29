@@ -1,24 +1,23 @@
 // Immutable launchpad-to-DLMM liquidity bridge.
 //
-// Only the configured sale-factory contract subject may stage a sale's seed
-// assets. The executor transfers those assets into its own contract subject and
-// then performs an exact schema-bound pool call. Failed calls roll back both
-// transfers. Every seed position is unique and its minted shares are recorded.
+// Only the configured sale-factory contract subject may stage seed assets. The
+// executor derives its custody account from the deployed contract subject and
+// performs Iroha's exact Quantity2 call into the pool. Failed calls roll back
+// both transfers. The pool owns the fixed position/bin binding; the executor
+// records aggregate deposits and shares while the factory records per-sale
+// shares.
 
 seiyaku LaunchpadLiquidityExecutor {
   error enum LaunchpadLiquidityExecutorError {
     IdenticalAssets = 1,
-    ExecutorAccountIsOwner = 2,
+    InvalidAuthoritySeparation = 2,
     ExecutorOwnerMismatch = 3,
     ExecutorGuardianMismatch = 4,
     ExecutorPaused = 5,
     InvalidPaused = 6,
     SaleFactoryMismatch = 7,
-    FundingAccountMismatch = 8,
-    ZeroLiquidity = 9,
-    DuplicatePosition = 10,
-    PositionMissing = 11,
-    PoolSeedFailed = 12,
+    ZeroLiquidity = 8,
+    PoolSeedFailed = 9,
   }
 
   state int ExecutorInitialized;
@@ -32,12 +31,10 @@ seiyaku LaunchpadLiquidityExecutor {
   state AccountId SaleFactoryContractAccount;
 
   state int SeedCount;
-  state StateMap<Name, int> SeedCompleted;
-  state StateMap<Name, int> SeedBinId;
-  state StateMap<Name, quantity> SeedBaseAmount;
-  state StateMap<Name, quantity> SeedQuoteAmount;
-  state StateMap<Name, quantity> SeedShares;
-  state StateMap<Name, int> SeedSlot;
+  state quantity TotalBaseAmount;
+  state quantity TotalQuoteAmount;
+  state quantity TotalShares;
+  state int LastSeedSlot;
 
   fn zero_quantity() -> quantity {
     let quantity zero = 0;
@@ -98,14 +95,19 @@ seiyaku LaunchpadLiquidityExecutor {
     bytes pool_contract,
     AssetDefinitionId base_asset,
     AssetDefinitionId quote_asset,
-    AccountId executor_account,
     AccountId sale_factory_account,
     AccountId guardian
   ) {
     require(base_asset != quote_asset, LaunchpadLiquidityExecutorError::IdenticalAssets);
+    let executor_account = context::seiyaku_subject();
     require(
-      executor_account != context::authority(),
-      LaunchpadLiquidityExecutorError::ExecutorAccountIsOwner
+      executor_account != context::authority() &&
+      sale_factory_account != context::authority() &&
+      sale_factory_account != executor_account &&
+      guardian != context::authority() &&
+      guardian != executor_account &&
+      guardian != sale_factory_account,
+      LaunchpadLiquidityExecutorError::InvalidAuthoritySeparation
     );
 
     ExecutorInitialized = 1;
@@ -118,6 +120,10 @@ seiyaku LaunchpadLiquidityExecutor {
     ExecutorContractAccount = executor_account;
     SaleFactoryContractAccount = sale_factory_account;
     SeedCount = 0;
+    TotalBaseAmount = zero_quantity();
+    TotalQuoteAmount = zero_quantity();
+    TotalShares = zero_quantity();
+    LastSeedSlot = 0;
   }
 
   view fn main() -> int {
@@ -137,24 +143,25 @@ seiyaku LaunchpadLiquidityExecutor {
     ExecutorPaused = paused;
   }
 
-  view fn executor_config(
-  ) -> (AssetDefinitionId, AssetDefinitionId, AccountId, AccountId, int) {
+  view fn executor_config() -> (
+    bytes,
+    AssetDefinitionId,
+    AssetDefinitionId,
+    AccountId,
+    AccountId,
+    AccountId,
+    AccountId,
+    int
+  ) {
     return (
+      PoolContract,
       BaseAsset,
       QuoteAsset,
+      ExecutorOwner,
+      ExecutorGuardian,
       ExecutorContractAccount,
       SaleFactoryContractAccount,
       ExecutorPaused
-    );
-  }
-
-  view fn executor_binding_details() -> (bytes, AccountId, AccountId, int, int) {
-    return (
-      PoolContract,
-      ExecutorContractAccount,
-      SaleFactoryContractAccount,
-      1,
-      1
     );
   }
 
@@ -162,78 +169,59 @@ seiyaku LaunchpadLiquidityExecutor {
     return SeedCount;
   }
 
-  view fn mirror_seed(
-    Name position_id
-  ) -> (int, int, quantity, quantity, quantity, int) {
-    require(
-      SeedCompleted.contains(position_id),
-      LaunchpadLiquidityExecutorError::PositionMissing
-    );
+  view fn liquidity_state() -> (int, quantity, quantity, quantity, int) {
     return (
-      SeedCompleted.get(position_id).unwrap_or(0),
-      SeedBinId.get(position_id).unwrap_or(0),
-      SeedBaseAmount.get(position_id).unwrap_or(zero_quantity()),
-      SeedQuoteAmount.get(position_id).unwrap_or(zero_quantity()),
-      SeedShares.get(position_id).unwrap_or(zero_quantity()),
-      SeedSlot.get(position_id).unwrap_or(0)
+      SeedCount,
+      TotalBaseAmount,
+      TotalQuoteAmount,
+      TotalShares,
+      LastSeedSlot
     );
   }
 
+  // Iroha's current cross-contract ABI requires exactly these names and types.
+  // For launchpad seeding, `amount_in` is the base-side deposit and `min_out`
+  // is the quote-side deposit, not a slippage threshold.
   kotoage fn seed_liquidity(
-    Name position_id,
-    AccountId funding_account,
-    int bin_id,
-    quantity base_amount,
-    quantity quote_amount
+    quantity amount_in,
+    quantity min_out
   ) -> quantity authorize("AssetOps") {
     assert_not_paused();
     assert_sale_factory();
     require(
-      funding_account == SaleFactoryContractAccount,
-      LaunchpadLiquidityExecutorError::FundingAccountMismatch
-    );
-    require(
-      base_amount > zero_quantity() || quote_amount > zero_quantity(),
+      amount_in > zero_quantity() && min_out > zero_quantity(),
       LaunchpadLiquidityExecutorError::ZeroLiquidity
-    );
-    require(
-      !SeedCompleted.contains(position_id),
-      LaunchpadLiquidityExecutorError::DuplicatePosition
     );
 
     move_asset_if_needed(
-      source: funding_account,
+      source: SaleFactoryContractAccount,
       destination: ExecutorContractAccount,
       asset: BaseAsset,
-      amount: base_amount
+      amount: amount_in
     );
     move_asset_if_needed(
-      source: funding_account,
+      source: SaleFactoryContractAccount,
       destination: ExecutorContractAccount,
       asset: QuoteAsset,
-      amount: quote_amount
+      amount: min_out
     );
     let minted_shares = contract::invoke(
       contract: PoolContract,
-      entrypoint: "seed_bin_c2c",
+      entrypoint: "seed_launchpad_liquidity",
       returns: "quantity",
-      position_id: position_id,
-      bin_id: bin_id,
-      base_amount: base_amount,
-      quote_amount: quote_amount
+      amount_in: amount_in,
+      min_out: min_out
     );
     require(
       minted_shares > zero_quantity(),
       LaunchpadLiquidityExecutorError::PoolSeedFailed
     );
 
-    SeedCompleted[position_id] = 1;
-    SeedBinId[position_id] = bin_id;
-    SeedBaseAmount[position_id] = base_amount;
-    SeedQuoteAmount[position_id] = quote_amount;
-    SeedShares[position_id] = minted_shares;
-    SeedSlot[position_id] = context::block_height();
     SeedCount = SeedCount + 1;
+    TotalBaseAmount = TotalBaseAmount + amount_in;
+    TotalQuoteAmount = TotalQuoteAmount + min_out;
+    TotalShares = TotalShares + minted_shares;
+    LastSeedSlot = context::block_height();
     return minted_shares;
   }
 }

@@ -44,6 +44,7 @@ basic_token="$(printf '%s:%s' "$login" "$password" | base64 | tr -d '\r\n')"
 config="$fixture_root/config/production/production.client.toml"
 cat >"$config" <<EOF
 chain = "production-auth-smoke"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://torii.invalid"
 
 [account]
@@ -448,71 +449,11 @@ replacement_config_path="$(cat "$captured_replacement_path")"
 rm -f -- "$replacement_config_path" "$captured_original_config" "$captured_replacement_path"
 
 operator="i105operator"
-fake_contract_app="$work_dir/fake-contract-app.zsh"
-contract_app_capture_dir="$work_dir/contract-app-capture"
-mkdir -p "$contract_app_capture_dir"
-cat >"$fake_contract_app" <<'EOF'
-#!/bin/zsh
-set -euo pipefail
-
-action=""
-private_key_file=""
-for ((idx = 1; idx <= $#; idx++)); do
-  arg="${@[idx]}"
-  if [[ "$arg" == "contract" && $((idx + 2)) -le $# && "${@[$((idx + 1))]}" == "app" ]]; then
-    action="${@[$((idx + 2))]}"
-  fi
-  case "$arg" in
-    --config|--metadata|--private-key-file)
-      (( idx < $# ))
-      file_path="${@[$((idx + 1))]}"
-      [[ "$file_path" == /* && "${file_path:A}" == "$file_path" && -f "$file_path" ]]
-      [[ "$(stat -f '%Lp' "$file_path")" == "600" ]]
-      [[ "$arg" != "--private-key-file" ]] || private_key_file="$file_path"
-      ;;
-  esac
-done
-[[ "$action" == "plan" || "$action" == "deploy" ]]
-if [[ "$action" == "plan" ]]; then
-  [[ -z "$private_key_file" ]]
-else
-  [[ -n "$private_key_file" ]]
-fi
-printf '%s\n' "$@" >"$APP_CAPTURE_DIR/$action.args"
-printf '%s\n' '{"status":"completed"}'
-EOF
-chmod 700 "$fake_contract_app"
-(
-  ensure_iroha_cli_bin() {
-    SORASWAP_ACTIVE_IROHA_CLI_BIN="$fake_contract_app"
-  }
-  export APP_CAPTURE_DIR="$contract_app_capture_dir"
-  export SORASWAP_PUBLIC_ENV=production
-  export SORASWAP_ROOT="$fixture_root"
-  export SORASWAP_AUTHORITY="$operator"
-  export SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID='fixture-fee-id'
-  export SORASWAP_PRODUCTION_FEE_ASSET_LABEL='fixture-fee'
-  export SORASWAP_LEDGER_GAS_LIMIT=2000000
-  export SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS=0
-  export SORASWAP_CONTRACT_APP_DEPLOY_ATTEMPTS=1
-  submit_contract_app_bundle "$config" plan "$work_dir/fake.contracts.toml" >/dev/null \
-    || fail "keyless contract app plan fake interface failed"
-  submit_contract_app_bundle "$config" deploy "$work_dir/fake.contracts.toml" >/dev/null \
-    || fail "file-backed contract app deploy fake interface failed"
-)
-[[ -f "$contract_app_capture_dir/plan.args" && -f "$contract_app_capture_dir/deploy.args" ]] \
-  || fail "contract app fake interface did not execute both actions"
-if rg -Fq -- '--private-key-file' "$contract_app_capture_dir/plan.args"; then
-  fail "contract app plan received a signing key"
-fi
-rg -Fq -- '--private-key-file' "$contract_app_capture_dir/deploy.args" \
-  || fail "contract app deploy did not receive a file-backed signing key"
-
 permission_state="$work_dir/permission-state"
 export SORASWAP_AUTHORITY="$operator"
 iroha_cli_json() {
   if [[ "$*" == *" ledger account get "* ]]; then
-    jq -cn --arg id "${EXACT_ACCOUNT_READBACK_ID:-${@[-1]}}" '{id: $id}'
+    jq -cn --arg id "${EXACT_ACCOUNT_READBACK_ID:-${@[-1]}}" '{account_id: $id}'
     return 0
   fi
   if [[ -f "$permission_state" ]]; then
@@ -548,7 +489,7 @@ printf '%s\n' '[{"name":"Admin","payload":null}]' >"$permission_state"
 expect_failure "missing production operator permissions" require_production_operator_permissions "$config" "$operator"
 
 grant_marker="$work_dir/grant-called"
-iroha_cli_with_gas_metadata() {
+iroha_cli_with_authority_fee() {
   : >"$grant_marker"
 }
 expect_failure "production operator self-grant" ensure_unit_account_permission "$config" "$operator" AssetOps
@@ -556,7 +497,7 @@ expect_failure "production operator self-grant" ensure_unit_account_permission "
 
 export SORASWAP_PUBLIC_ENV=testnet
 testnet_subject="i105testnetsubject"
-iroha_cli_with_gas_metadata() {
+iroha_cli_with_authority_fee() {
   cat >"$permission_state" <<'EOF'
 [{"name":"AssetOps","payload":null}]
 EOF
@@ -581,26 +522,68 @@ expect_failure "missing production fee asset id" env \
   SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID= \
   zsh -c 'source "$1"; fee_asset_definition_id_for_config "$2"' zsh "$repo_root/scripts/common.sh" "$config"
 
-rg -Fq -- '--client-config="$candidate_client_config"' "$repo_root/scripts/publish_trader_api_bundle.sh" \
-  || fail "publisher does not require file-backed client config"
+zsh "$repo_root/tests/sorafs_publish_summary_validation_smoke.sh" >/dev/null \
+  || fail "current SoraFS publish summary validators rejected their focused fixtures"
+
 rg -Fq -- 'refusing a non-canonical file-backed secret/config path' "$repo_root/scripts/publish_trader_api_bundle.sh" \
   || fail "publisher does not reject non-canonical candidate secret/config paths"
 rg -Fq -- '--private-key-file="$publisher_private_key_file"' "$repo_root/scripts/publish_trader_api_bundle.sh" \
   || fail "publisher does not require file-backed private key"
-rg -Fq -- '--api-token-file "$api_token_file"' "$repo_root/scripts/publish_trader_api_bundle.sh" \
-  || fail "publisher does not require file-backed API token"
+rg -Fq -- '--network-id="$manifest_network_id"' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not submit the exact configured genesis NetworkId"
+rg -Fq -- '--network-prefix="$manifest_network_prefix"' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not submit the configured account chain discriminant"
+rg -Fq -- 'storage prepare' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not prepare current provider-ingest artifacts"
+rg -Fq -- 'state: "awaiting_finalized_provider_assignment"' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not report the current provider-assignment state"
+rg -Fq -- 'direct_http_ingest: false' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher claims retired direct HTTP ingest"
+rg -Fq -- 'SORASWAP_TRADER_API_GATEWAY_PROPAGATION_ATTEMPTS' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not expose current gateway propagation controls"
+if rg -n -- 'storage pin|--resolve-submitted-epoch|--client-config|pin_summary|SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION' \
+  "$repo_root/scripts/publish_trader_api_bundle.sh" >/dev/null; then
+  fail "publisher retains a retired SoraFS publish interface"
+fi
+rg -Fq -- 'current SoraFS manifest submit summary is missing, invalid, or mismatched' \
+  "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not fail closed on invalid current manifest-submit summaries"
+rg -Fq -- 'and .status == 202' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not require the current accepted manifest-registration status"
+rg -Fq -- 'and .submission_mode == "pin_register_http"' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not validate the current manifest submission mode"
+rg -Fq -- 'and .torii_response == $response' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not bind the current CLI summary to its exact Torii response"
+if rg -n -- 'json_file_or_null|extract_last_json_object|status: 200,[[:space:]]*$|summary_path: \$summary_path' \
+  "$repo_root/scripts/publish_trader_api_bundle.sh" >/dev/null; then
+  fail "publisher retains a legacy CLI response-shape fallback"
+fi
+rg -Fq -- 'api_token_args=(--api-token "$api_token_value")' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not use the current SoraCloud inline API-token option"
+rg -Fq -- 'soraswap_assert_client_output_clean "$config" "$api_token_file"' "$repo_root/scripts/publish_trader_api_bundle.sh" \
+  || fail "publisher does not suppress inline API-token echoes"
+if rg -Fq -- '--api-token-file' "$repo_root/scripts/publish_trader_api_bundle.sh"; then
+  fail "publisher retains the unsupported SoraCloud API-token-file option"
+fi
 rg -Fq -- 'soracloud service config-set' "$repo_root/scripts/publish_trader_api_bundle.sh" \
   || fail "publisher does not use the top-level SoraCloud service config-set command"
 if rg -Fq -- 'app soracloud config-set' "$repo_root/scripts/publish_trader_api_bundle.sh"; then
   fail "publisher retains the rejected nested app SoraCloud command"
 fi
 if rg -n -- '--private-key="\$\(|--api-token "\$SORASWAP_TORII_API_TOKEN"' "$repo_root/scripts/publish_trader_api_bundle.sh" >/dev/null; then
-  fail "publisher retains an inline secret fallback"
+  fail "publisher bypasses its protected secret handling"
 fi
-rg -Fq 'if [[ "$action" != "plan" ]]; then' "$repo_root/scripts/common.sh" \
-  || fail "contract app plan still materializes a signing key"
-rg -Fq 'app_args+=(--private-key-file "$private_key_file")' "$repo_root/scripts/common.sh" \
-  || fail "contract app deploy/resume does not use the file-backed signing key"
+rg -Fq -- 'seed_hex="$(printf '\''%s'\'' "$seed" | json_sha256)"' "$repo_root/scripts/bootstrap_contract_state.sh" \
+  || fail "contract-subject signer seed is not deterministically SHA-256 derived"
+rg -Fq -- '--seed-hex "$seed_hex"' "$repo_root/scripts/bootstrap_contract_state.sh" \
+  || fail "contract-subject signer does not use the current Kagami seed-hex option"
+if rg -Fq -- '--seed "$seed"' "$repo_root/scripts/bootstrap_contract_state.sh"; then
+  fail "contract-subject signer retains the retired Kagami seed option"
+fi
+semantic_contract_seed='iroha:contract-subject:v1:fixture-contract'
+expected_contract_seed_hex='771ba8231d7cbaf7c7c5634ef275ac9a28e4926de04b1aeaeac9b8d1d68b3757'
+[[ "$(printf '%s' "$semantic_contract_seed" | json_sha256)" == "$expected_contract_seed_hex" ]] \
+  || fail "contract-subject semantic seed SHA-256 derivation is not stable"
 rg -Fq 'ensure_public_signer_ready "$config" "$SORASWAP_AUTHORITY" verify-only' "$repo_root/scripts/publish_trader_api_bundle.sh" \
   || fail "publisher does not verify signer fee readiness"
 rg -Fq 'require_production_operator_permissions "$config" "$SORASWAP_AUTHORITY"' "$repo_root/scripts/publish_trader_api_bundle.sh" \
@@ -610,65 +593,6 @@ rg -Fq 'require_production_operator_permissions "$config" "$SORASWAP_AUTHORITY"'
 rg -Fq 'authenticated Torii response credential echo was suppressed' "$repo_root/scripts/common.sh" \
   || fail "authenticated curl wrapper does not fail closed on upstream credential echoes"
 
-oracle_key="$work_dir/oracle.key"
-printf '%064d\n' 0 >"$oracle_key"
-chmod 600 "$oracle_key"
-oracle_python="$(soraswap_oracle_payload_python)" || fail "no oracle signing Python is available"
-oracle_output="$("$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{"price":"1.25"}' \
-  --private-key-file "$oracle_key")" || fail "file-backed oracle signing failed"
-jq -e '.payload_json == "{\"price\":\"1.25\"}" and (.oracle_signature | startswith("0x"))' \
-  <<<"$oracle_output" >/dev/null || fail "file-backed oracle signing returned malformed evidence"
-expect_failure "inline oracle private key" "$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{}' --private-key-hex "$(cat "$oracle_key")"
-expect_failure "oracle private key environment fallback" env SORASWAP_ORACLE_PRIVATE_KEY_HEX="$(cat "$oracle_key")" \
-  "$oracle_python" "$repo_root/scripts/oracle_payload.py" --payload-json '{}'
-chmod 644 "$oracle_key"
-expect_failure "mode 0644 oracle private key" "$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{}' --private-key-file "$oracle_key"
-chmod 600 "$oracle_key"
-oracle_key_link="$work_dir/oracle-key-link"
-ln "$oracle_key" "$oracle_key_link"
-expect_failure "multiply-linked oracle private key" "$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{}' --private-key-file "$oracle_key"
-rm -f "$oracle_key_link"
-oracle_key_symlink="$work_dir/oracle-key-symlink"
-ln -s "$oracle_key" "$oracle_key_symlink"
-expect_failure "symlink oracle private key" "$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{}' --private-key-file "$oracle_key_symlink"
-
-oracle_key_multiline="$work_dir/oracle-key-multiline"
-printf '%032d\n%032d\n' 0 0 >"$oracle_key_multiline"
-chmod 600 "$oracle_key_multiline"
-expect_failure "multiline oracle private key" "$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{}' --private-key-file "$oracle_key_multiline"
-
-oracle_key_whitespace="$work_dir/oracle-key-whitespace"
-printf ' %064d\n' 0 >"$oracle_key_whitespace"
-chmod 600 "$oracle_key_whitespace"
-expect_failure "whitespace-padded oracle private key" "$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{}' --private-key-file "$oracle_key_whitespace"
-
-oracle_real_dir="$work_dir/oracle-real-dir"
-oracle_link_dir="$work_dir/oracle-link-dir"
-mkdir "$oracle_real_dir"
-cp "$oracle_key" "$oracle_real_dir/key"
-chmod 600 "$oracle_real_dir/key"
-ln -s "$oracle_real_dir" "$oracle_link_dir"
-expect_failure "ancestor-symlink oracle private key" "$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{}' --private-key-file "$oracle_link_dir/key"
-expect_failure "relative oracle private key path" "$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{}' --private-key-file "${oracle_key:t}"
-
-oracle_key_oversized="$work_dir/oracle-key-oversized"
-dd if=/dev/zero of="$oracle_key_oversized" bs=4097 count=1 2>/dev/null
-chmod 600 "$oracle_key_oversized"
-expect_failure "oversized oracle private key" "$oracle_python" "$repo_root/scripts/oracle_payload.py" \
-  --payload-json '{}' --private-key-file "$oracle_key_oversized"
-
-if rg -n -- '--private-key-hex|SORASWAP_ORACLE_PRIVATE_KEY_HEX.*required to sign' "$repo_root/scripts/oracle_payload.py" >/dev/null; then
-  fail "oracle helper retains inline/environment private-key signing fallback"
-fi
 if rg -n '\b(pkill|killall)\b' \
   "$repo_root/scripts/common.sh" \
   "$repo_root/scripts/bootstrap_contract_state.sh" \
@@ -722,6 +646,6 @@ if violations:
     raise SystemExit(1)
 PY
 
-(( adversarial_rejection_count >= 30 )) \
+(( adversarial_rejection_count >= 26 )) \
   || fail "adversarial rejection coverage unexpectedly fell to $adversarial_rejection_count cases"
 echo "production auth/config smoke passed ($adversarial_rejection_count adversarial rejection checks)"

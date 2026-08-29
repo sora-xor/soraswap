@@ -6,6 +6,15 @@ REQUESTED_ROOT="${SORASWAP_ROOT:-}"
 source "$SCRIPT_ROOT/scripts/common.sh"
 source "$SCRIPT_ROOT/scripts/release_phase_guards.sh"
 
+if [[ -n "${SORASWAP_TESTNET_CHAIN_ID+x}" ]]; then
+  echo "release checklist failed: retired environment variable is not supported: SORASWAP_TESTNET_CHAIN_ID" >&2
+  exit 1
+fi
+if [[ -n "${SORASWAP_TESTNET_CHAIN_DISCRIMINANT+x}" ]]; then
+  echo "release checklist failed: retired environment variable is not supported: SORASWAP_TESTNET_CHAIN_DISCRIMINANT" >&2
+  exit 1
+fi
+
 internal_production_prereq_arg=0
 internal_production_prereq_token=""
 closeout_mode="normal"
@@ -209,7 +218,7 @@ local_acceptance_bundle_name=""
 local_acceptance_kagami_bin=""
 local_acceptance_checksums_sha256=""
 local_acceptance_manifest_sha256=""
-local_acceptance_irohad_sha256=""
+local_acceptance_iroha3d_sha256=""
 local_acceptance_iroha_sha256=""
 local_acceptance_kagami_sha256=""
 local_acceptance_archive_sha256=""
@@ -305,7 +314,7 @@ release_closeout_checkpoint_state() {
     "$local_acceptance_bundle_name" \
     "$local_acceptance_checksums_sha256" \
     "$local_acceptance_manifest_sha256" \
-    "$local_acceptance_irohad_sha256" \
+    "$local_acceptance_iroha3d_sha256" \
     "$local_acceptance_iroha_sha256" \
     "$local_acceptance_kagami_sha256" \
     "$local_acceptance_archive_sha256" \
@@ -337,7 +346,7 @@ from pathlib import Path, PurePosixPath
     pin_bundle_name,
     pin_checksums_sha256,
     pin_manifest_sha256,
-    pin_irohad_sha256,
+    pin_iroha3d_sha256,
     pin_iroha_sha256,
     pin_kagami_sha256,
     pin_archive_sha256,
@@ -503,7 +512,7 @@ def pin_state():
             "bundle_name": pin_bundle_name,
             "checksums_sha256": pin_checksums_sha256,
             "manifest_sha256": pin_manifest_sha256,
-            "irohad_sha256": pin_irohad_sha256,
+            "iroha3d_sha256": pin_iroha3d_sha256,
             "iroha_sha256": pin_iroha_sha256,
             "kagami_sha256": pin_kagami_sha256,
             "archive_sha256": pin_archive_sha256,
@@ -932,7 +941,7 @@ configure_local_acceptance_pin() {
   local_acceptance_kagami_bin="$local_acceptance_iroha_root/target/release/kagami"
   local_acceptance_checksums_sha256="$(jq -r '.checksums_sha256' <<<"$pin_state")"
   local_acceptance_manifest_sha256="$(jq -r '.manifest_sha256' <<<"$pin_state")"
-  local_acceptance_irohad_sha256="$(jq -r '.irohad_sha256' <<<"$pin_state")"
+  local_acceptance_iroha3d_sha256="$(jq -r '.iroha3d_sha256' <<<"$pin_state")"
   local_acceptance_iroha_sha256="$(jq -r '.iroha_sha256' <<<"$pin_state")"
   local_acceptance_kagami_sha256="$(jq -r '.kagami_sha256' <<<"$pin_state")"
   local_acceptance_archive_sha256="$(jq -r '.archive_sha256' <<<"$pin_state")"
@@ -951,7 +960,7 @@ export_local_acceptance_pin_for_target() {
   export SORASWAP_IROHA_CLI_BIN="$local_acceptance_bundle_dir/bin/iroha"
   export SORASWAP_SKIP_IROHA_CLI_BUILD=1
   if local_acceptance_target_is_isolated "$target"; then
-    export IROHAD_BIN="$local_acceptance_bundle_dir/bin/irohad"
+    export IROHA3D_BIN="$local_acceptance_bundle_dir/bin/iroha3d"
     export IROHA_BIN="$local_acceptance_bundle_dir/bin/iroha"
     export KAGAMI_BIN="$local_acceptance_kagami_bin"
     export SORASWAP_SKIP_LOCALNET_TOOL_BUILD=1
@@ -959,7 +968,6 @@ export_local_acceptance_pin_for_target() {
     export SORASWAP_ISOLATED_DEPLOY_TIMEOUT_SECS=0
     export SORASWAP_ISOLATED_SMOKE_TIMEOUT_SECS=0
     export SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS=0
-    export SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS=0
   fi
 }
 
@@ -1118,6 +1126,13 @@ require_public_smoke_mutation_evidence() {
       | (($value | type) == "array")
         and (($value | length) >= $min_len)
         and all($value[]; type == "number");
+    def options_factory_config($root):
+      ($root.view_results.options_factory_config // null) as $value
+      | (($value | type) == "array")
+        and (($value | length) >= 9)
+        and all($value[0:3][]; type == "string" and length > 0)
+        and ($value[1] != $value[2])
+        and all($value[3:][]; type == "number");
 
     . as $root
     | all([
@@ -1146,13 +1161,17 @@ require_public_smoke_mutation_evidence() {
       "perps_close_position",
       "perps_open_liquidation_position",
       "options_buy_shout",
-      "options_record_shout",
+      "options_publish_shout_mark",
+      "options_publish_shout_final_mark",
       "options_exercise_shout",
       "options_buy_outperformance",
       "options_settle_outperformance_series",
       "options_exercise_outperformance",
       "cover_register_policy",
-      "cover_stale_reset_observation",
+      "cover_trigger_1",
+      "cover_trigger_2",
+      "cover_trigger_3",
+      "cover_trigger_4",
       "cover_route_claim",
       "automation_enqueue",
       "automation_assign_executor",
@@ -1176,21 +1195,18 @@ require_public_smoke_mutation_evidence() {
     and numeric_array($root; "launchpad_activation_state"; 2)
     and numeric_array($root; "referral_mirror_member"; 4)
     and numeric_array($root; "farms_mirror_position"; 4)
-    and numeric_array($root; "options_shout_series"; 4)
-    and numeric_array($root; "options_outperformance_series"; 4)
+    and options_factory_config($root)
+    and numeric_array($root; "options_factory_shout_series"; 10)
+    and numeric_array($root; "options_factory_outperformance_series"; 10)
+    and numeric_array($root; "options_factory_automation"; 7)
+    and numeric_array($root; "options_factory_shout_position"; 9)
+    and numeric_array($root; "options_factory_outperformance_position"; 9)
     and numeric_array($root; "cover_policy_state"; 4)
     and numeric_array($root; "automation_mirror_job"; 4)
     and numeric_array($root; "conditional_escrow_state"; 4)
     and numeric_array($root; "epoch_auction_state"; 4)
-    and numeric_array($root; "risk_bucket_1"; 4)
-    and numeric_array($root; "risk_bucket_2"; 4)
-    and numeric_array($root; "risk_bucket_3"; 4)
-    and numeric_array($root; "risk_vault_state"; 4)
-    and numeric_array($root; "risk_bucket_1_liability"; 4)
-    and numeric_array($root; "risk_bucket_2_shout_liability"; 4)
-    and numeric_array($root; "risk_bucket_3_liability"; 4)
   ' <<<"$smoke_json" >/dev/null; then
-    echo "release checklist failed: smoke.latest.json is missing first-release module mutation/state/risk evidence" >&2
+    echo "release checklist failed: smoke.latest.json is missing first-release module mutation/state and self-contained options oracle evidence" >&2
     exit 1
   fi
 
@@ -1200,6 +1216,12 @@ require_public_smoke_mutation_evidence() {
       | (($tx | type) == "string" and ($tx | test("^[0-9a-fA-F]{64}$")));
     def positive_number:
       type == "number" and . > 0;
+    def collateral_pool_state:
+      (.view_results.perps_collateral_pool // null) as $value
+      | (($value | type) == "array")
+        and (($value | length) >= 4)
+        and (($value[0] | type) == "string" and length > 0)
+        and all($value[1:][]; type == "number");
     def has_liquidated_pass:
       any([
         .view_results.perps_liquidation_state,
@@ -1212,7 +1234,6 @@ require_public_smoke_mutation_evidence() {
         ((.view_results.perps_liquidation_position_state[1] // null) == 4)
         and ((.view_results.perps_liquidation_position_liquidation_state[1] // null) | positive_number)
         and ((.view_results.perps_liquidation_position_liquidation_state[2] // null) | positive_number)
-        and ((.view_results.risk_bucket_1_liquidation_liability[3] // null) | positive_number)
       );
 
     has_tx("perps_liquidation_queue_pass")
@@ -1221,11 +1242,11 @@ require_public_smoke_mutation_evidence() {
     and has_tx("perps_liquidation_execute_pass")
     and has_tx("perps_pause_trigger_lifecycle")
     and has_tx("perps_restore_trigger_lifecycle")
+    and collateral_pool_state
     and has_liquidated_pass
     and ((.view_results.perps_liquidation_position_state[1] // null) == 4)
     and ((.view_results.perps_liquidation_position_liquidation_state[1] // null) | positive_number)
     and ((.view_results.perps_liquidation_position_liquidation_state[2] // null) | positive_number)
-    and ((.view_results.risk_bucket_1_liquidation_liability[3] // null) | positive_number)
   ' <<<"$smoke_json" >/dev/null; then
     echo "release checklist failed: smoke.latest.json is missing automatic perps liquidation evidence" >&2
     exit 1
@@ -1413,82 +1434,6 @@ require_no_sensitive_diagnostic_leaks() {
   fi
 }
 
-require_bundle_receipt_matches_contracts() {
-  local bundle_receipt_path="$1"
-  local expected_env="$2"
-  local contracts_snapshot_json="$3"
-  local chain_snapshot_json="${4:-null}"
-  local require_chain_match="${5:-true}"
-  local bundle_receipt_json
-
-  bundle_receipt_json="$(cat "$bundle_receipt_path")"
-  require_generated_at "${bundle_receipt_path:t}" "$bundle_receipt_json"
-  require_no_local_path_leaks "$bundle_receipt_path"
-  require_no_sensitive_diagnostic_leaks "$bundle_receipt_path"
-  if ! jq -n -e \
-    --arg expected_env "$expected_env" \
-    --argjson receipt "$bundle_receipt_json" \
-    --argjson contracts "$contracts_snapshot_json" \
-    --argjson chain "$chain_snapshot_json" \
-    --argjson require_chain_match "$require_chain_match" \
-    '
-      def key_of:
-        .contract_key? // .name? // "";
-      def hash_norm:
-        tostring | sub("^hash:"; "") | sub("^0x"; "") | ascii_downcase;
-      def contract_key_set($items):
-        [($items // [])[]? | select(type == "object") | key_of | select(length > 0)] | sort;
-      def field_address($item):
-        $item.contract_address // $item.instance.contract_address // $item.instance.contract_id // "";
-      def field_nonce($item):
-        ($item.deploy_nonce // $item.instance.deploy_nonce // null) | tostring;
-      def field_code_hash($item):
-        ($item.code_hash_hex // $item.code_hash // $item.instance.code_hash_hex // "") | hash_norm;
-      def field_abi_hash($item):
-        ($item.abi_hash_hex // $item.abi_hash // $item.instance.abi_hash_hex // "") | hash_norm;
-      def fingerprint_matches($actual; $expected):
-        (($actual.torii_url // "") == ($expected.torii_url // ""))
-        and (($actual.chain // "") == ($expected.chain // ""))
-        and (($actual.block_1_hash // "") == ($expected.block_1_hash // ""));
-      def chain_ok:
-        if $require_chain_match then
-          (($receipt.chain_fingerprint // null) | type) == "object"
-          and fingerprint_matches($receipt.chain_fingerprint; $chain)
-        else
-          (($receipt.chain_fingerprint // null) == null)
-          or (
-            (($receipt.chain_fingerprint // null) | type) == "object"
-            and (($contracts.chain_fingerprint // null) | type) == "object"
-            and fingerprint_matches($receipt.chain_fingerprint; $contracts.chain_fingerprint)
-          )
-        end;
-
-      ($contracts.contracts // []) as $snapshot_contracts
-      | ($receipt.contracts // []) as $bundle_contracts
-      | ($receipt.ok == true)
-        and (($receipt.generated_at // "") | type == "string" and length > 0)
-        and (($receipt.environment // "") == $expected_env)
-        and chain_ok
-        and (($bundle_contracts | type) == "array")
-        and (($bundle_contracts | length) > 0)
-        and (contract_key_set($bundle_contracts) == contract_key_set($snapshot_contracts))
-        and all($snapshot_contracts[]?;
-          . as $expected
-          | (key_of) as $key
-          | [$bundle_contracts[]? | select(key_of == $key)] as $matches
-          | ($matches | length) == 1
-            and (($matches[0].status // "") == "deployed")
-            and (field_address($matches[0]) == field_address($expected))
-            and (field_nonce($matches[0]) == field_nonce($expected))
-            and (field_code_hash($matches[0]) == field_code_hash($expected))
-            and (field_abi_hash($matches[0]) == field_abi_hash($expected))
-        )
-    ' >/dev/null; then
-    echo "release checklist failed: $(soraswap_display_path "$bundle_receipt_path") does not match chain.latest.json or contracts.latest.json" >&2
-    exit 1
-  fi
-}
-
 require_public_status_docs_current() {
   local chain_block_1_hash preflight_generated preflight_status probe_generated doc_path
   typeset -a status_docs
@@ -1614,64 +1559,8 @@ nested_probe_artifact_is_current_for_hint() {
     ' "$probe_artifact" >/dev/null 2>&1
 }
 
-preflight_needs_taira_volatile_repair_plan_hint() {
-  [[ "$public_env" == "testnet" ]] || return 1
-  jq -e '
-    def num($v): if $v == null then null else ($v | tonumber? // null) end;
-    def bool($v): $v == true or (($v | tostring | ascii_downcase) == "true");
-    def text($v): ($v // "") | tostring;
-
-    (.nested_call_probe // {}) as $probe
-    | (.endpoint.health // {}) as $health
-    | (.endpoint.health_summary // "") as $summary
-    | ($health.status.summary // {}) as $status
-    | ($health.sumeragi.summary // {}) as $sumeragi
-    | (num($status.blocks)) as $blocks
-    | (num($sumeragi.height)) as $height
-    | (num($sumeragi.commit_qc_height)) as $commit_qc
-    | (num($sumeragi.highest_qc_height)) as $highest_qc
-    | (num($status.queue_size // $status.queue_queued // $status.tx_queue_depth // $sumeragi.tx_queue.depth)) as $queue_depth
-    | (
-        ($queue_depth != null and $queue_depth > 0)
-        or bool($status.tx_queue_saturated)
-        or bool($sumeragi.tx_queue.saturated)
-        or bool($sumeragi.tx_queue.saturated_by_age)
-      ) as $queue_pressure
-    | (
-        bool($sumeragi.tx_queue.saturated_by_age)
-        or (num($sumeragi.tx_queue.oldest_queued_age_ms) != null and num($sumeragi.tx_queue.oldest_queued_age_ms) > 0)
-        or (num($status.time_since_last_block_ms) != null and num($status.time_since_last_block_ms) > 0)
-      ) as $aged_or_stale
-    | (
-        ($height != null and $commit_qc != null and $height > $commit_qc)
-        or ($height != null and $highest_qc != null and $height > $highest_qc)
-        or ($blocks != null and $height != null and $height > $blocks)
-      ) as $height_ahead
-    | (
-        ((text($sumeragi.payload_status) | ascii_downcase) == "missing_local_payload")
-        or (((text($sumeragi.worker_stage) | ascii_downcase) == "idle") and ($queue_depth != null and $queue_depth > 0))
-        or (text($sumeragi.view_change_last_cause) | test("^(missing_qc|quorum_timeout)$"; "i"))
-      ) as $volatile_signal
-    | (
-        ($summary | test("payload_status=missing_local_payload|worker_stage=idle|view_change=(missing_qc|quorum_timeout)"; "i"))
-        and ($summary | test("tx_queue_saturated=true|saturated_by_age=true|queue=[1-9]|tx_queue_depth=[1-9]"; "i"))
-      ) as $summary_signal
-    | (.status != "ready")
-      and (.chain.saved_snapshot_matches == true)
-      and ($probe.latest_exists == true)
-      and ($probe.matches_current_chain == true)
-      and ($probe.supported == true)
-      and ($queue_pressure or $summary_signal)
-      and ($aged_or_stale or $summary_signal)
-      and (($height_ahead and $volatile_signal) or $summary_signal)
-  ' <<<"$preflight_json" >/dev/null 2>&1
-}
-
-print_taira_volatile_repair_plan_hint() {
-  echo "  next operator repair plan: prepare a non-mutating volatile consensus quarantine plan with:" >&2
-  echo "    make taira-state-repair-plan" >&2
-  echo "  required runtime inputs: SORASWAP_TAIRA_REPAIR_VOLATILE_DIST, SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN, SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA" >&2
-  echo "  safety: review the dry-run evidence; do not run the generated --apply command until an operator can run it as the peer process owner or with sudo" >&2
+print_taira_doctor_hint() {
+  echo '    iroha -c "$SORASWAP_CLIENT_CONFIG" taira doctor --public-root "$PUBLIC_TORII_ROOT" --json' >&2
 }
 
 print_missing_preflight_artifact_hint() {
@@ -1851,11 +1740,11 @@ if ! jq -e \
     and ((.blockers // []) | length) == 0
     and ((.warnings // []) | length) == 0
     and (.environment.mutations_allowed // false) == true
-    and (.environment.oracle_public_key_present // false) == true
-    and (.environment.oracle_private_key_present // false) == true
-    and (.environment.oracle_keypair_verified // false) == true
-    and ((.environment.oracle_public_key_source // "") | length > 0)
-    and ((.environment.oracle_private_key_source // "") | length > 0)
+    and (.environment.oracle_client_config_present // false) == true
+    and (.environment.oracle_client_config_valid // false) == true
+    and (.environment.oracle_account_derivable // false) == true
+    and (.environment.oracle_account_distinct // false) == true
+    and ((.environment.oracle_client_config_source // "") | length > 0)
     and (.endpoint.mcp_http_status // "") == "200"
     and (.endpoint.mcp.enabled // false) == true
     and (.endpoint.mcp.metadata_valid // false) == true
@@ -1920,7 +1809,6 @@ if ! jq -e \
   missing_nested_probe_hint_needed=false
   nested_runtime_hint_needed=false
   public_write_health_hint_needed=false
-  taira_volatile_repair_plan_hint_needed=false
   if jq -e '
     any((.blockers // [])[]?; tostring | test("finality|write[-_ ]health|queued writes|tx_queue|transaction queue|stale committed|saturated"; "i"))
   ' <<<"$preflight_json" >/dev/null 2>&1; then
@@ -1959,28 +1847,20 @@ if ! jq -e \
   if [[ "$missing_nested_probe_hint_needed" == "true" ]]; then
     echo "  next signed probe: $(signed_nested_probe_command)" >&2
   fi
-  if [[ "$public_write_health_hint_needed" == "true" \
-      && "$chain_refresh_hint_needed" != "true" \
-      && "$missing_nested_probe_hint_needed" != "true" \
-      && "$nested_runtime_hint_needed" != "true" ]] \
-      && preflight_needs_taira_volatile_repair_plan_hint; then
-    taira_volatile_repair_plan_hint_needed=true
-  fi
   if [[ "$public_env" == "testnet" && "$nested_runtime_hint_needed" == "true" ]]; then
     echo "  next runtime check: roll public Taira with the sibling ../iroha router and nested-transfer runtime fixes, then run:" >&2
-    echo '    bash ../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh --public-root "$PUBLIC_TORII_ROOT" --write-config /run/secrets/taira-canary-client.toml --soraswap-client-config "$SORASWAP_CLIENT_CONFIG" --allow-testnet-mutations' >&2
+    print_taira_doctor_hint
   elif [[ "$public_env" == "production" && "$nested_runtime_hint_needed" == "true" ]]; then
     echo "  next runtime check: roll the production public runtime with the sibling ../iroha router and nested-transfer runtime fixes, then rerun:" >&2
     echo "    SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make production-nested-call-probe" >&2
     echo "    SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make production-preflight" >&2
   fi
-  if [[ "$taira_volatile_repair_plan_hint_needed" == "true" ]]; then
-    print_taira_volatile_repair_plan_hint
-  fi
   if [[ "$public_write_health_hint_needed" == "true" ]]; then
     case "$public_env" in
       testnet)
-        echo "  next public health check: wait for stable Taira finality/write health, then rerun:" >&2
+        echo "  next public health check: inspect current Taira health with:" >&2
+        print_taira_doctor_hint
+        echo "  after Taira finality/write health is stable, rerun:" >&2
         echo "    SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make taira-preflight" >&2
         ;;
       production)
@@ -2083,6 +1963,12 @@ if ! jq -e '.status == "completed"' <<<"$deploy_json" >/dev/null; then
   exit 1
 fi
 require_generated_at "contracts.latest.json" "$contracts_json"
+if ! deployment_records_snapshot_matches_current_schema \
+  "$evidence_dir/contracts.latest.json" \
+  "$public_env"; then
+  echo "release checklist failed: deployments/$public_env/contracts.latest.json does not match the closed current deployment-evidence schema" >&2
+  exit 1
+fi
 if ! jq -e '.status == "completed"' <<<"$contracts_json" >/dev/null; then
   echo "release checklist failed: deployments/$public_env/contracts.latest.json is not completed" >&2
   exit 1
@@ -2158,7 +2044,7 @@ fi
 contract_snapshot_keys=("${(@f)$(jq -r '
   (.contracts // [])[]?
   | select(type == "object")
-  | (.contract_key? // .name? // empty)
+  | (.contract_key // empty)
   | select(. != "")
 ' <<<"$contracts_json" | LC_ALL=C sort)}")
 
@@ -2166,7 +2052,7 @@ duplicate_contract_snapshot_keys=()
 for contract_key in "${(@f)$(jq -r '
   [(.contracts // [])[]?
     | select(type == "object")
-    | (.contract_key? // .name? // empty)
+    | (.contract_key // empty)
     | select(. != "")]
   | group_by(.)
   | map(select(length > 1) | .[0])
@@ -2185,7 +2071,7 @@ for contract_key in "${(@f)$(jq -r --arg public_env "$public_env" '
   (.contracts // [])[]?
   | select(type == "object")
   | select((((.environment // "") | type) != "string") or (.environment // "") != $public_env)
-  | (.contract_key? // .name? // "<unknown>")
+  | (.contract_key // "<unknown>")
 ' <<<"$contracts_json" | LC_ALL=C sort -u)}"; do
   [[ -n "$contract_key" ]] && wrong_environment_contract_snapshot_keys+=("$contract_key")
 done
@@ -2251,11 +2137,6 @@ if (( ${#unexpected_contract_snapshot_keys[@]} > 0 )); then
 fi
 
 for contract_deploy_path in "$evidence_dir"/*.deploy.json(N); do
-  if [[ "${contract_deploy_path:t}" == "soraswap.bundle.deploy.json" \
-    || "${contract_deploy_path:t}" == "soraswap.foundation.bundle.deploy.json" ]]; then
-    continue
-  fi
-
   contract_deploy_json="$(cat "$contract_deploy_path")"
   require_generated_at "${contract_deploy_path:t}" "$contract_deploy_json"
   require_no_local_path_leaks "$contract_deploy_path"
@@ -2263,6 +2144,14 @@ for contract_deploy_path in "$evidence_dir"/*.deploy.json(N); do
   contract_key="$(jq -r '.contract_key // empty' "$contract_deploy_path" 2>/dev/null || true)"
   if [[ -z "$contract_key" ]]; then
     echo "release checklist failed: $(soraswap_display_path "$contract_deploy_path") does not identify a current contract_key" >&2
+    exit 1
+  fi
+  if [[ "${contract_deploy_path:t}" != "${contract_key}.deploy.json" ]]; then
+    echo "release checklist failed: $(soraswap_display_path "$contract_deploy_path") contract_key does not match filename" >&2
+    exit 1
+  fi
+  if ! deployment_record_matches_current_schema "$contract_deploy_path" "$public_env" "$contract_key"; then
+    echo "release checklist failed: $(soraswap_display_path "$contract_deploy_path") does not match the closed current deployment-evidence schema" >&2
     exit 1
   fi
   if ! contains_required_contract_key "$contract_key"; then
@@ -2327,7 +2216,7 @@ for contract_key in "${contract_snapshot_keys[@]}"; do
   fi
 
   expected_contract_json="$(jq -c --arg key "$contract_key" '
-    [(.contracts // [])[]? | select(type == "object") | select((.contract_key? // .name? // "") == $key)]
+    [(.contracts // [])[]? | select(type == "object") | select(.contract_key == $key)]
     | last
     // empty
   ' <<<"$contracts_json")"
@@ -2352,8 +2241,8 @@ for contract_key in "${contract_snapshot_keys[@]}"; do
     exit 1
   fi
 
-  expected_address="$(jq -r '(.contract_address // .instance.contract_address // .instance.contract_id // "")' <<<"$expected_contract_json")"
-  actual_address="$(jq -r '(.contract_address // .instance.contract_address // .instance.contract_id // "")' "$contract_deploy_path")"
+  expected_address="$(jq -r '.contract_address // ""' <<<"$expected_contract_json")"
+  actual_address="$(jq -r '.contract_address // ""' "$contract_deploy_path")"
   if [[ -z "$expected_address" || -z "$actual_address" ]]; then
     echo "release checklist failed: $(soraswap_display_path "$contract_deploy_path") contract address is missing from contracts.latest.json or the deployment record" >&2
     exit 1
@@ -2363,8 +2252,8 @@ for contract_key in "${contract_snapshot_keys[@]}"; do
     exit 1
   fi
 
-  expected_nonce="$(jq -r '(.deploy_nonce // .instance.deploy_nonce // "") | tostring' <<<"$expected_contract_json")"
-  actual_nonce="$(jq -r '(.deploy_nonce // .instance.deploy_nonce // "") | tostring' "$contract_deploy_path")"
+  expected_nonce="$(jq -r '(.deploy_nonce // "") | tostring' <<<"$expected_contract_json")"
+  actual_nonce="$(jq -r '(.deploy_nonce // "") | tostring' "$contract_deploy_path")"
   if [[ -z "$expected_nonce" || -z "$actual_nonce" ]]; then
     echo "release checklist failed: $(soraswap_display_path "$contract_deploy_path") deploy nonce is missing from contracts.latest.json or the deployment record" >&2
     exit 1
@@ -2374,8 +2263,8 @@ for contract_key in "${contract_snapshot_keys[@]}"; do
     exit 1
   fi
 
-  expected_code_hash="$(jq -r '(.code_hash_hex // .code_hash // .instance.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")' <<<"$expected_contract_json")"
-  expected_abi_hash="$(jq -r '(.abi_hash_hex // .abi_hash // .instance.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")' <<<"$expected_contract_json")"
+  expected_code_hash="$(jq -r '(.code_hash_hex // "") | ascii_downcase' <<<"$expected_contract_json")"
+  expected_abi_hash="$(jq -r '(.abi_hash_hex // "") | ascii_downcase' <<<"$expected_contract_json")"
   if [[ -z "$expected_code_hash" || "$expected_code_hash" == "null" || -z "$expected_abi_hash" || "$expected_abi_hash" == "null" ]]; then
     echo "release checklist failed: contracts.latest.json is missing code_hash_hex or abi_hash_hex for $contract_key" >&2
     exit 1
@@ -2395,38 +2284,22 @@ for contract_key in "${contract_snapshot_keys[@]}"; do
     --arg expected_abi_hash "$expected_abi_hash" \
     '
       (.contract_key // "") == $key
-      and ((.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_code_hash
-      and ((.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_abi_hash
-      and (.response.ok // false) == true
-      and ((.response.contract_address // .response.contract_id // "") == $expected_address)
+      and (.deploy_strategy // "") == "ivm_contract_deploy"
+      and ((.code_hash_hex // "") | ascii_downcase) == $expected_code_hash
+      and ((.abi_hash_hex // "") | ascii_downcase) == $expected_abi_hash
+      and .response.ok == true
+      and .response.submitted == true
+      and .response.contract_address == $expected_address
       and (((.response.deploy_nonce // null) | tostring) == $expected_nonce)
-      and ((.response.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_code_hash
-      and ((.response.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_abi_hash
-      and ((.instance.contract_address // .instance.contract_id // "") == $expected_address)
-      and (((.instance.deploy_nonce // null) | tostring) == $expected_nonce)
-      and ((.instance.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_code_hash
-      and ((.instance.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_abi_hash
-      and (
-        (.deploy_strategy // "") != "bundle"
-        or (
-          (.bundle_receipt.status // "") == "deployed"
-          and ((.bundle_receipt.name // .bundle_receipt.contract_key // "") == $key)
-          and ((.bundle_receipt.contract_address // "") == $expected_address)
-          and (((.bundle_receipt.deploy_nonce // null) | tostring) == $expected_nonce)
-          and ((.bundle_receipt.code_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_code_hash
-          and ((.bundle_receipt.abi_hash_hex // "") | ascii_downcase | sub("^0x"; "")) == $expected_abi_hash
-        )
-      )
+      and ((.response.code_hash_hex // "") | ascii_downcase) == $expected_code_hash
+      and ((.response.commit_deployment_tx_hash // "") | type == "string" and length > 0)
+      and .response.final.kind == "Committed"
+      and .response.final.hash == .response.commit_deployment_tx_hash
     ' "$contract_deploy_path" >/dev/null; then
-    echo "release checklist failed: $(soraswap_display_path "$contract_deploy_path") does not include successful deploy response, instance, bundle receipt, and code/ABI hash evidence" >&2
+    echo "release checklist failed: $(soraswap_display_path "$contract_deploy_path") does not include one successful current native deploy response and code/ABI hash evidence" >&2
     exit 1
   fi
 done
-
-bundle_receipt_path="$evidence_dir/soraswap.bundle.deploy.json"
-if [[ -f "$bundle_receipt_path" ]]; then
-  require_bundle_receipt_matches_contracts "$bundle_receipt_path" "$public_env" "$contracts_json" "$chain_json" true
-fi
 
 if ! jq -e '.status == "completed"' <<<"$deploy_json" >/dev/null; then
   echo "release checklist failed: deployments/$public_env/deploy.latest.json is not completed" >&2
@@ -2600,22 +2473,24 @@ if ! jq -e '
 fi
 
 if ! jq -e '
-  ((.pin_summary.manifest_id_hex // "") | test("^[0-9a-fA-F]+$"))
-  and ((.manifest_id_hex // "") == (.pin_summary.manifest_id_hex // ""))
-  and ((.pin_summary.manifest_digest_hex // "") == (.manifest_digest_hex // ""))
-  and (((.pin_summary.status // "") | tostring) | test("^(200|201|202|204|409)$"))
+  ((.provider_ingest.state // "") == "awaiting_finalized_provider_assignment")
+  and (.provider_ingest.queued == false)
+  and (.provider_ingest.direct_http_ingest == false)
+  and ((.provider_ingest.prepare.manifest_id_hex // "") | test("^[0-9a-fA-F]+$"))
+  and ((.manifest_id_hex // "") == (.provider_ingest.prepare.manifest_id_hex // ""))
+  and ((.provider_ingest.prepare.manifest_digest_hex // "") == (.manifest_digest_hex // ""))
   and ((.registry_submit.manifest_digest_hex // "") == (.manifest_digest_hex // ""))
   and (((.registry_submit.status // "") | tostring) | test("^2"))
 ' <<<"$trader_api_json" >/dev/null; then
-  echo "release checklist failed: trader_api_bundle.latest.json is missing matching SoraFS pin or registry receipts" >&2
+  echo "release checklist failed: trader_api_bundle.latest.json is missing matching provider preparation or manifest registration evidence" >&2
   exit 1
 fi
 
-trader_api_manifest_id_hex="$(jq -r '.pin_summary.manifest_id_hex // empty' <<<"$trader_api_json")"
+trader_api_manifest_id_hex="$(jq -r '.provider_ingest.prepare.manifest_id_hex // empty' <<<"$trader_api_json")"
 trader_api_actual_cid="$(jq -r '.content_cid // empty' <<<"$trader_api_json")"
 trader_api_expected_cid="$(content_cid_from_hex "$trader_api_manifest_id_hex" 2>/dev/null || true)"
 if [[ -z "$trader_api_expected_cid" || "$trader_api_actual_cid" != "$trader_api_expected_cid" ]]; then
-  echo "release checklist failed: trader_api_bundle.latest.json content_cid does not match the pinned SoraFS manifest id" >&2
+  echo "release checklist failed: trader_api_bundle.latest.json content_cid does not match the prepared manifest id" >&2
   exit 1
 fi
 
@@ -2975,21 +2850,16 @@ run_local_acceptance_target() {
     unset SORASWAP_CLIENT_CONFIG SORASWAP_PRODUCTION_CLIENT_CONFIG
     unset SORASWAP_TORII_URL SORASWAP_TORII_API_TOKEN CHAIN
     unset ACCOUNT_CHAIN_DISCRIMINANT IROHA_ACCOUNT_CHAIN_DISCRIMINANT
-    unset SORASWAP_TORII_API_VERSION
     unset SORASWAP_ALLOW_TESTNET_MUTATIONS SORASWAP_ALLOW_PRODUCTION_MUTATIONS
     unset SORASWAP_PUBLIC_ENV SORASWAP_RELEASE_ENV
     unset SORASWAP_PROFILE SORASWAP_CONTRACTS_MANIFEST
     unset SORASWAP_IROHA_ROOT SORASWAP_IROHA_CLI_BIN SORASWAP_SORAFS_CLI_BIN
     unset SORASWAP_KOTO_COMPILE_BIN SORASWAP_KOTO_LINT_BIN SORASWAP_KOTO_TEST_BIN
-    unset SORASWAP_ACTIVE_IROHA_CLI_BIN SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN
+    unset SORASWAP_ACTIVE_IROHA_CLI_BIN SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN
     unset SORASWAP_ACTIVE_GOV_INSTRUCTION_BIN SORASWAP_ACTIVE_SORAFS_CLI_BIN
     unset SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD SORASWAP_SKIP_IROHA_CLI_BUILD
     unset SORASWAP_SKIP_KOTO_TOOL_BUILD SORASWAP_SKIP_LOCALNET_TOOL_BUILD SORASWAP_FORCE_COMPILE
     unset SORASWAP_KOTO_COMPILE_BIN_READY SORASWAP_KOTO_LINT_BIN_READY
-    unset SORASWAP_CONTRACT_APP_CHUNK_SIZE SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS
-    unset SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS
-    unset SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS
-    unset SORASWAP_TESTNET_CHAIN_ID SORASWAP_TESTNET_CHAIN_DISCRIMINANT
     unset SORASWAP_PRODUCTION_CHAIN_ID SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT SORASWAP_CHAIN_DISCRIMINANT
     unset SORASWAP_CHAIN_FINGERPRINT_JSON
     unset SORASWAP_CHAIN_FINGERPRINT_ATTEMPTS SORASWAP_CHAIN_FINGERPRINT_SLEEP_SECS
@@ -3000,15 +2870,12 @@ run_local_acceptance_target() {
     unset SORASWAP_TAIRA_DIRECT_TORII_HOST SORASWAP_TAIRA_DIRECT_TORII_PORTS
     unset SORASWAP_ISOLATED_LOCAL_UP_TIMEOUT_SECS SORASWAP_ISOLATED_DEPLOY_TIMEOUT_SECS
     unset SORASWAP_ISOLATED_SMOKE_TIMEOUT_SECS SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS
-    unset SORASWAP_ISOLATED_DEPLOY_ARTIFACT_SNAPSHOT_DIR
     unset SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID SORASWAP_TESTNET_FEE_ASSET_LABEL
     unset SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID SORASWAP_PRODUCTION_FEE_ASSET_LABEL
     unset SORASWAP_TAIRA_REPAIR_DONOR_STORAGE SORASWAP_TAIRA_REPAIR_HEIGHT SORASWAP_TAIRA_REPAIR_OPERATOR
     unset SORASWAP_TAIRA_REPAIR_PARENT_ROOT SORASWAP_TAIRA_REPAIR_POST_ROOT SORASWAP_TAIRA_REPAIR_REASON
-    unset SORASWAP_TAIRA_REPAIR_PLATFORM SORASWAP_TAIRA_REPAIR_REPORT_DIR SORASWAP_TAIRA_REPAIR_SNAPSHOT_POLICY
+    unset SORASWAP_TAIRA_REPAIR_REPORT_DIR SORASWAP_TAIRA_REPAIR_SNAPSHOT_POLICY
     unset SORASWAP_TAIRA_REPAIR_STATUS_JSON SORASWAP_TAIRA_REPAIR_TARGET_STORAGES SORASWAP_TAIRA_REPAIR_TRACE_CONFIG
-    unset SORASWAP_TAIRA_REPAIR_VOLATILE_DIST SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA
-    unset SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN SORASWAP_TAIRA_REPAIR_VOLATILE_TORII_PORTS
     unset SORASWAP_RELEASE_CHECKLIST_TAIRA_PREREQ_ONLY SORASWAP_RELEASE_CHECKLIST_INTERNAL_PRODUCTION_PREREQ
     unset SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK SORASWAP_INIT_CONTRACT_STATE
     unset SORASWAP_PREFLIGHT_SKIP_EXISTING_NESTED_PROBE_CHECK
@@ -3034,6 +2901,7 @@ run_local_acceptance_target() {
     unset SORASWAP_PUBLIC_BOOTSTRAP SORASWAP_TESTNET_BOOTSTRAP SORASWAP_PRODUCTION_BOOTSTRAP
     unset SORASWAP_PUBLIC_DEPLOY_REUSE_CONTRACTS SORASWAP_TESTNET_DEPLOY_REUSE_CONTRACTS SORASWAP_PRODUCTION_DEPLOY_REUSE_CONTRACTS
     unset SORASWAP_PUBLIC_RUN_SUFFIX SORASWAP_TESTNET_RUN_SUFFIX SORASWAP_PRODUCTION_RUN_SUFFIX
+    unset SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE
     unset SORASWAP_PUBLIC_BRIDGE_ROUTE SORASWAP_PUBLIC_BRIDGE_MESSAGE_ID SORASWAP_PUBLIC_BRIDGE_RECENT_LIMIT
     unset SORASWAP_PUBLIC_BRIDGE_AUTO_SEED SORASWAP_PUBLIC_BRIDGE_NONCE SORASWAP_PUBLIC_BRIDGE_AMOUNT
     unset SORASWAP_PUBLIC_BRIDGE_SOURCE_DOMAIN SORASWAP_PUBLIC_BRIDGE_DEST_DOMAIN
@@ -3049,9 +2917,8 @@ run_local_acceptance_target() {
     unset SORASWAP_PUBLIC_XOR_TOPUP_MAX_ATTEMPTS SORASWAP_PUBLIC_XOR_TOPUP_MAX_USDT_IN SORASWAP_PUBLIC_XOR_TOPUP_BUFFER
     unset SORASWAP_TESTNET_XOR_TOPUP_MAX_ATTEMPTS SORASWAP_TESTNET_XOR_TOPUP_MAX_USDT_IN SORASWAP_TESTNET_XOR_TOPUP_BUFFER
     unset SORASWAP_PRODUCTION_XOR_TOPUP_MAX_ATTEMPTS SORASWAP_PRODUCTION_XOR_TOPUP_MAX_USDT_IN SORASWAP_PRODUCTION_XOR_TOPUP_BUFFER
-    unset SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS
-    unset SORASWAP_ORACLE_PUBLIC_KEY_HEX SORASWAP_ORACLE_PRIVATE_KEY_HEX
-    unset SORASWAP_ORACLE_PYTHON_BIN SORASWAP_ORACLE_SCHEME SORASWAP_LAST_ORACLE_SLOT
+    unset SORASWAP_ORACLE_CLIENT_CONFIG SORASWAP_LAST_ORACLE_SLOT
+    unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED SORASWAP_ACTIVE_ORACLE_ACCOUNT
     unset SORASWAP_ENABLE_RWA_RELEASE
     unset SORASWAP_RWA_COMPLIANCE_CHAIN_JSON SORASWAP_RWA_COMPLIANCE_REPORT_DIR
     unset SORASWAP_RWA_COMPLIANCE_CHAIN_FILE SORASWAP_RWA_COMPLIANCE_PREFLIGHT_FILE
@@ -3062,7 +2929,7 @@ run_local_acceptance_target() {
     unset SORASWAP_TRADER_API_PROBE_ROOT SORASWAP_TRADER_API_PROBE_ATTEMPTS
     unset SORASWAP_TRADER_API_PROBE_INTERVAL_SECS SORASWAP_TRADER_API_PROBE_BODY_MAX_CHARS
     unset SORASWAP_TRADER_API_REGISTRY_VISIBILITY_ATTEMPTS SORASWAP_TRADER_API_REGISTRY_VISIBILITY_RETRY_DELAY_SECS
-    unset SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_ATTEMPTS SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_RETRY_DELAY_SECS
+    unset SORASWAP_TRADER_API_GATEWAY_PROPAGATION_ATTEMPTS SORASWAP_TRADER_API_GATEWAY_PROPAGATION_RETRY_DELAY_SECS
     unset SORASWAP_TRADER_PUBLIC_RESPONSE_BODY_MAX_CHARS
     unset SORASWAP_TRADER_PUBLIC_ROUTE_PROBE_ATTEMPTS SORASWAP_TRADER_PUBLIC_ROUTE_PROBE_RETRY_DELAY_SECS
     unset SORASWAP_PUBLISH_TRADER_API_BINDING SORASWAP_TRADER_API_SERVICE_NAME
@@ -3150,17 +3017,6 @@ fi
 
 expected_local_contract_keys_json="$(expected_contract_ids | json_array_from_lines)"
 if ! jq -e --argjson expected_keys "$expected_local_contract_keys_json" '
-  def hex_hash:
-    type == "string" and test("^[0-9a-fA-F]{64}$");
-  def deploy_chunk_contracts:
-    [.phases.deploy.detail.chunks[]? | select(type == "object") | .contracts[]? | select(type == "string" and . != "")];
-  def complete_deploy_chunk:
-    (type == "object")
-    and ((.index // null) | type == "number" and . > 0 and floor == .)
-    and ((.bundle_digest // "") | hex_hash)
-    and (.contracts | type == "array")
-    and ((.contract_count // null) == (.contracts | length))
-    and ((.contracts | length) > 0);
   ($expected_keys | unique | sort) as $expected
   | . as $root
   | ["preflight", "bootstrap_assets", "compile", "deploy", "bootstrap_contract_state", "deployment_records_snapshot"] as $required_phases
@@ -3170,23 +3026,20 @@ if ! jq -e --argjson expected_keys "$expected_local_contract_keys_json" '
   and .environment == "local"
   and .status == "completed"
   and .phases.deploy.status == "completed"
+  and .phases.deploy.detail.strategy == "ivm_contract_deploy_per_contract"
   and .phases.deploy.detail.deploy_scope == "full"
-  and ((.phases.deploy.detail.bundle_digest // "") | hex_hash)
   and (.phases.deploy.detail.contract_count == ($expected | length))
-  and (
-    ((.phases.deploy.detail.chunked // false) != true)
-    or (
-      (.phases.deploy.detail.chunks | type == "array")
-      and ((.phases.deploy.detail.chunk_count // null) == (.phases.deploy.detail.chunks | length))
-      and all(.phases.deploy.detail.chunks[]?; complete_deploy_chunk)
-      and (deploy_chunk_contracts | length) == ($expected | length)
-      and ((deploy_chunk_contracts | unique | sort) == $expected)
-    )
-  )
+  and ((.phases.deploy.detail | keys | sort) == ["contract_count", "deploy_scope", "strategy"])
   and .phases.bootstrap_contract_state.status == "completed"
   and .phases.deployment_records_snapshot.status == "completed"
 ' "$ROOT/deployments/local/deploy.latest.json" >/dev/null; then
   echo "release checklist failed: deployments/local/deploy.latest.json must record a completed full local deploy; rerun make test-local-isolated" >&2
+  exit 1
+fi
+if ! deployment_records_snapshot_matches_current_schema \
+  "$ROOT/deployments/local/contracts.latest.json" \
+  local; then
+  echo "release checklist failed: deployments/local/contracts.latest.json does not match the closed current deployment-evidence schema; rerun make test-local-isolated" >&2
   exit 1
 fi
 if ! jq -e --argjson expected_keys "$expected_local_contract_keys_json" '
@@ -3221,11 +3074,6 @@ if ! jq -e --argjson expected_keys "$expected_local_contract_keys_json" '
   echo "release checklist failed: deployments/local/contracts.latest.json must record every local contract exactly once from the full isolated deploy; rerun make test-local-isolated" >&2
   exit 1
 fi
-local_bundle_receipt_path="$ROOT/deployments/local/soraswap.bundle.deploy.json"
-if [[ -f "$local_bundle_receipt_path" ]]; then
-  local_contracts_json="$(cat "$ROOT/deployments/local/contracts.latest.json")"
-  require_bundle_receipt_matches_contracts "$local_bundle_receipt_path" local "$local_contracts_json" null false
-fi
 if ! jq -e '
   def has_tx($key):
     (.tx_hashes[$key] // "") as $tx
@@ -3243,8 +3091,21 @@ if ! jq -e '
     | (($value | type) == "array")
       and (($value | length) >= $min_len)
       and all($value[]; type == "number");
+  def options_factory_config($root):
+    ($root.view_results.options_factory_config // null) as $value
+    | (($value | type) == "array")
+      and (($value | length) >= 9)
+      and all($value[0:3][]; type == "string" and length > 0)
+      and ($value[1] != $value[2])
+      and all($value[3:][]; type == "number");
   def positive_number:
     type == "number" and . > 0;
+  def collateral_pool_state:
+    (.view_results.perps_collateral_pool // null) as $value
+    | (($value | type) == "array")
+      and (($value | length) >= 4)
+      and (($value[0] | type) == "string" and length > 0)
+      and all($value[1:][]; type == "number");
   def has_liquidated_pass:
     any([
       .view_results.perps_liquidation_state,
@@ -3257,7 +3118,6 @@ if ! jq -e '
       ((.view_results.perps_liquidation_position_state[1] // null) == 4)
       and ((.view_results.perps_liquidation_position_liquidation_state[1] // null) | positive_number)
       and ((.view_results.perps_liquidation_position_liquidation_state[2] // null) | positive_number)
-      and ((.view_results.risk_bucket_1_liquidation_liability[3] // null) | positive_number)
     );
 
   ((.generated_at // "") | type == "string" and length > 0)
@@ -3290,13 +3150,17 @@ if ! jq -e '
     "perps_close_position",
     "perps_open_liquidation_position",
     "options_buy_shout",
-    "options_record_shout",
+    "options_publish_shout_mark",
+    "options_publish_shout_final_mark",
     "options_exercise_shout",
     "options_buy_outperformance",
     "options_settle_outperformance_series",
     "options_exercise_outperformance",
     "cover_register_policy",
-    "cover_stale_reset_observation",
+    "cover_trigger_1",
+    "cover_trigger_2",
+    "cover_trigger_3",
+    "cover_trigger_4",
     "cover_route_claim",
     "automation_enqueue",
     "automation_assign_executor",
@@ -3320,8 +3184,12 @@ if ! jq -e '
     and numeric_array($root; "launchpad_activation_state"; 2)
     and numeric_array($root; "referral_mirror_member"; 4)
     and numeric_array($root; "farms_mirror_position"; 4)
-    and numeric_array($root; "options_shout_series"; 4)
-    and numeric_array($root; "options_outperformance_series"; 4)
+    and options_factory_config($root)
+    and numeric_array($root; "options_factory_shout_series"; 10)
+    and numeric_array($root; "options_factory_outperformance_series"; 10)
+    and numeric_array($root; "options_factory_automation"; 7)
+    and numeric_array($root; "options_factory_shout_position"; 9)
+    and numeric_array($root; "options_factory_outperformance_position"; 9)
     and numeric_array($root; "cover_policy_state"; 4)
     and numeric_array($root; "automation_mirror_job"; 4)
     and numeric_array($root; "conditional_escrow_state"; 4)
@@ -3330,14 +3198,7 @@ if ! jq -e '
   and has_tx("perps_liquidation_recovery_pass")
   and has_tx("perps_liquidation_requeue_pass")
   and has_tx("perps_liquidation_execute_pass")
-  and (. as $root
-    | numeric_array($root; "risk_bucket_1"; 4)
-    and numeric_array($root; "risk_bucket_2"; 4)
-    and numeric_array($root; "risk_bucket_3"; 4)
-    and numeric_array($root; "risk_vault_state"; 4)
-    and numeric_array($root; "risk_bucket_1_liability"; 4)
-    and numeric_array($root; "risk_bucket_2_shout_liability"; 4)
-    and numeric_array($root; "risk_bucket_3_liability"; 4))
+  and collateral_pool_state
   and has_tx("intent_open")
   and has_tx("intent_fill")
   and has_tx("vault_register")
@@ -3369,7 +3230,6 @@ if ! jq -e '
   and ((.view_results.perps_liquidation_position_state[1] // null) == 4)
   and ((.view_results.perps_liquidation_position_liquidation_state[1] // null) | positive_number)
   and ((.view_results.perps_liquidation_position_liquidation_state[2] // null) | positive_number)
-  and ((.view_results.risk_bucket_1_liquidation_liability[3] // null) | positive_number)
   and (.view_results.intent_state[0:5] == [1,2,10,9,30])
   and ((.view_results.intent_state[5] // null) | positive_number)
   and (.view_results.intent_state[6:9] == [1,1,10])
@@ -3383,7 +3243,6 @@ if ! jq -e '
     "soraswap_epoch_auction_close",
     "soraswap_twamm_tick",
     "soraswap_range_governor_tick",
-    "soraswap_options_lifecycle_tick",
     "soraswap_options_factory_lifecycle_tick",
     "soraswap_cover_lifecycle_tick",
     "soraswap_launchpad_lifecycle_tick",
@@ -3572,7 +3431,7 @@ if [[ "$local_acceptance_pin_enabled" == "1" ]]; then
   echo "    rollout manifest sha256: $local_acceptance_manifest_sha256"
   echo "    rollout archive sha256: $local_acceptance_archive_sha256"
   echo "    rollout archive sidecar sha256: $local_acceptance_archive_sidecar_sha256"
-  echo "    irohad sha256: $local_acceptance_irohad_sha256"
+  echo "    iroha3d sha256: $local_acceptance_iroha3d_sha256"
   echo "    iroha sha256: $local_acceptance_iroha_sha256"
   echo "    kagami sha256: $local_acceptance_kagami_sha256"
 else

@@ -34,6 +34,85 @@ BRIDGE_ABI_HASH = "2" * 64
 BRIDGE_DEPLOY_NONCE = 1
 BRIDGE_TEST_PRIVATE_KEY = "8026209d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
 BRIDGE_TEST_PUBLIC_KEY = "ed0120d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+FIXTURE_NETWORK_ID = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
+XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw"
+
+
+def canonical_hash_literal(raw_hash: str) -> str:
+    body = raw_hash.upper()
+    return f"hash:{body}#{contract_console.iroha_literal_crc16('hash', body):04X}"
+
+
+def current_deploy_response(torii_url: str) -> dict[str, Any]:
+    commit_hash_hex = "a" * 64
+    commit_hash = canonical_hash_literal(commit_hash_hex)
+    authority = "0x02000120" + "b" * 64
+    contract_alias = "sccp_bridge::bridge.universal"
+    deployment_state: dict[str, Any] = {
+        "authority": authority,
+        "contract_alias": contract_alias,
+        "deploy_nonce": str(BRIDGE_DEPLOY_NONCE),
+        "dataspace_alias": "universal",
+        "dataspace_id": "0",
+        "previous_contract_address": None,
+        "observed_block_height": "1",
+        "observed_block_hash": "f" * 64,
+        "ledger_time_ms": "1000",
+        "chain_discriminant": "0",
+    }
+    fee_quotes: list[Any] = []
+    operation_receipt = {
+        "operation_kind": "contract_deploy",
+        "status": "committed",
+        "transport": "ivm-contract-deploy-helper",
+        "torii_url": torii_url,
+        "chain_id": "fixture-chain",
+        "authority": authority,
+        "chain_discriminant": 0,
+        "dataspace": "0",
+        "contract_alias": contract_alias,
+        "contract_address": BRIDGE_ADDRESS,
+        "contract_subject_account": BRIDGE_ADDRESS,
+        "code_hash_hex": BRIDGE_CODE_HASH,
+        "abi_hash_hex": None,
+        "tx_hash_hex": commit_hash_hex,
+        "entrypoint": None,
+        "entrypoint_hash_hex": None,
+        "gas_limit": None,
+        "gas_used": None,
+        "fee_payment": {},
+        "fee_quotes": fee_quotes,
+        "payload_digest_hex": "e" * 64,
+        "deployment_state": deployment_state,
+    }
+    return {
+        "authority": authority,
+        "chain_discriminant": 0,
+        "chain_id": "fixture-chain",
+        "code_hash_hex": BRIDGE_CODE_HASH,
+        "commit_deployment_tx_hash": commit_hash,
+        "contract_address": BRIDGE_ADDRESS,
+        "contract_alias": contract_alias,
+        "contract_subject_account": BRIDGE_ADDRESS,
+        "dataspace": "0",
+        "deploy_nonce": BRIDGE_DEPLOY_NONCE,
+        "deployment_state": deployment_state,
+        "expected_previous_contract_address": None,
+        "fee_quotes": fee_quotes,
+        "final": {"kind": "Committed", "hash": commit_hash},
+        "next_deploy_nonce": BRIDGE_DEPLOY_NONCE + 1,
+        "ok": True,
+        "operation_receipt": operation_receipt,
+        "register_bytes_chunk_count": 1,
+        "register_bytes_chunk_size": 65_536,
+        "register_bytes_stage_tx_hashes": [],
+        "register_bytes_tx_hash": "c" * 64,
+        "register_bytes_tx_strategy": "native_chunks",
+        "register_manifest_tx_hash": canonical_hash_literal("d" * 64),
+        "submitted": True,
+        "terminal_kind": "Committed",
+        "torii_url": torii_url,
+    }
 
 
 def json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
@@ -60,16 +139,36 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
 
     environment_root = root / "deployments" / "fixture"
     chain_fingerprint = {
-        "generated_at": FIXTURE_GENERATED_AT,
-        "environment": "fixture",
         "torii_url": torii_url,
         "chain": "fixture-chain",
         "block_1_hash": "fixture-block-1",
     }
+    chain_latest = {
+        "generated_at": FIXTURE_GENERATED_AT,
+        "environment": "fixture",
+        **chain_fingerprint,
+    }
     write_json(
         environment_root / "chain.latest.json",
-        chain_fingerprint,
+        chain_latest,
     )
+    deployment_record = {
+        "contract_key": "bridge.sccp_bridge",
+        "generated_at": FIXTURE_GENERATED_AT,
+        "environment": "fixture",
+        "contract_source": "contracts/bridge/sccp_bridge.ko",
+        "contract_alias": "sccp_bridge::bridge.universal",
+        "dataspace_alias": "universal",
+        "dataspace_id": "0",
+        "contract_address": BRIDGE_ADDRESS,
+        "deploy_nonce": BRIDGE_DEPLOY_NONCE,
+        "code_hash_hex": BRIDGE_CODE_HASH,
+        "abi_hash_hex": BRIDGE_ABI_HASH,
+        "deploy_strategy": "ivm_contract_deploy",
+        "chain_fingerprint": chain_fingerprint,
+        "response": current_deploy_response(torii_url),
+    }
+    write_json(environment_root / "bridge.sccp_bridge.deploy.json", deployment_record)
     write_json(
         environment_root / "contracts.latest.json",
         {
@@ -77,26 +176,7 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
             "status": "completed",
             "environment": "fixture",
             "chain_fingerprint": chain_fingerprint,
-            "contracts": [
-                {
-                    "contract_key": "bridge.sccp_bridge",
-                    "environment": "fixture",
-                    "contract_source": "contracts/bridge/sccp_bridge.ko",
-                    "dataspace": "universal",
-                    "contract_address": BRIDGE_ADDRESS,
-                    "deploy_nonce": BRIDGE_DEPLOY_NONCE,
-                    "code_hash_hex": BRIDGE_CODE_HASH,
-                    "abi_hash_hex": BRIDGE_ABI_HASH,
-                    "instance": {
-                        "verification": "transaction_and_manifest",
-                        "tx_hash_hex": "11" * 32,
-                        "contract_address": BRIDGE_ADDRESS,
-                        "deploy_nonce": BRIDGE_DEPLOY_NONCE,
-                        "code_hash_hex": BRIDGE_CODE_HASH,
-                        "abi_hash_hex": BRIDGE_ABI_HASH,
-                    },
-                }
-            ],
+            "contracts": [deployment_record],
         },
     )
     write_json(
@@ -105,41 +185,40 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
             "generated_at": FIXTURE_GENERATED_AT,
             "environment": "fixture",
             "contract_key": "bridge.sccp_bridge",
-            "code_hash": "hash:" + BRIDGE_CODE_HASH,
-            "abi_hash": "hash:" + BRIDGE_ABI_HASH,
+            "code_hash": canonical_hash_literal(BRIDGE_CODE_HASH),
+            "abi_hash": canonical_hash_literal(BRIDGE_ABI_HASH),
             "entrypoints": [
                 {"name": "listing_config", "kind": {"kind": "View"}, "params": [], "return_type": "tuple"},
-                {"name": "mirror_asset", "kind": {"kind": "View"}, "params": [{"name": "asset_key", "type_name": "String"}], "return_type": "tuple"},
-                {"name": "asset_config", "kind": {"kind": "View"}, "params": [{"name": "asset_key", "type_name": "String"}], "return_type": "tuple"},
-                {"name": "mirror_route", "kind": {"kind": "View"}, "params": [{"name": "route", "type_name": "String"}], "return_type": "tuple"},
-                {"name": "route_config", "kind": {"kind": "View"}, "params": [{"name": "route", "type_name": "String"}], "return_type": "tuple"},
-                {"name": "mirror_outbound", "kind": {"kind": "View"}, "params": [{"name": "transfer", "type_name": "String"}], "return_type": "tuple"},
-                {"name": "outbound_config", "kind": {"kind": "View"}, "params": [{"name": "transfer", "type_name": "String"}], "return_type": "tuple"},
-                {"name": "inbound_consumed", "kind": {"kind": "View"}, "params": [{"name": "message_id", "type_name": "String"}], "return_type": "int"},
+                {"name": "mirror_asset", "kind": {"kind": "View"}, "params": [{"name": "asset_key", "type_name": "Name"}], "return_type": "tuple"},
+                {"name": "asset_config", "kind": {"kind": "View"}, "params": [{"name": "asset_key", "type_name": "Name"}], "return_type": "tuple"},
+                {"name": "mirror_route", "kind": {"kind": "View"}, "params": [{"name": "route", "type_name": "Name"}], "return_type": "tuple"},
+                {"name": "route_config", "kind": {"kind": "View"}, "params": [{"name": "route", "type_name": "Name"}], "return_type": "tuple"},
+                {"name": "mirror_outbound", "kind": {"kind": "View"}, "params": [{"name": "transfer", "type_name": "Name"}], "return_type": "tuple"},
+                {"name": "outbound_config", "kind": {"kind": "View"}, "params": [{"name": "transfer", "type_name": "Name"}], "return_type": "tuple"},
+                {"name": "inbound_consumed", "kind": {"kind": "View"}, "params": [{"name": "message_id", "type_name": "Name"}], "return_type": "int"},
                 {
                     "name": "lock_to_remote",
-                    "kind": {"kind": "Public"},
+                    "kind": {"kind": "Kotoage"},
                     "params": [
-                        {"name": "route", "type_name": "String"},
-                        {"name": "transfer", "type_name": "String"},
-                        {"name": "sender", "type_name": "AccountId"},
-                        {"name": "recipient", "type_name": "String"},
-                        {"name": "amount", "type_name": "u64"},
+                        {"name": "route", "type_name": "Name"},
+                        {"name": "transfer", "type_name": "Name"},
+                        {"name": "recipient", "type_name": "Name"},
+                        {"name": "amount", "type_name": "quantity"},
                     ],
                     "return_type": "int",
-                    "permission": "Operator",
+                    "permission": "AssetOps",
                 },
                 {
                     "name": "finalize_inbound",
-                    "kind": {"kind": "Public"},
+                    "kind": {"kind": "Kotoage"},
                     "params": [
-                        {"name": "route", "type_name": "String"},
-                        {"name": "message_id", "type_name": "String"},
-                        {"name": "recipient", "type_name": "String"},
-                        {"name": "amount", "type_name": "u64"},
+                        {"name": "route", "type_name": "Name"},
+                        {"name": "message_id", "type_name": "Name"},
+                        {"name": "recipient", "type_name": "AccountId"},
+                        {"name": "amount", "type_name": "quantity"},
                     ],
                     "return_type": "int",
-                    "permission": "Operator",
+                    "permission": "AssetOps",
                 },
             ]
         },
@@ -154,7 +233,7 @@ class MockToriiState:
             {"hash": "aa" * 32, "status": "Committed", "kind": "seeded"},
         ]
         self.status_by_hash: dict[str, dict[str, Any]] = {
-            "aa" * 32: {"status": {"kind": "Committed"}, "summary": "Committed", "diagnostics": []},
+            "aa" * 32: {"status": {"kind": "Committed"}},
         }
 
     def register_submission(self, kind: str, request: dict[str, Any], *, terminal: bool = True) -> str:
@@ -170,19 +249,11 @@ class MockToriiState:
             self.history_items = self.history_items[:10]
             if terminal:
                 self.status_by_hash[tx_hash_hex] = {
-                    "status": {
-                        "kind": "Committed",
-                    },
-                    "summary": "Committed",
-                    "diagnostics": [],
+                    "status": {"kind": "Committed"},
                 }
             else:
                 self.status_by_hash[tx_hash_hex] = {
-                    "status": {
-                        "kind": "Queued",
-                    },
-                    "summary": "Queued",
-                    "diagnostics": [],
+                    "status": {"kind": "Queued"},
                 }
             return tx_hash_hex
 
@@ -200,11 +271,67 @@ class MockToriiHandler(BaseHTTPRequestHandler):
     def parse_json_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length > 0 else b"{}"
+        self.raw_request_body = raw
         return json.loads(raw.decode("utf-8") or "{}")
+
+    def has_valid_canonical_account_auth(self) -> bool:
+        values: dict[str, str] = {}
+        for header in contract_console.CANONICAL_ACCOUNT_AUTH_HEADERS:
+            entries = self.headers.get_all(header) or []
+            if len(entries) != 1:
+                return False
+            values[header] = entries[0]
+        if values["X-Iroha-Account"] != contract_console.canonical_ed25519_account_header(
+            BRIDGE_TEST_PUBLIC_KEY
+        ):
+            return False
+        timestamp_raw = values["X-Iroha-Timestamp-Ms"]
+        try:
+            timestamp_ms = int(timestamp_raw)
+        except ValueError:
+            return False
+        if str(timestamp_ms) != timestamp_raw:
+            return False
+        try:
+            message = contract_console.canonical_account_request_message(
+                FIXTURE_NETWORK_ID,
+                self.command,
+                f"http://fixture{self.path}",
+                self.raw_request_body,
+                timestamp_ms,
+                values["X-Iroha-Nonce"],
+            )
+            return contract_console.verify_ed25519_signature_b64(
+                BRIDGE_TEST_PUBLIC_KEY,
+                message,
+                values["X-Iroha-Signature"],
+            )
+        except ValueError:
+            return False
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+        if parsed.path.startswith("/v1/assets/definitions/"):
+            selector = urllib.parse.unquote(parsed.path.removeprefix("/v1/assets/definitions/"))
+            if selector == "xor#universal":
+                json_response(
+                    self,
+                    HTTPStatus.OK,
+                    {
+                        "id": XOR_ASSET_DEFINITION_ID,
+                        "alias": selector,
+                        "spec": {"scale": 9},
+                        "alias_binding": {
+                            "alias": selector,
+                            "status": "permanent",
+                            "bound_at_ms": 1,
+                        },
+                    },
+                )
+                return
+            json_response(self, HTTPStatus.NOT_FOUND, {"code": "not_found"})
+            return
         if parsed.path == "/v1/sccp/capabilities":
             json_response(
                 self,
@@ -350,13 +477,13 @@ class MockToriiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/v1/pipeline/transactions/status":
             tx_hash_hex = str((query.get("hash") or [""])[0])
-            requested_scope = str((query.get("scope") or ["auto"])[0])
-            scope = "global" if requested_scope == "auto" else requested_scope
+            scope = str((query.get("scope") or ["global"])[0])
             payload = dict(self.state.status_by_hash.get(
                 tx_hash_hex,
-                {"status": {"kind": "Committed"}, "summary": "Committed", "diagnostics": []},
+                {"status": {"kind": "Committed"}},
             ))
-            payload.update({"hash": tx_hash_hex, "scope": scope, "resolved_from": "state"})
+            resolved_from = "queue" if payload["status"]["kind"] == "Queued" else "state"
+            payload.update({"hash": tx_hash_hex, "scope": scope, "resolved_from": resolved_from})
             json_response(self, HTTPStatus.OK, payload)
             return
         if parsed.path == "/v1/transactions/history":
@@ -368,6 +495,9 @@ class MockToriiHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         request = self.parse_json_body()
+        if parsed.path in contract_console.CANONICAL_ACCOUNT_AUTH_PATHS and not self.has_valid_canonical_account_auth():
+            json_response(self, HTTPStatus.UNAUTHORIZED, {"code": "canonical_authentication_required"})
+            return
         if parsed.path == "/v1/contracts/view":
             entrypoint = request.get("entrypoint")
             payload = request.get("payload") or {}
@@ -384,10 +514,110 @@ class MockToriiHandler(BaseHTTPRequestHandler):
             json_response(self, HTTPStatus.OK, response_map.get(str(entrypoint), {"entrypoint": entrypoint}))
             return
         if parsed.path == "/v1/contracts/call":
-            payload = request.get("payload") if isinstance(request, dict) else {}
-            terminal = not (isinstance(payload, dict) and payload.get("route") == "timeout_route")
-            tx_hash_hex = self.state.register_submission("contract_call", request, terminal=terminal)
-            json_response(self, HTTPStatus.OK, {"submitted": True, "tx_hash_hex": tx_hash_hex})
+            preparation_keys = {
+                "authority",
+                "contract_address",
+                "entrypoint",
+                "fee_payment",
+            }
+            if "payload" in request:
+                preparation_keys.add("payload")
+            submission_keys = preparation_keys | {
+                "public_key_hex",
+                "signature_b64",
+                "creation_time_ms",
+            }
+            request_keys = frozenset(request)
+            if request_keys not in {
+                frozenset(preparation_keys),
+                frozenset(submission_keys),
+            }:
+                json_response(self, HTTPStatus.BAD_REQUEST, {"code": "closed_dto_violation"})
+                return
+
+            creation_time_ms = 1_750_000_000_002
+            prepared_request = {key: request[key] for key in preparation_keys}
+            transaction = json.dumps(
+                {
+                    "creation_time_ms": creation_time_ms,
+                    "request": prepared_request,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            transaction_payload_b64 = base64.b64encode(transaction).decode("ascii")
+            signing_message = contract_console.iroha_transaction_signing_message(transaction)
+            signing_message_b64 = base64.b64encode(signing_message).decode("ascii")
+            fee_payment = request.get("fee_payment")
+            try:
+                gas_limit = fee_payment["value"]["gas_limit"]
+            except (KeyError, TypeError):
+                json_response(self, HTTPStatus.BAD_REQUEST, {"code": "invalid_fee_payment"})
+                return
+
+            submitted = request_keys == frozenset(submission_keys)
+            tx_hash_hex: str | None = None
+            entrypoint_hash_hex: str | None = None
+            if submitted:
+                if (
+                    request.get("creation_time_ms") != creation_time_ms
+                    or request.get("public_key_hex")
+                    != contract_console.raw_ed25519_public_key_hex(BRIDGE_TEST_PUBLIC_KEY)
+                    or not contract_console.verify_ed25519_signature_b64(
+                        BRIDGE_TEST_PUBLIC_KEY,
+                        signing_message,
+                        request.get("signature_b64"),
+                    )
+                ):
+                    json_response(self, HTTPStatus.BAD_REQUEST, {"code": "detached_payload_mismatch"})
+                    return
+                payload = request.get("payload") if isinstance(request, dict) else {}
+                terminal = not (
+                    isinstance(payload, dict) and payload.get("route") == "timeout_route"
+                )
+                tx_hash_hex = self.state.register_submission(
+                    "contract_call",
+                    request,
+                    terminal=terminal,
+                )
+                entrypoint_hash_hex = "cd" * 32
+
+            operation_receipt = {
+                "operation_kind": "contract_call",
+                "status": "submitted" if submitted else "pending_signature",
+                "transport": "torii",
+                "dataspace": "0",
+                "contract_alias": "sccp_bridge::bridge.universal",
+                "contract_address": request["contract_address"],
+                "code_hash_hex": BRIDGE_CODE_HASH,
+                "abi_hash_hex": BRIDGE_ABI_HASH,
+                "tx_hash_hex": tx_hash_hex,
+                "entrypoint": request["entrypoint"],
+                "entrypoint_hash_hex": entrypoint_hash_hex,
+                "gas_limit": gas_limit,
+                "gas_used": None,
+                "fee_payment": fee_payment,
+                "payload_digest_hex": "89" * 32,
+            }
+            json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "submitted": submitted,
+                    "dataspace": "0",
+                    "contract_address": request["contract_address"],
+                    "code_hash_hex": BRIDGE_CODE_HASH,
+                    "abi_hash_hex": BRIDGE_ABI_HASH,
+                    "creation_time_ms": creation_time_ms,
+                    "tx_hash_hex": tx_hash_hex,
+                    "entrypoint_hash_hex": entrypoint_hash_hex,
+                    "transaction_payload_b64": None if submitted else transaction_payload_b64,
+                    "signing_message_b64": None if submitted else signing_message_b64,
+                    "entrypoint": request["entrypoint"],
+                    "operation_receipt": operation_receipt,
+                },
+            )
             return
         if parsed.path in {"/v1/bridge/proofs/submit", "/v1/bridge/messages"}:
             proof_field = (
@@ -395,7 +625,7 @@ class MockToriiHandler(BaseHTTPRequestHandler):
                 if parsed.path == "/v1/bridge/proofs/submit"
                 else "native_proof_b64"
             )
-            preparation_keys = {"authority", proof_field}
+            preparation_keys = {"authority", "fee_payment", proof_field}
             submission_keys = preparation_keys | {
                 "transaction_payload_b64",
                 "signature_b64",
@@ -505,6 +735,7 @@ def main() -> int:
         config_path=fixture_root / "config" / "fixture.client.toml",
         authority="i105fixtureoperator@universal",
         torii_url=upstream_url,
+        network_id=FIXTURE_NETWORK_ID,
         private_key=BRIDGE_TEST_PRIVATE_KEY,
         public_key=BRIDGE_TEST_PUBLIC_KEY,
         basic_auth=None,

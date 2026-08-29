@@ -9,7 +9,7 @@ module SccpBridgeV1Regressions {
     );
     actor(
       "guardian",
-      AccountId::parse("sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6")
+      AccountId::parse("sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF")
     );
     grant_permission("owner", "Admin");
     grant_permission("owner", "Entry");
@@ -18,41 +18,50 @@ module SccpBridgeV1Regressions {
     grant_permission("guardian", "Entry");
   }
 
-  fn initialize_bridge_for_test() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "hajimari",
-      arguments: Json::parse("{\"listing_fee_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"treasury\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"listing_fee_amount\":\"0\",\"proof_authority\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"guardian\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
-    );
+  fn seed_initialized_bridge(AccountId owner, AccountId guardian) {
+    BridgeInitialized = 1;
+    BridgeOwner = owner;
+    BridgeGuardian = guardian;
+    BridgeProofAuthority = owner;
+    RegistryEnabled = 1;
+    ListingFeeAsset = AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+    TreasuryAccount = owner;
+    ListingFeeAmount = 0;
   }
 
-  fn register_home_asset_for_test() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "register_bridge_asset",
-      arguments: Json::parse("{\"asset_key\":\"xor\",\"asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"home_domain\":\"0\",\"decimals\":\"18\"}")
-    );
+  fn seed_home_asset(AccountId owner) {
+    let asset_key = Name::parse("xor");
+    RegisteredAsset[asset_key] = AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+    AssetRegistrant[asset_key] = owner;
+    AssetHomeDomain[asset_key] = 0;
+    AssetDecimals[asset_key] = 18;
+    AssetListingPaid[asset_key] = 0;
   }
 
-  fn bind_home_vault_for_test() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "bind_asset_vault",
-      arguments: Json::parse("{\"asset_key\":\"xor\",\"vault_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\"}")
-    );
+  fn seed_home_vault(AccountId owner) {
+    AssetVaultAccount[Name::parse("xor")] = owner;
   }
 
-  fn activate_home_route_for_test() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "activate_route",
-      arguments: Json::parse("{\"route\":\"ethereum\",\"asset_key\":\"xor\",\"remote_domain\":\"1\"}")
-    );
+  fn seed_home_route(AccountId owner) {
+    let route = Name::parse("ethereum");
+    RouteOwner[route] = owner;
+    RouteAssetKey[route] = Name::parse("xor");
+    RouteRemoteDomain[route] = 1;
+    RouteLocalAsset[route] = AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+    RouteVaultAccount[route] = owner;
+    RouteEnabled[route] = 1;
+    RouteGoverned[route] = 0;
+    RouteGovernanceMessage[route] = route;
+    NextOutboundNonce[route] = 1;
   }
 
   #[test(fixture = "bridge_actors")]
   fn lifecycle_binds_all_three_authorities() {
-    initialize_bridge_for_test();
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: Json::parse("{\"listing_fee_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"treasury\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"listing_fee_amount\":\"0\",\"proof_authority\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"guardian\":\"sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF\"}")
+    );
     test::assert(BridgeInitialized == 1);
     test::assert(RegistryEnabled == 1);
     test::assert(BridgeOwner == test::actor_account("owner"));
@@ -61,11 +70,13 @@ module SccpBridgeV1Regressions {
   }
 
   #[test(fixture = "bridge_actors")]
-  fn asset_decimal_scale_above_v1_limit_is_rejected() {
-    initialize_bridge_for_test();
+  fn asset_decimal_scale_above_runtime_limit_is_rejected() {
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_bridge(owner: owner, guardian: guardian);
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "register_bridge_asset",
+      kotoage: "register_bridge_asset",
       arguments: Json::parse("{\"asset_key\":\"badscale\",\"asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"home_domain\":\"0\",\"decimals\":\"29\"}")
     );
     test::assert(!RegisteredAsset.contains(Name::parse("badscale")));
@@ -73,22 +84,26 @@ module SccpBridgeV1Regressions {
 
   #[test(fixture = "bridge_actors")]
   fn non_registrant_cannot_capture_first_vault_binding() {
-    initialize_bridge_for_test();
-    register_home_asset_for_test();
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_bridge(owner: owner, guardian: guardian);
+    seed_home_asset(owner: owner);
     test::expect_reject_as(
       actor: "guardian",
-      entrypoint: "bind_asset_vault",
-      arguments: Json::parse("{\"asset_key\":\"xor\",\"vault_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
+      kotoage: "bind_asset_vault",
+      arguments: Json::parse("{\"asset_key\":\"xor\",\"vault_account\":\"sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF\"}")
     );
     test::assert(!AssetVaultAccount.contains(Name::parse("xor")));
   }
 
   #[test(fixture = "bridge_actors")]
   fn route_derives_registered_asset_and_vault() {
-    initialize_bridge_for_test();
-    register_home_asset_for_test();
-    bind_home_vault_for_test();
-    activate_home_route_for_test();
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_bridge(owner: owner, guardian: guardian);
+    seed_home_asset(owner: owner);
+    seed_home_vault(owner: owner);
+    seed_home_route(owner: owner);
     let route = Name::parse("ethereum");
     test::assert(route_asset_key_value(route) == Name::parse("xor"));
     test::assert(route_local_asset_value(route) == registered_asset_value(Name::parse("xor")));
@@ -97,12 +112,14 @@ module SccpBridgeV1Regressions {
 
   #[test(fixture = "bridge_actors")]
   fn sora_domain_cannot_be_registered_as_remote_route() {
-    initialize_bridge_for_test();
-    register_home_asset_for_test();
-    bind_home_vault_for_test();
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_bridge(owner: owner, guardian: guardian);
+    seed_home_asset(owner: owner);
+    seed_home_vault(owner: owner);
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "activate_route",
+      kotoage: "activate_route",
       arguments: Json::parse("{\"route\":\"self\",\"asset_key\":\"xor\",\"remote_domain\":\"0\"}")
     );
     test::assert(!RouteAssetKey.contains(Name::parse("self")));
@@ -110,16 +127,18 @@ module SccpBridgeV1Regressions {
 
   #[test(fixture = "bridge_actors")]
   fn guardian_can_disable_but_cannot_reenable_registry() {
-    initialize_bridge_for_test();
-    test::invoke_entrypoint_as(
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_bridge(owner: owner, guardian: guardian);
+    test::invoke_kotoage_as(
       actor: "guardian",
-      entrypoint: "set_registry_enabled",
+      kotoage: "set_registry_enabled",
       arguments: Json::parse("{\"enabled\":\"0\"}")
     );
     test::assert(RegistryEnabled == 0);
     test::expect_reject_as(
       actor: "guardian",
-      entrypoint: "set_registry_enabled",
+      kotoage: "set_registry_enabled",
       arguments: Json::parse("{\"enabled\":\"1\"}")
     );
     test::assert(RegistryEnabled == 0);
@@ -127,18 +146,20 @@ module SccpBridgeV1Regressions {
 
   #[test(fixture = "bridge_actors")]
   fn paused_route_rejects_outbound_before_transfer_record() {
-    initialize_bridge_for_test();
-    register_home_asset_for_test();
-    bind_home_vault_for_test();
-    activate_home_route_for_test();
-    test::invoke_entrypoint_as(
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_bridge(owner: owner, guardian: guardian);
+    seed_home_asset(owner: owner);
+    seed_home_vault(owner: owner);
+    seed_home_route(owner: owner);
+    test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "pause_route",
+      kotoage: "pause_route",
       arguments: Json::parse("{\"route\":\"ethereum\"}")
     );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "lock_to_remote",
+      kotoage: "lock_to_remote",
       arguments: Json::parse("{\"route\":\"ethereum\",\"transfer\":\"paused\",\"recipient\":\"0xabc\",\"amount\":\"1\"}")
     );
     test::assert(!OutboundRoute.contains(Name::parse("paused")));
@@ -146,18 +167,20 @@ module SccpBridgeV1Regressions {
 
   #[test(fixture = "bridge_actors")]
   fn outbound_transfer_id_is_replay_protected() {
-    initialize_bridge_for_test();
-    register_home_asset_for_test();
-    bind_home_vault_for_test();
-    activate_home_route_for_test();
-    test::invoke_entrypoint_as(
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_bridge(owner: owner, guardian: guardian);
+    seed_home_asset(owner: owner);
+    seed_home_vault(owner: owner);
+    seed_home_route(owner: owner);
+    test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "lock_to_remote",
+      kotoage: "lock_to_remote",
       arguments: Json::parse("{\"route\":\"ethereum\",\"transfer\":\"once\",\"recipient\":\"0xabc\",\"amount\":\"1\"}")
     );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "lock_to_remote",
+      kotoage: "lock_to_remote",
       arguments: Json::parse("{\"route\":\"ethereum\",\"transfer\":\"once\",\"recipient\":\"0xdef\",\"amount\":\"2\"}")
     );
     test::assert(OutboundAmount.get(Name::parse("once")).unwrap_or(zero_quantity()) == 1);
@@ -166,18 +189,20 @@ module SccpBridgeV1Regressions {
 
   #[test(fixture = "bridge_actors")]
   fn inbound_message_is_consumed_exactly_once() {
-    initialize_bridge_for_test();
-    register_home_asset_for_test();
-    bind_home_vault_for_test();
-    activate_home_route_for_test();
-    test::invoke_entrypoint_as(
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_bridge(owner: owner, guardian: guardian);
+    seed_home_asset(owner: owner);
+    seed_home_vault(owner: owner);
+    seed_home_route(owner: owner);
+    test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "finalize_inbound",
+      kotoage: "finalize_inbound",
       arguments: Json::parse("{\"route\":\"ethereum\",\"message_id\":\"proof1\",\"recipient\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"amount\":\"1\"}")
     );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "finalize_inbound",
+      kotoage: "finalize_inbound",
       arguments: Json::parse("{\"route\":\"ethereum\",\"message_id\":\"proof1\",\"recipient\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"amount\":\"2\"}")
     );
     test::assert(ConsumedInbound.get(Name::parse("proof1")).unwrap_or(0) == 1);

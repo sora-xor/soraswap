@@ -1,185 +1,192 @@
-use std::{collections::BTreeMap, env, process};
+use std::{
+    env, fs,
+    io::{self, Read as _},
+    process,
+};
 
 use iroha_sccp::{
-    NexusBridgeFinalityProofV1, NexusCommitQcV1, NexusConsensusPhaseV1, NexusSccpMessageProofV1,
-    RouteActivatePayloadV1, SccpHubCommitmentV1, SccpMerkleProofV1, SccpPayloadV1,
-    TransferPayloadV1, canonical_sccp_payload_bytes, commitment_leaf_hash, payload_hash,
-    sccp_message_id, sccp_message_kind, sccp_message_target_domain, SCCP_CODEC_TEXT_UTF8,
+    decode_taira_bridge_finality_proof, decode_taira_sccp_message_proof,
+    sccp_taira_finality_network_id_v1,
+    verified_sccp_message_taira_finality_proof_cryptographically_self_consistent, SccpNetworkV1,
+    SccpPayloadV1, TairaSccpMessageProofV1, SCCP_CODEC_CANONICAL_TEXT, SCCP_CODEC_EVM_ADDRESS20,
+    SCCP_CODEC_SOLANA_PUBKEY32, SCCP_CODEC_TRON_ADDRESS21, SCCP_DOMAIN_SORA,
+    SCCP_TAIRA_BSC_XOR_ROUTE_ID_V1, SCCP_TAIRA_ETH_XOR_ROUTE_ID_V1, SCCP_TAIRA_SOL_XOR_ROUTE_ID_V1,
+    SCCP_TAIRA_TRON_XOR_ROUTE_ID_V1, SCCP_TAIRA_XOR_ASSET_KEY_V1,
 };
-use norito::to_bytes;
 
-fn usage() -> ! {
-    eprintln!(
-        "Usage:
-  bridge_bundle_gen route-activate --chain-id ID --height N --nonce N --source-domain N --target-domain N --asset-key KEY --route ROUTE [--block-hash-hex HEX]
-  bridge_bundle_gen transfer --chain-id ID --height N --nonce N --source-domain N --target-domain N --asset-home-domain N --asset-key KEY --route ROUTE --recipient ACCOUNT [--sender TEXT] [--block-hash-hex HEX]"
-    );
-    process::exit(2);
-}
+const USAGE: &str = "Usage:
+  bridge_bundle_gen transfer --bundle PATH
 
-fn parse_args() -> (String, BTreeMap<String, String>) {
-    let mut args = env::args().skip(1);
-    let Some(kind) = args.next() else {
-        usage();
-    };
+Validates a state-derived Taira SCCP transfer bundle and emits canonical Norito
+JSON. PATH may be a Torii `/v1/sccp/proofs/message/{message_id}` JSON response,
+canonical Norito bytes, or - for stdin. This verifies cryptographic internal
+consistency; destination trust still comes from the governed finality anchor.";
 
-    let mut values = BTreeMap::new();
-    while let Some(flag) = args.next() {
-        if !flag.starts_with("--") {
-            usage();
+fn parse_bundle_path<I>(arguments: I) -> Result<String, String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut arguments = arguments.into_iter();
+    match arguments.next().as_deref() {
+        Some("transfer") => {}
+        Some(command) => return Err(format!("unsupported command `{command}`")),
+        None => return Err("missing command".to_owned()),
+    }
+
+    match (arguments.next().as_deref(), arguments.next()) {
+        (Some("--bundle"), Some(path)) => {
+            if arguments.next().is_some() {
+                return Err("unexpected trailing arguments".to_owned());
+            }
+            Ok(path)
         }
-        let Some(value) = args.next() else {
-            usage();
-        };
-        values.insert(flag.trim_start_matches("--").to_owned(), value);
+        (Some(flag), _) => Err(format!("expected --bundle, found `{flag}`")),
+        (None, _) => Err("missing required flag --bundle".to_owned()),
     }
-    (kind, values)
 }
 
-fn required(values: &BTreeMap<String, String>, key: &str) -> String {
-    values.get(key).cloned().unwrap_or_else(|| {
-        eprintln!("missing required flag --{key}");
-        usage();
-    })
-}
-
-fn parse_u32(values: &BTreeMap<String, String>, key: &str) -> u32 {
-    required(values, key).parse().unwrap_or_else(|_| {
-        eprintln!("--{key} must be a valid u32");
-        process::exit(2);
-    })
-}
-
-fn parse_u64(values: &BTreeMap<String, String>, key: &str) -> u64 {
-    required(values, key).parse().unwrap_or_else(|_| {
-        eprintln!("--{key} must be a valid u64");
-        process::exit(2);
-    })
-}
-
-fn parse_u128(values: &BTreeMap<String, String>, key: &str) -> u128 {
-    required(values, key).parse().unwrap_or_else(|_| {
-        eprintln!("--{key} must be a valid u128");
-        process::exit(2);
-    })
-}
-
-fn hex32_from_string(hex: &str) -> [u8; 32] {
-    let normalized = hex.trim_start_matches("0x");
-    if normalized.len() != 64 || !normalized.as_bytes().iter().all(|b| b.is_ascii_hexdigit()) {
-        eprintln!("--block-hash-hex must contain exactly 32 bytes of hex");
-        process::exit(2);
+fn read_bundle(path: &str) -> Result<Vec<u8>, String> {
+    if path == "-" {
+        let mut bytes = Vec::new();
+        io::stdin()
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("failed to read bundle from stdin: {error}"))?;
+        Ok(bytes)
+    } else {
+        fs::read(path).map_err(|error| format!("failed to read bundle `{path}`: {error}"))
     }
-    let mut out = [0u8; 32];
-    for (idx, chunk) in normalized.as_bytes().chunks(2).enumerate() {
-        let text = std::str::from_utf8(chunk).expect("hex");
-        out[idx] = u8::from_str_radix(text, 16).expect("hex byte");
-    }
-    out
 }
 
-fn derived_block_hash(height: u64, nonce: u64) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[..8].copy_from_slice(&height.to_be_bytes());
-    out[8..16].copy_from_slice(&nonce.to_be_bytes());
-    out[16..24].copy_from_slice(&height.rotate_left(7).to_be_bytes());
-    out[24..32].copy_from_slice(&nonce.rotate_left(13).to_be_bytes());
-    out
+fn decode_bundle(bytes: &[u8]) -> Result<TairaSccpMessageProofV1, String> {
+    if bytes.starts_with(b"NRT0") {
+        decode_taira_sccp_message_proof(bytes)
+            .ok_or_else(|| "bundle is not canonical Norito SCCP proof bytes".to_owned())
+    } else {
+        norito::json::from_slice(bytes)
+            .map_err(|error| format!("bundle is not typed SCCP proof JSON: {error}"))
+    }
 }
 
-fn bundle_from_payload(
-    chain_id: String,
-    height: u64,
-    block_hash: [u8; 32],
-    payload: SccpPayloadV1,
-) -> NexusSccpMessageProofV1 {
-    let commitment = SccpHubCommitmentV1 {
-        version: 1,
-        kind: sccp_message_kind(&payload),
-        target_domain: sccp_message_target_domain(&payload),
-        message_id: sccp_message_id(&payload),
-        payload_hash: payload_hash(&canonical_sccp_payload_bytes(&payload)),
-        parliament_certificate_hash: None,
-    };
-    let merkle_proof = SccpMerkleProofV1 { steps: Vec::new() };
-    let commitment_root = commitment_leaf_hash(&commitment);
-    let finality = NexusBridgeFinalityProofV1 {
-        version: 1,
-        chain_id,
-        height,
-        block_hash,
-        commitment_root,
-        block_header_bytes: vec![0x01, 0x02, 0x03],
-        commit_qc: NexusCommitQcV1 {
-            version: 1,
-            phase: NexusConsensusPhaseV1::Commit,
-            height,
-            view: 0,
-            epoch: 0,
-            mode_tag: "iroha2-consensus::npos-sumeragi@v1".to_owned(),
-            subject_block_hash: block_hash,
-            validator_set_hash_version: 1,
-            validator_public_keys: vec!["validator-1".to_owned()],
-            validator_set_pops: vec![vec![0xAA]],
-            signers_bitmap: vec![0x01],
-            bls_aggregate_signature: vec![0xBB],
-        },
-    };
-    NexusSccpMessageProofV1 {
-        version: 1,
-        commitment_root,
-        commitment,
-        merkle_proof,
-        payload,
-        finality_proof: to_bytes(&finality).expect("encode finality proof"),
+fn canonical_route(target: SccpNetworkV1) -> Result<(&'static str, u8), String> {
+    match target {
+        SccpNetworkV1::EthereumMainnet | SccpNetworkV1::EthereumSepolia => {
+            Ok((SCCP_TAIRA_ETH_XOR_ROUTE_ID_V1, SCCP_CODEC_EVM_ADDRESS20))
+        }
+        SccpNetworkV1::BscMainnet | SccpNetworkV1::BscTestnet => {
+            Ok((SCCP_TAIRA_BSC_XOR_ROUTE_ID_V1, SCCP_CODEC_EVM_ADDRESS20))
+        }
+        SccpNetworkV1::TronMainnet | SccpNetworkV1::TronNile | SccpNetworkV1::TronShasta => {
+            Ok((SCCP_TAIRA_TRON_XOR_ROUTE_ID_V1, SCCP_CODEC_TRON_ADDRESS21))
+        }
+        SccpNetworkV1::SolanaTestnet => {
+            Ok((SCCP_TAIRA_SOL_XOR_ROUTE_ID_V1, SCCP_CODEC_SOLANA_PUBKEY32))
+        }
+        SccpNetworkV1::SoraTaira => {
+            Err("SCCP outbound transfer target must be an external profile".to_owned())
+        }
     }
+}
+
+fn validate_transfer_bundle(bundle: &TairaSccpMessageProofV1) -> Result<(), String> {
+    let finality = decode_taira_bridge_finality_proof(&bundle.finality_proof)
+        .ok_or_else(|| "bundle finality proof is not canonical Norito".to_owned())?;
+    if finality.finality_artifact.height_context.network_id != sccp_taira_finality_network_id_v1() {
+        return Err("bundle finality proof is not bound to the Taira NetworkId".to_owned());
+    }
+    if verified_sccp_message_taira_finality_proof_cryptographically_self_consistent(&bundle)
+        .is_none()
+    {
+        return Err(
+            "SCCP bundle failed commitment, inclusion, or finality verification".to_owned(),
+        );
+    }
+
+    let SccpPayloadV1::Transfer(transfer) = &bundle.payload;
+    let target = bundle.commitment.context.lane.target;
+    let (expected_route_id, expected_recipient_codec) = canonical_route(target)?;
+    if bundle.commitment.context.lane.source != SccpNetworkV1::SoraTaira
+        || transfer.source_domain != bundle.commitment.context.lane.source.domain_id()
+        || transfer.dest_domain != target.domain_id()
+        || transfer.route_revision == 0
+        || transfer.asset_home_domain != SCCP_DOMAIN_SORA
+        || transfer.asset_id_codec != SCCP_CODEC_CANONICAL_TEXT
+        || transfer.asset_id != SCCP_TAIRA_XOR_ASSET_KEY_V1.as_bytes()
+        || transfer.sender_codec != SCCP_CODEC_CANONICAL_TEXT
+        || transfer.recipient_codec != expected_recipient_codec
+        || transfer.route_id_codec != SCCP_CODEC_CANONICAL_TEXT
+        || transfer.route_id != expected_route_id.as_bytes()
+    {
+        return Err("SCCP bundle does not use the canonical Taira XOR route and codecs".to_owned());
+    }
+
+    Ok(())
 }
 
 fn main() {
-    let (kind, values) = parse_args();
-    let chain_id = required(&values, "chain-id");
-    let height = parse_u64(&values, "height");
-    let nonce = parse_u64(&values, "nonce");
-    let block_hash = values
-        .get("block-hash-hex")
-        .map(|value| hex32_from_string(value))
-        .unwrap_or_else(|| derived_block_hash(height, nonce));
+    let path = parse_bundle_path(env::args().skip(1)).unwrap_or_else(|error| {
+        eprintln!("{error}\n\n{USAGE}");
+        process::exit(2);
+    });
+    let bytes = read_bundle(&path).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        process::exit(1);
+    });
+    let bundle = decode_bundle(&bytes).unwrap_or_else(|error| {
+        eprintln!("failed to decode bundle: {error}");
+        process::exit(1);
+    });
+    validate_transfer_bundle(&bundle).unwrap_or_else(|error| {
+        eprintln!("invalid transfer bundle: {error}");
+        process::exit(1);
+    });
+    let json = norito::json::to_json_pretty(&bundle).unwrap_or_else(|error| {
+        eprintln!("failed to serialize bundle: {error}");
+        process::exit(1);
+    });
+    println!("{json}");
+}
 
-    let payload = match kind.as_str() {
-        "route-activate" => SccpPayloadV1::RouteActivate(RouteActivatePayloadV1 {
-            version: 1,
-            source_domain: parse_u32(&values, "source-domain"),
-            target_domain: parse_u32(&values, "target-domain"),
-            nonce,
-            asset_id_codec: SCCP_CODEC_TEXT_UTF8,
-            asset_id: required(&values, "asset-key").into_bytes(),
-            route_id_codec: SCCP_CODEC_TEXT_UTF8,
-            route_id: required(&values, "route").into_bytes(),
-        }),
-        "transfer" => SccpPayloadV1::Transfer(TransferPayloadV1 {
-            version: 1,
-            source_domain: parse_u32(&values, "source-domain"),
-            dest_domain: parse_u32(&values, "target-domain"),
-            nonce,
-            asset_home_domain: parse_u32(&values, "asset-home-domain"),
-            asset_id_codec: SCCP_CODEC_TEXT_UTF8,
-            asset_id: required(&values, "asset-key").into_bytes(),
-            amount: parse_u128(&values, "amount"),
-            sender_codec: SCCP_CODEC_TEXT_UTF8,
-            sender: values
-                .get("sender")
-                .cloned()
-                .unwrap_or_else(|| "synthetic:bridge".to_owned())
-                .into_bytes(),
-            recipient_codec: SCCP_CODEC_TEXT_UTF8,
-            recipient: required(&values, "recipient").into_bytes(),
-            route_id_codec: SCCP_CODEC_TEXT_UTF8,
-            route_id: required(&values, "route").into_bytes(),
-        }),
-        _ => usage(),
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let bundle = bundle_from_payload(chain_id, height, block_hash, payload);
-    serde_json::to_writer_pretty(std::io::stdout(), &bundle).expect("serialize bundle");
-    println!();
+    #[test]
+    fn parser_accepts_only_the_transfer_bundle_surface() {
+        assert_eq!(
+            parse_bundle_path([
+                "transfer".to_owned(),
+                "--bundle".to_owned(),
+                "bundle.nrt".to_owned()
+            ]),
+            Ok("bundle.nrt".to_owned())
+        );
+        assert!(parse_bundle_path([
+            "route-activate".to_owned(),
+            "--bundle".to_owned(),
+            "bundle.nrt".to_owned()
+        ])
+        .is_err());
+        assert!(parse_bundle_path([
+            "transfer".to_owned(),
+            "--bundle".to_owned(),
+            "bundle.nrt".to_owned(),
+            "--height".to_owned(),
+            "1".to_owned()
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn state_derived_json_and_binary_bundles_validate() {
+        let fixture = iroha_sccp::sccp_exact_outbound_test_fixture_for_nonce_v1(42);
+        validate_transfer_bundle(&fixture.bundle).expect("exact state-derived fixture");
+
+        let json = norito::json::to_json_pretty(&fixture.bundle).expect("fixture JSON");
+        let from_json = decode_bundle(json.as_bytes()).expect("typed fixture JSON");
+        assert_eq!(from_json, fixture.bundle);
+
+        let binary = norito::to_bytes(&fixture.bundle).expect("fixture Norito bytes");
+        let from_binary = decode_bundle(&binary).expect("canonical fixture bytes");
+        assert_eq!(from_binary, fixture.bundle);
+    }
 }

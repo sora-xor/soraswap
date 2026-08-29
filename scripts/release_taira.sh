@@ -22,9 +22,10 @@ Required setup:
   # edit the copied file with real untracked Taira credentials
   export SORASWAP_CLIENT_CONFIG=config/testnet/taira.client.toml
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
-  # Optional: override the default oracle provider, which is the client config signer.
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX=<public oracle key>
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX=<private oracle key>
+  cp config/testnet/taira.client.toml.example config/testnet/oracle.client.toml
+  # edit this second config with a distinct oracle signer on the same Taira chain and Torii endpoint
+  chmod 600 config/testnet/oracle.client.toml
+  export SORASWAP_ORACLE_CLIENT_CONFIG=config/testnet/oracle.client.toml
   # Required only when SORASWAP_ENABLE_RWA_RELEASE=1.
   export SORASWAP_ENABLE_RWA_RELEASE=1
   export SORASWAP_RWA_ISSUER_APPROVAL_REF=<external approval id or URL>
@@ -34,7 +35,7 @@ Required setup:
   export SORASWAP_RWA_REDEMPTION_TERMS_REF=<external redemption terms id or URL>
   SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make release-taira
 
-The client config and optional oracle private key are runtime-only secrets. RWA documents stay outside this repo; only their release references are recorded.
+Both client configs are runtime-only secrets. RWA documents stay outside this repo; only their release references are recorded.
 EOF
 }
 
@@ -324,22 +325,13 @@ fi
   fail "SORASWAP_INIT_CONTRACT_STATE=0 is a debug bypass and cannot be used for the Taira release gate"
 [[ "$skip_existing_nested_probe_check" != "1" ]] || \
   fail "SORASWAP_PREFLIGHT_SKIP_EXISTING_NESTED_PROBE_CHECK is managed by the release runner and cannot be exported for the Taira release gate"
-if soraswap_value_looks_placeholder "${SORASWAP_ORACLE_PUBLIC_KEY_HEX:-}"; then
-  fail "oracle public key is an example value"
+if soraswap_value_looks_placeholder "${SORASWAP_ORACLE_CLIENT_CONFIG:-}"; then
+  fail "SORASWAP_ORACLE_CLIENT_CONFIG is an example value"
 fi
-if soraswap_value_looks_placeholder "${SORASWAP_ORACLE_PRIVATE_KEY_HEX:-}"; then
-  fail "oracle private key is an example value"
+if ! soraswap_prepare_oracle_client_config "$config_abs" >/dev/null; then
+  fail_with_setup_hint "could not validate the separate typed-oracle client config"
 fi
-
-if ! soraswap_required_oracle_public_key_hex "$config_abs" >/dev/null; then
-  fail_with_setup_hint "could not derive oracle public key from SORASWAP_ORACLE_PUBLIC_KEY_HEX or the Taira client config signer"
-fi
-if ! soraswap_oracle_private_key_hex_for_config "$config_abs" >/dev/null; then
-  fail_with_setup_hint "could not derive oracle private key from SORASWAP_ORACLE_PRIVATE_KEY_HEX or the Taira client config signer"
-fi
-if ! oracle_keypair_error="$(soraswap_oracle_keypair_matches_for_config "$config_abs" 2>&1 >/dev/null)"; then
-  fail_with_setup_hint "${oracle_keypair_error:-oracle private key does not match configured oracle public key}"
-fi
+soraswap_cleanup_oracle_client_config || fail "could not clean up typed-oracle client state"
 
 require_taira_rwa_refs_ready
 require_exact_candidate_pin_settings

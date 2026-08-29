@@ -63,7 +63,6 @@
         "minimum_samples",
         "maximum_monitoring_sample_age_seconds",
         "minimum_validator_count",
-        "maximum_canonical_lead",
         "maximum_finality_age_ms",
         "derivatives_pause_mode"
       ],
@@ -73,7 +72,6 @@
         "minimum_samples": {"const": 61},
         "maximum_monitoring_sample_age_seconds": {"const": 30},
         "minimum_validator_count": {"const": 4},
-        "maximum_canonical_lead": {"const": 1},
         "maximum_finality_age_ms": {"const": 30000},
         "derivatives_pause_mode": {"const": "external_fail_closed"}
       }

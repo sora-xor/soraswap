@@ -1,75 +1,17 @@
 # Options State Layout
 
-Manager singleton state:
-- `OptMgrInitialized`
-- `OptMgrOwner`
-- `OptMgrController`
-- `OptMgrGuardian`
-- `OptMgrSettlementAsset`
-- `OptMgrWithdrawalOnly`
-- `OptMgrOraclePublicKey`
-- `OptMgrOracleScheme`
-- `OptMgrOracleStaleSlots`
-- `OptMgrAutomationExecutor`
-- `OptMgrExpiryJobId`
-- `OptMgrSettlementJobId`
-- `OptMgrAutomationCadence`
-- `OptMgrAutomationBacklogCap`
-- `OptMgrAutomationBacklog`
-- `OptMgrAutomationSafeMode`
-- `OptMgrNextTemplateId`
-- `OptMgrNextSeriesId`
-- `OptMgrLifecycleCadenceSlots`
-- `OptMgrLifecycleMaxItems`
-- `OptMgrLifecycleEnabled`
-- `OptMgrLifecycleNextSlot`
-- `OptMgrLifecycleCursor`
-- `OptMgrLifecycleLastSlot`
-- `OptMgrLifecycleLastProcessed`
-
-Manager template maps:
-- `OptMgrTemplateKind`
-- `OptMgrTemplateUnderlyingAsset`
-- `OptMgrTemplateQuoteAsset`
-- `OptMgrTemplateTenorSlots`
-- `OptMgrTemplateStrikeBps`
-- `OptMgrTemplateCollateralMultiplierBps`
-- `OptMgrTemplateBasePremiumBps`
-- `OptMgrTemplateActive`
-
-Manager series maps:
-- `OptMgrSeriesTemplateId`
-- `OptMgrSeriesKind`
-- `OptMgrSeriesUnderlyingAsset`
-- `OptMgrSeriesQuoteAsset`
-- `OptMgrSeriesExpirySlot`
-- `OptMgrSeriesMaxNotional`
-- `OptMgrSeriesPremiumBps`
-- `OptMgrSeriesStrikeBps`
-- `OptMgrSeriesCollateralMultiplierBps`
-- `OptMgrSeriesStatus`
-- `OptMgrSeriesSettlementSlot`
-- `OptMgrSeriesOracleSlot`
-- `OptMgrSeriesAttestationHash`
-- `OptMgrSeriesFinalMark`
-- `OptMgrSeriesFinalQuoteMark`
-
 Factory singleton state:
 - `OptFactoryInitialized`
 - `OptFactoryOwner`
 - `OptFactoryGuardian`
+- `OptFactoryAccount`
 - `OptFactorySettlementAsset`
-- `OptFactoryManagerContract`
-- `OptFactoryRiskVaultContract`
-- `OptFactoryVaultContract`
-- `OptFactoryShoutContract`
-- `OptFactoryOutperfContract`
-- `OptFactoryContractBound`
-- `OptFactoryContractId`
 - `OptFactoryWithdrawalOnly`
-- `OptFactoryOraclePublicKey`
-- `OptFactoryOracleScheme`
+- `OptFactoryOracleAuthority`
 - `OptFactoryOracleStaleSlots`
+- `OptFactoryReservedCollateral`
+- `OptFactoryPremiumAccrued`
+- `OptFactorySettledPayouts`
 - `OptFactoryAutomationExecutor`
 - `OptFactoryAutomationJobId`
 - `OptFactoryAutomationCadence`
@@ -87,6 +29,7 @@ Factory singleton state:
 
 Factory series and guard maps:
 - `OptFactorySeriesKind`
+- `OptFactorySeriesStatus`
 - `OptFactorySeriesMaxNotional`
 - `OptFactorySeriesPremiumBps`
 - `OptFactorySeriesStrikeBps`
@@ -103,6 +46,8 @@ Factory series and guard maps:
 - `OptFactorySeriesAttestationHash`
 - `OptFactorySeriesFinalMark`
 - `OptFactorySeriesFinalQuoteMark`
+- `OptFactorySeriesFinalBaseReturnBps`
+- `OptFactorySeriesFinalQuoteReturnBps`
 - `OptFactorySeriesSettlementReady`
 
 Factory position maps:
@@ -115,81 +60,17 @@ Factory position maps:
 - `OptFactoryPositionStatus`
 - `OptFactoryPositionRecordedPayout`
 - `OptFactoryPositionSettlementReady`
-- `OptFactoryPositionShoutFloor`
-- `OptFactoryPositionLastOracleMark`
+- `OptFactoryPositionShoutFloorBps`
+- `OptFactoryPositionLastOracleMarkBps`
 - `OptFactoryPositionLastOracleSlot`
 - `OptFactoryPositionLastAttestationHash`
 
-Vault singleton state:
-- `OptVaultInitialized`
-- `OptVaultOwner`
-- `OptVaultSettlementAsset`
-- `OptVaultController`
-- `OptVaultRiskVaultContract`
-- `OptVaultWithdrawalOnly`
+The sole options contract uses the `OptFactory` prefix for all singleton, series, guard, and position state in the shared Kotodama dataspace.
 
-Vault accounting maps:
-- `OptVaultSeriesCollateralLocked`
-- `OptVaultSeriesPremiumAccrued`
-- `OptVaultSeriesPayoutPaid`
-- `OptVaultPositionOwner`
-- `OptVaultPositionSeriesId`
-- `OptVaultPositionCollateralLocked`
-- `OptVaultPositionPremiumPaid`
-- `OptVaultPositionPayoutPaid`
-- `OptVaultPositionStatus`
+The factory is the canonical first-release position and collateral ledger. `OptFactoryReservedCollateral` is the sum of collateral on active positions, and the live `OptFactoryAccount` settlement-asset balance must cover it. Closing a position caps payout at its locked collateral, zeroes that position's lock, and removes the full lock from the aggregate reserve. `OptFactoryPremiumAccrued` and `OptFactorySettledPayouts` are cumulative audit counters.
 
-Shout product singleton state:
-- `ShoutInitialized`
-- `ShoutOwner`
-- `ShoutController`
-- `ShoutGuardian`
-- `ShoutWithdrawalOnly`
-- `ShoutOraclePublicKey`
-- `ShoutOracleScheme`
-- `ShoutOracleStaleSlots`
+Factory oracle mutations are authorized by a configured account ID that is distinct from the owner, guardian, and custody accounts. Typed calls update outperformance settlement state per series and shout marks per position, including the oracle slot and attestation hash, preserving monotonic replay protection without signed-JSON decoding or C2C relays.
 
-Shout product maps:
-- `ShoutSeriesExpirySlot`
-- `ShoutSeriesStatus`
-- `ShoutSeriesStrikeBps`
-- `ShoutPositionOwner`
-- `ShoutPositionSeriesId`
-- `ShoutPositionNotional`
-- `ShoutPositionStrikeBps`
-- `ShoutPositionShoutFloor`
-- `ShoutPositionLastOracleMark`
-- `ShoutPositionLastOracleSlot`
-- `ShoutPositionLastAttestationHash`
-- `ShoutPositionPayout`
-- `ShoutPositionStatus`
+The factory exposes typed view snapshots through `factory_config()`, `oracle_stale_slots()`, `treasury_state()`, `series_state()`, `series_terms()`, `series_settlement()`, `series_returns()`, `position_state()`, `automation_state()`, and `trigger_lifecycle_state()`.
 
-Outperformance product maps:
-- `OutperfSeriesExpirySlot` (configured expiry, clamped upward to the verified settlement `block_height()` once settled)
-- `OutperfSeriesCollateralMultiplierBps`
-- `OutperfSeriesStatus`
-- `OutperfSeriesFinalBaseReturnBps`
-- `OutperfSeriesFinalQuoteReturnBps`
-- `OutperfSeriesSettlementReady`
-- `OutperfPositionOwner`
-- `OutperfPositionSeriesId`
-- `OutperfPositionNotional`
-- `OutperfPositionCollateralMultiplierBps`
-- `OutperfPositionBaseReturnBps`
-- `OutperfPositionQuoteReturnBps`
-- `OutperfPositionPayout`
-- `OutperfPositionSettlementReady`
-- `OutperfPositionStatus`
-
-All options contracts use explicit prefixes so manager, factory, vault, and product state cannot collide inside the shared Kotodama dataspace.
-The factory is the only user-facing write surface. `risk_vault` bucket `2` tracks the canonical liability and collateral state, while `OptionsVault` mirrors per-series and per-position premium/collateral/payout accounting only.
-Oracle keys and schemes are stored on the public verifier surfaces: manager/factory for series settlement and factory/shout product for shout marks. Payload domains are `2` for series settlement and `3` for shout marks. Last oracle slot and attestation hash maps enforce monotonic updates and audit-trail state.
-
-Typed view snapshots are exposed separately by contract:
-- manager: `manager_config()`, `oracle_stale_slots()`, `template_state()`, `series_state()`, `automation_state()`
-- factory: `factory_config()`, `oracle_stale_slots()`, `series_state()`, `position_state()`, `automation_state()`
-- vault: `vault_state()`, `position_accounting()`
-- shout product: `series_state()`, `position_state()`, `oracle_stale_slots()`
-- outperformance product: `series_state()`, `position_state()`
-
-Factory automation state is split intentionally: `sync_automation(...)` binds executor/job cadence and cap settings, while `heartbeat(...)` updates the live backlog/safe-mode fields and reports bucket `2` telemetry into `risk_vault`.
+Factory automation state is split intentionally: `sync_automation(...)` binds executor/job cadence and cap settings, while `heartbeat(...)` updates the local backlog/safe-mode fields. It does not forward telemetry to another contract.

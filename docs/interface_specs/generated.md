@@ -1,38 +1,37 @@
 # Contract Interface Schema
 
-Manifest: `iroha.contracts.toml`
+Manifest: `./iroha.contracts.toml`
 
 ## n3x.n3x_hub
 
-- Interface: `artifacts/compiled/n3x/n3x_hub.interface.json`
-- Entrypoints: `12`
+- Interface: `./artifacts/compiled/n3x/n3x_hub.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `11`
 - State keys: `21`
 
 ### main
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `view`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {}
 ```
+### hajimari
 
-### init_hub
-
-- Kind: `Public`
+- Kind: `hajimari`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
   "kusd_asset": "xor#universal",
-  "mint_fee_bps": 0,
+  "mint_fee_bps": "0",
   "n3x_asset": "xor#universal",
-  "redeem_fee_bps": 0,
-  "target_kusd_bps": 0,
-  "target_usdc_bps": 0,
-  "target_usdt_bps": 0,
+  "redeem_fee_bps": "0",
+  "target_kusd_bps": "0",
+  "target_usdc_bps": "0",
+  "target_usdt_bps": "0",
   "usdc_asset": "xor#universal",
   "usdt_asset": "xor#universal",
   "vault_account": "ed0120..."
@@ -41,34 +40,34 @@ Manifest: `iroha.contracts.toml`
 
 ### quote_mint
 
-- Kind: `View`
-- Return: `int`
+- Kind: `view`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "kusd_in": 0,
-  "usdc_in": 0,
-  "usdt_in": 0
+  "kusd_in": "0",
+  "usdc_in": "0",
+  "usdt_in": "0"
 }
 ```
 
 ### quote_redeem
 
-- Kind: `View`
-- Return: `int`
+- Kind: `view`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "n3x_amount": 0
+  "n3x_amount": "0"
 }
 ```
 
 ### assert_initialized
 
-- Kind: `View`
-- Return: `int`
+- Kind: `view`
+- Return: `quantity`
 - Sample payload:
 
 ```json
@@ -77,7 +76,7 @@ Manifest: `iroha.contracts.toml`
 
 ### hub_config
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(AssetDefinitionId, AssetDefinitionId, AssetDefinitionId, AssetDefinitionId, AccountId, int, int, int, int, int)`
 - Sample payload:
 
@@ -85,22 +84,10 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### bind_vault_account
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "vault_account": "ed0120..."
-}
-```
-
 ### mirror_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, quantity, quantity, quantity, int, int, quantity, quantity, int, int, int)`
 - Sample payload:
 
 ```json
@@ -109,8 +96,8 @@ Manifest: `iroha.contracts.toml`
 
 ### fee_reserve_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int)`
+- Kind: `view`
+- Return: `(quantity, quantity, quantity, quantity, quantity)`
 - Sample payload:
 
 ```json
@@ -119,34 +106,34 @@ Manifest: `iroha.contracts.toml`
 
 ### deposit_and_mint
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "kusd_in": 0,
-  "usdc_in": 0,
-  "usdt_in": 0
+  "kusd_in": "0",
+  "usdc_in": "0",
+  "usdt_in": "0"
 }
 ```
 
 ### burn_and_redeem
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "n3x_amount": 0
+  "n3x_amount": "0"
 }
 ```
 
 ### claim_fees
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
@@ -157,13 +144,36 @@ Manifest: `iroha.contracts.toml`
 
 ## dlmm.dlmm_pool
 
-- Interface: `artifacts/compiled/dlmm/dlmm_pool.interface.json`
-- Entrypoints: `26`
-- State keys: `33`
+- Interface: `./artifacts/compiled/dlmm/dlmm_pool.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `27`
+- State keys: `42`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "active_bin": "0",
+  "base_asset": "xor#universal",
+  "bin_liquidity_cap": "0",
+  "bin_step": "0",
+  "fee_pips": "0",
+  "impact_cap_bps": "0",
+  "launchpad_executor": "ed0120...",
+  "max_bins_per_swap": "0",
+  "min_reserve_base": "0",
+  "min_reserve_quote": "0",
+  "quote_asset": "xor#universal",
+  "vault_account": "ed0120..."
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -171,101 +181,155 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_pool
+### add_position_liquidity
 
-- Kind: `Public`
-- Return: `null`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "active_bin": 0,
-  "base_asset": "xor#universal",
-  "bin_liquidity_cap": 0,
-  "bin_step": 0,
-  "fee_pips": 0,
-  "impact_cap_bps": 0,
-  "max_bins_per_swap": 0,
-  "min_reserve_base": 0,
-  "min_reserve_quote": 0,
-  "quote_asset": "xor#universal",
-  "vault_account": "ed0120..."
+  "base_amount": "0",
+  "bin_id": "0",
+  "min_shares_out": "0",
+  "position_id": "sample",
+  "quote_amount": "0"
 }
 ```
 
 ### seed_bin
 
-- Kind: `Public`
-- Return: `null`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "base_amount": 0,
-  "bin_id": 0,
-  "quote_amount": 0
+  "base_amount": "0",
+  "bin_id": "0",
+  "position_id": "sample",
+  "quote_amount": "0"
 }
 ```
 
-### seed_bin_c2c
+### seed_launchpad_liquidity
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "base_amount": 0,
-  "bin_id": 0,
-  "quote_amount": 0
-}
-```
-
-### add_position_liquidity
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "base_amount": 0,
-  "bin_id": 0,
-  "min_shares_out": 0,
-  "position_id": "name",
-  "quote_amount": 0
+  "amount_in": "0",
+  "min_out": "0"
 }
 ```
 
 ### remove_position_liquidity
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "position_id": "name",
-  "shares": 0
+  "position_id": "sample",
+  "shares": "0"
 }
 ```
 
 ### collect_position_fees
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "position_id": "name"
+  "position_id": "sample"
 }
+```
+
+### swap_exact_in
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "amount_in": "0",
+  "input_asset": "xor#universal",
+  "min_out": "0"
+}
+```
+
+### swap_exact_in_base
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "amount_in": "0",
+  "min_out": "0"
+}
+```
+
+### swap_exact_in_quote
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "amount_in": "0",
+  "min_out": "0"
+}
+```
+
+### renounce_admin
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
+### configure_range_governor
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "cadence_slots": "0",
+  "enabled": "0",
+  "max_active_bin_drift": "0",
+  "max_fee_pips": "0",
+  "target_active_bin": "0"
+}
+```
+
+### native_range_governor_tick
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### mirror_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, int, int, quantity, quantity, quantity, quantity, int, quantity, quantity, int, quantity)`
 - Sample payload:
 
 ```json
@@ -274,7 +338,7 @@ Manifest: `iroha.contracts.toml`
 
 ### pool_config
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(AssetDefinitionId, AssetDefinitionId, AccountId, int, int, int)`
 - Sample payload:
 
@@ -284,7 +348,7 @@ Manifest: `iroha.contracts.toml`
 
 ### configured_base_asset
 
-- Kind: `View`
+- Kind: `view`
 - Return: `AssetDefinitionId`
 - Sample payload:
 
@@ -294,7 +358,7 @@ Manifest: `iroha.contracts.toml`
 
 ### configured_quote_asset
 
-- Kind: `View`
+- Kind: `view`
 - Return: `AssetDefinitionId`
 - Sample payload:
 
@@ -304,7 +368,7 @@ Manifest: `iroha.contracts.toml`
 
 ### configured_vault_account
 
-- Kind: `View`
+- Kind: `view`
 - Return: `AccountId`
 - Sample payload:
 
@@ -312,21 +376,19 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### bind_custody_account
+### launchpad_binding
 
-- Kind: `Public`
-- Return: `null`
+- Kind: `view`
+- Return: `(AccountId, int)`
 - Sample payload:
 
 ```json
-{
-  "vault_account": "ed0120..."
-}
+{}
 ```
 
 ### custody_account
 
-- Kind: `View`
+- Kind: `view`
 - Return: `AccountId`
 - Sample payload:
 
@@ -336,44 +398,8 @@ Manifest: `iroha.contracts.toml`
 
 ### risk_config
 
-- Kind: `View`
-- Return: `(int, int, int, int, int)`
-- Sample payload:
-
-```json
-{}
-```
-
-### configure_range_governor
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "cadence_slots": 0,
-  "enabled": 0,
-  "max_active_bin_drift": 0,
-  "max_fee_pips": 0,
-  "target_active_bin": 0
-}
-```
-
-### native_range_governor_tick
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### range_governor_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, quantity, int, quantity)`
 - Sample payload:
 
 ```json
@@ -382,117 +408,97 @@ Manifest: `iroha.contracts.toml`
 
 ### mirror_bin
 
-- Kind: `View`
-- Return: `(int, int, int, int, int)`
+- Kind: `view`
+- Return: `(quantity, quantity, quantity, decimal, decimal)`
 - Sample payload:
 
 ```json
 {
-  "bin_id": 0
+  "bin_id": "0"
+}
+```
+
+### mirror_bin_index
+
+- Kind: `view`
+- Return: `(int, int, int, int)`
+- Sample payload:
+
+```json
+{
+  "bin_id": "0"
 }
 ```
 
 ### mirror_position
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, quantity, decimal, decimal, quantity, quantity)`
 - Sample payload:
 
 ```json
 {
-  "position_id": "name"
+  "position_id": "sample"
 }
 ```
 
 ### quote_position_fees
 
-- Kind: `View`
-- Return: `(int, int)`
+- Kind: `view`
+- Return: `(quantity, quantity)`
 - Sample payload:
 
 ```json
 {
-  "position_id": "name"
+  "position_id": "sample"
 }
 ```
 
-### swap_exact_in
+### range_governor_state
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `view`
+- Return: `(int, int, int, int, int, int, int, int)`
 - Sample payload:
 
 ```json
-{
-  "amount_in": 0,
-  "input_asset": "xor#universal",
-  "min_out": 0
-}
+{}
 ```
 
-### swap_exact_in_base
+### admin_state
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `view`
+- Return: `(AccountId, int)`
 - Sample payload:
 
 ```json
-{
-  "amount_in": 0,
-  "min_out": 0
-}
-```
-
-### swap_exact_in_quote
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "amount_in": 0,
-  "min_out": 0
-}
-```
-
-### swap_exact_in_base_for
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "amount_in": 0,
-  "min_out": 0,
-  "recipient": "ed0120..."
-}
-```
-
-### swap_exact_in_quote_for
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "amount_in": 0,
-  "min_out": 0,
-  "recipient": "ed0120..."
-}
+{}
 ```
 
 ## dlmm.dlmm_router
 
-- Interface: `artifacts/compiled/dlmm/dlmm_router.interface.json`
-- Entrypoints: `16`
-- State keys: `15`
+- Interface: `./artifacts/compiled/dlmm/dlmm_router.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `17`
+- State keys: `16`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "base_asset": "xor#universal",
+  "default_fee_pips": "0",
+  "guardian": "ed0120...",
+  "pool_contract": "0x",
+  "quote_asset": "xor#universal"
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -500,60 +506,34 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_router
+### set_paused
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "base_asset": "xor#universal",
-  "default_fee_pips": 0
-}
-```
-
-### bind_contract
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "contract_id": "ed0120..."
-}
-```
-
-### bind_pool
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "pool_contract": null,
-  "quote_asset": "xor#universal"
+  "paused": "0"
 }
 ```
 
 ### assert_router_config
 
-- Kind: `View`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "default_fee_pips": 0
+  "default_fee_pips": "0"
 }
 ```
 
 ### router_config
 
-- Kind: `View`
-- Return: `(AssetDefinitionId, int)`
+- Kind: `view`
+- Return: `(AssetDefinitionId, AssetDefinitionId, int, AccountId, bytes, int)`
 - Sample payload:
 
 ```json
@@ -562,7 +542,7 @@ Manifest: `iroha.contracts.toml`
 
 ### router_assets
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(AssetDefinitionId, AssetDefinitionId)`
 - Sample payload:
 
@@ -572,39 +552,17 @@ Manifest: `iroha.contracts.toml`
 
 ### mirror_state
 
-- Kind: `View`
-- Return: `(int, int)`
+- Kind: `view`
+- Return: `(int, int, int)`
 - Sample payload:
 
 ```json
 {}
-```
-
-### swap_history_head
-
-- Kind: `View`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### mirror_swap_history
-
-- Kind: `View`
-- Return: `(AccountId, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "record_id": 0
-}
 ```
 
 ### execution_binding
 
-- Kind: `View`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -614,7 +572,7 @@ Manifest: `iroha.contracts.toml`
 
 ### contract_binding
 
-- Kind: `View`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -622,157 +580,215 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### quote_direct
+### swap_history_head
 
-- Kind: `View`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
 ```json
+{}
+```
+
+### mirror_swap_history
+
+- Kind: `view`
+- Return: `(AccountId, int, quantity, quantity, quantity, int)`
+- Sample payload:
+
+```json
 {
-  "amount_in": 0,
-  "fee_pips": 0,
-  "reserve_in": 0,
-  "reserve_out": 0
+  "record_id": "0"
+}
+```
+
+### quote_direct
+
+- Kind: `view`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "amount_in": "0",
+  "fee_pips": "0",
+  "reserve_in": "0",
+  "reserve_out": "0"
 }
 ```
 
 ### quote_bin
 
-- Kind: `View`
-- Return: `int`
+- Kind: `view`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "amount_in": 0,
-  "bin_id": 0,
-  "bin_step": 0,
-  "fee_pips": 0,
-  "input_is_base": 0,
-  "min_reserve_base": 0,
-  "min_reserve_quote": 0,
-  "reserve_base": 0,
-  "reserve_quote": 0
+  "amount_in": "0",
+  "bin_id": "0",
+  "bin_step": "0",
+  "fee_pips": "0",
+  "input_is_base": "0",
+  "min_reserve_base": "0",
+  "min_reserve_quote": "0",
+  "reserve_base": "0",
+  "reserve_quote": "0"
 }
 ```
 
 ### select_best_quote
 
-- Kind: `View`
-- Return: `int`
+- Kind: `view`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "direct_out": 0,
-  "via_base_out": 0
+  "direct_out": "0",
+  "via_base_out": "0"
 }
 ```
 
 ### route_swap
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "amount_in": 0,
-  "input_is_base": 0,
-  "min_out": 0
+  "amount_in": "0",
+  "input_is_base": "0",
+  "min_out": "0"
+}
+```
+
+### route_exact_in_base
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "amount_in": "0",
+  "min_out": "0"
+}
+```
+
+### route_exact_in_quote
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "amount_in": "0",
+  "min_out": "0"
 }
 ```
 
 ## batch_amm.epoch_auction
 
-- Interface: `artifacts/compiled/batch_amm/epoch_auction.interface.json`
-- Entrypoints: `12`
-- State keys: `37`
+- Interface: `./artifacts/compiled/batch_amm/epoch_auction.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `13`
+- State keys: `39`
 
-### main
+### hajimari
 
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### init_auction
-
-- Kind: `Public`
+- Kind: `hajimari`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
   "base_asset": "xor#universal",
+  "custody_account": "ed0120...",
+  "guardian": "ed0120...",
   "quote_asset": "xor#universal"
 }
 ```
 
-### bind_contract
+### main
 
-- Kind: `Public`
+- Kind: `view`
+- Return: `int`
+- Sample payload:
+
+```json
+{}
+```
+
+### enter_paused
+
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
-{
-  "contract_id": "ed0120..."
-}
+{}
+```
+
+### exit_paused
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### configure_epoch
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "end_slot": 0,
-  "epoch_id": 0,
-  "lower_tick": 0,
-  "max_orders": 0,
-  "start_slot": 0,
-  "tick_step": 0,
-  "upper_tick": 0
+  "end_slot": "0",
+  "epoch_id": "0",
+  "lower_tick": "0",
+  "max_orders": "0",
+  "start_slot": "0",
+  "tick_step": "0",
+  "upper_tick": "0"
 }
 ```
 
 ### submit_order
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "limit_tick": 0,
-  "order_id": "name",
-  "side": 0
+  "amount": "0",
+  "limit_tick": "0",
+  "order_id": "sample",
+  "side": "0"
 }
 ```
 
 ### cancel_order
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "order_id": "name"
+  "order_id": "sample"
 }
 ```
 
 ### close_epoch
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -782,7 +798,7 @@ Manifest: `iroha.contracts.toml`
 
 ### native_epoch_auction_close
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -792,20 +808,20 @@ Manifest: `iroha.contracts.toml`
 
 ### settle_order
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "order_id": "name"
+  "order_id": "sample"
 }
 ```
 
 ### epoch_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, int, int, int, int, int, int, int, quantity, int)`
 - Sample payload:
 
 ```json
@@ -814,8 +830,8 @@ Manifest: `iroha.contracts.toml`
 
 ### auction_config
 
-- Kind: `View`
-- Return: `(int, int)`
+- Kind: `view`
+- Return: `(int, int, int)`
 - Sample payload:
 
 ```json
@@ -824,25 +840,41 @@ Manifest: `iroha.contracts.toml`
 
 ### order_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, int, quantity, int, int, quantity, quantity, quantity)`
 - Sample payload:
 
 ```json
 {
-  "order_id": "name"
+  "order_id": "sample"
 }
 ```
 
 ## launchpad.liquidity_executor
 
-- Interface: `artifacts/compiled/launchpad/liquidity_executor.interface.json`
-- Entrypoints: `8`
-- State keys: `9`
+- Interface: `./artifacts/compiled/launchpad/liquidity_executor.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `7`
+- State keys: `14`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "base_asset": "xor#universal",
+  "guardian": "ed0120...",
+  "pool_contract": "0x",
+  "quote_asset": "xor#universal",
+  "sale_factory_account": "ed0120..."
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -850,70 +882,42 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_executor
+### set_paused
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "base_asset": "xor#universal",
-  "pool_contract": null,
-  "quote_asset": "xor#universal"
-}
-```
-
-### bind_contract
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "contract_id": "ed0120..."
-}
-```
-
-### bind_sale_factory
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "factory_contract": "ed0120..."
-}
-```
-
-### bind_pool_contract
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "pool_contract": null
+  "paused": "0"
 }
 ```
 
 ### executor_config
 
-- Kind: `View`
-- Return: `(AssetDefinitionId, AssetDefinitionId, int, int)`
+- Kind: `view`
+- Return: `(bytes, AssetDefinitionId, AssetDefinitionId, AccountId, AccountId, AccountId, AccountId, int)`
 - Sample payload:
 
 ```json
 {}
 ```
 
-### executor_binding_details
+### seed_count
 
-- Kind: `View`
-- Return: `(bytes, AccountId, AccountId, int, int)`
+- Kind: `view`
+- Return: `int`
+- Sample payload:
+
+```json
+{}
+```
+
+### liquidity_state
+
+- Kind: `view`
+- Return: `(int, quantity, quantity, quantity, int)`
 - Sample payload:
 
 ```json
@@ -922,28 +926,39 @@ Manifest: `iroha.contracts.toml`
 
 ### seed_liquidity
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "base_amount": 0,
-  "bin_id": 0,
-  "funding_account": "ed0120...",
-  "quote_amount": 0
+  "amount_in": "0",
+  "min_out": "0"
 }
 ```
 
 ## launchpad.sale_factory
 
-- Interface: `artifacts/compiled/launchpad/sale_factory.interface.json`
-- Entrypoints: `26`
-- State keys: `47`
+- Interface: `./artifacts/compiled/launchpad/sale_factory.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `23`
+- State keys: `45`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "executor_contract": "0x",
+  "guardian": "ed0120..."
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -951,9 +966,19 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_factory
+### enter_withdrawal_only
 
-- Kind: `Public`
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
+### exit_withdrawal_only
+
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -963,78 +988,215 @@ Manifest: `iroha.contracts.toml`
 
 ### configure_trigger_lifecycle
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "cadence_slots": 0,
-  "enabled": 0,
-  "max_items_per_tick": 0
+  "cadence_slots": "0",
+  "enabled": "0",
+  "max_items_per_tick": "0"
+}
+```
+
+### init_sale
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "claim_end_slot": "0",
+  "claim_start_slot": "0",
+  "hard_cap": "0",
+  "payment_asset": "xor#universal",
+  "sale": "sample",
+  "sale_asset": "xor#universal",
+  "soft_cap": "0",
+  "treasury": "ed0120...",
+  "unit_price": "0"
+}
+```
+
+### contribute_recorded
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "allocation": "sample",
+  "payment_amount": "0",
+  "sale": "sample"
+}
+```
+
+### close_sale
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "sale": "sample"
+}
+```
+
+### deposit_seed_inventory
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "amount": "0",
+  "sale": "sample"
+}
+```
+
+### deposit_claim_inventory
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "amount": "0",
+  "sale": "sample"
+}
+```
+
+### configure_seed_liquidity
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "payment_amount": "0",
+  "sale": "sample",
+  "sale_amount": "0"
+}
+```
+
+### seed_liquidity
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "sale": "sample"
+}
+```
+
+### finalize_sale_activation
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "claim_inventory_amount": "0",
+  "sale": "sample"
+}
+```
+
+### claim_allocation
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "allocation": "sample"
+}
+```
+
+### refund_allocation
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "allocation": "sample"
+}
+```
+
+### native_lifecycle_tick
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
+### sale_config
+
+- Kind: `view`
+- Return: `(AssetDefinitionId, AssetDefinitionId, AccountId, decimal, quantity, quantity, int, int)`
+- Sample payload:
+
+```json
+{
+  "sale": "sample"
 }
 ```
 
 ### mirror_sale
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, quantity, int, int, int, quantity, quantity, quantity, quantity, quantity, quantity, quantity)`
 - Sample payload:
 
 ```json
 {
-  "sale": "name"
-}
-```
-
-### sale_config
-
-- Kind: `View`
-- Return: `(AssetDefinitionId, AssetDefinitionId, AccountId, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "sale": "name"
+  "sale": "sample"
 }
 ```
 
 ### mirror_sale_accounting
 
-- Kind: `View`
-- Return: `(int, int, int, int)`
+- Kind: `view`
+- Return: `(quantity, quantity, quantity, quantity)`
 - Sample payload:
 
 ```json
 {
-  "sale": "name"
+  "sale": "sample"
 }
 ```
 
-### factory_binding_state
+### mirror_allocation
 
-- Kind: `View`
-- Return: `(int, int)`
+- Kind: `view`
+- Return: `(int, quantity, quantity, quantity, int)`
 - Sample payload:
 
 ```json
-{}
+{
+  "allocation": "sample"
+}
 ```
 
-### factory_owner_state
+### factory_config
 
-- Kind: `View`
-- Return: `(int, AccountId)`
-- Sample payload:
-
-```json
-{}
-```
-
-### factory_binding_details
-
-- Kind: `View`
-- Return: `(AccountId, bytes, int, int)`
+- Kind: `view`
+- Return: `(AccountId, AccountId, AccountId, bytes, int)`
 - Sample payload:
 
 ```json
@@ -1043,215 +1205,19 @@ Manifest: `iroha.contracts.toml`
 
 ### activation_state
 
-- Kind: `View`
-- Return: `(int, int)`
+- Kind: `view`
+- Return: `(int, quantity)`
 - Sample payload:
 
 ```json
 {
-  "sale": "name"
-}
-```
-
-### mirror_allocation
-
-- Kind: `View`
-- Return: `(int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "allocation": "name"
-}
-```
-
-### init_sale
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "claim_end_slot": 0,
-  "claim_start_slot": 0,
-  "hard_cap": 0,
-  "payment_asset": "xor#universal",
-  "sale": "name",
-  "sale_asset": "xor#universal",
-  "soft_cap": 0,
-  "treasury": "ed0120...",
-  "unit_price": 0
-}
-```
-
-### bind_contract
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "contract_id": "ed0120..."
-}
-```
-
-### bind_executor
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "executor_contract": null
-}
-```
-
-### contribute_recorded
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "allocation": "name",
-  "payment_amount": 0,
-  "sale": "name"
-}
-```
-
-### close_sale
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "sale": "name"
-}
-```
-
-### deposit_seed_inventory
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "amount": 0,
-  "sale": "name"
-}
-```
-
-### deposit_claim_inventory
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "amount": 0,
-  "sale": "name"
-}
-```
-
-### register_seed_liquidity
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "bin_id": 0,
-  "payment_amount": 0,
-  "position_id": "name",
-  "sale": "name",
-  "sale_amount": 0,
-  "vault_account": "ed0120..."
-}
-```
-
-### native_lifecycle_tick
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### seed_liquidity
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "sale": "name"
-}
-```
-
-### finalize_sale_activation
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "claim_inventory_amount": 0,
-  "sale": "name"
-}
-```
-
-### claim_allocation
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "allocation": "name"
-}
-```
-
-### refund_allocation
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "allocation": "name"
-}
-```
-
-### mark_seeded
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "sale": "name"
+  "sale": "sample"
 }
 ```
 
 ### trigger_lifecycle_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
@@ -1261,13 +1227,29 @@ Manifest: `iroha.contracts.toml`
 
 ## referral.registry
 
-- Interface: `artifacts/compiled/referral/registry.interface.json`
-- Entrypoints: `8`
-- State keys: `13`
+- Interface: `./artifacts/compiled/referral/registry.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `8`
+- State keys: `11`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "claim_threshold": "0",
+  "direct_share_bps": "0",
+  "parent_share_bps": "0",
+  "reward_asset": "xor#universal",
+  "treasury": "ed0120..."
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -1275,76 +1257,60 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_registry
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "claim_threshold": 0,
-  "direct_share_bps": 0,
-  "parent_share_bps": 0,
-  "reward_asset": "xor#universal",
-  "treasury": "ed0120..."
-}
-```
-
 ### bind_member
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "member": "name"
+  "member": "sample"
 }
 ```
 
 ### bind_member_with_parent
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "member": "name",
-  "parent_member": "name"
+  "member": "sample",
+  "parent_member": "sample"
 }
 ```
 
 ### accrue
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "member": "name"
+  "amount": "0",
+  "member": "sample"
 }
 ```
 
 ### claim
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "member": "name"
+  "member": "sample"
 }
 ```
 
 ### registry_config
 
-- Kind: `View`
-- Return: `(AssetDefinitionId, AccountId, int, int, int)`
+- Kind: `view`
+- Return: `(AssetDefinitionId, AccountId, quantity, int, int)`
 - Sample payload:
 
 ```json
@@ -1353,25 +1319,25 @@ Manifest: `iroha.contracts.toml`
 
 ### mirror_member
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, int, int, quantity, quantity, quantity, int, int, quantity, quantity, quantity, int)`
 - Sample payload:
 
 ```json
 {
-  "member": "name"
+  "member": "sample"
 }
 ```
 
 ## automation.job_queue
 
-- Interface: `artifacts/compiled/automation/job_queue.interface.json`
-- Entrypoints: `14`
+- Interface: `./artifacts/compiled/automation/job_queue.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `14`
 - State keys: `11`
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -1381,175 +1347,190 @@ Manifest: `iroha.contracts.toml`
 
 ### enqueue
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name",
-  "payload_hash": 0
+  "job": "sample",
+  "payload_hash": "0"
 }
 ```
 
 ### assign_executor
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
   "executor": "ed0120...",
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ### configure_job
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name",
-  "max_retries": 0,
-  "next_slot": 0,
-  "retry_delay_slots": 0
+  "job": "sample",
+  "max_retries": "0",
+  "next_slot": "0",
+  "retry_delay_slots": "0"
 }
 ```
 
 ### configure_cron
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "interval_slots": 0,
-  "job": "name"
+  "interval_slots": "0",
+  "job": "sample"
 }
 ```
 
 ### mark_running
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ### dispatch_job
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ### mark_done
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ### complete_run
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ### retry
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ### pause_job
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ### resume_job
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ### cancel_job
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ### mirror_job
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int, int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "job": "name"
+  "job": "sample"
 }
 ```
 
 ## farms.farm
 
-- Interface: `artifacts/compiled/farms/farm.interface.json`
-- Entrypoints: `10`
-- State keys: `18`
+- Interface: `./artifacts/compiled/farms/farm.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `10`
+- State keys: `16`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "reward_asset": "xor#universal",
+  "reward_rate": "0",
+  "stake_asset": "xor#universal",
+  "treasury": "ed0120..."
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -1557,87 +1538,70 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_farm
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "reward_asset": "xor#universal",
-  "reward_rate": 0,
-  "stake_asset": "xor#universal",
-  "treasury": "ed0120..."
-}
-```
-
 ### sync_slot
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
-{
-  "current_slot": 0
-}
+{}
 ```
 
 ### fund_rewards
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "amount": 0
+  "amount": "0"
 }
 ```
 
 ### stake
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "position": "name"
+  "amount": "0",
+  "position": "sample"
 }
 ```
 
 ### unstake
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "position": "name"
+  "amount": "0",
+  "position": "sample"
 }
 ```
 
 ### claim
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "position": "name"
+  "position": "sample"
 }
 ```
 
 ### farm_config
 
-- Kind: `View`
-- Return: `(AssetDefinitionId, AssetDefinitionId, AccountId, int)`
+- Kind: `view`
+- Return: `(AssetDefinitionId, AssetDefinitionId, AccountId, quantity)`
 - Sample payload:
 
 ```json
@@ -1646,8 +1610,8 @@ Manifest: `iroha.contracts.toml`
 
 ### farm_state
 
-- Kind: `View`
-- Return: `(int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, int, decimal)`
 - Sample payload:
 
 ```json
@@ -1656,253 +1620,25 @@ Manifest: `iroha.contracts.toml`
 
 ### mirror_position
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, quantity, quantity, quantity, quantity, quantity, quantity)`
 - Sample payload:
 
 ```json
 {
-  "position": "name"
-}
-```
-
-## risk.risk_vault
-
-- Interface: `artifacts/compiled/risk/risk_vault.interface.json`
-- Entrypoints: `17`
-- State keys: `23`
-
-### main
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### init_vault
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "collateral_asset": "xor#universal",
-  "vault_account": "ed0120..."
-}
-```
-
-### configure_bucket
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "bucket_id": 0,
-  "collateral_multiplier_bps": 0,
-  "controller": "ed0120...",
-  "payout_cap_bps": 0,
-  "utilisation_cap_bps": 0
-}
-```
-
-### sync_automation
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "backlog_cap": 0,
-  "bucket_id": 0,
-  "cadence_slots": 0,
-  "executor": "ed0120...",
-  "job_id": 0,
-  "safe_mode": 0
-}
-```
-
-### report_bucket
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "backlog": 0,
-  "bucket_id": 0,
-  "safe_mode": 0
-}
-```
-
-### report_bucket_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "backlog": 0,
-  "bucket_id": 0,
-  "safe_mode": 0
-}
-```
-
-### enter_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### exit_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### deposit
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "amount": 0,
-  "bucket_id": 0
-}
-```
-
-### withdraw_surplus
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "amount": 0,
-  "bucket_id": 0
-}
-```
-
-### lock_liability
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "backlog": 0,
-  "bucket_id": 0,
-  "collateral_locked": 0,
-  "exposure_id": 0,
-  "notional": 0
-}
-```
-
-### release_liability
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "backlog": 0,
-  "bucket_id": 0,
-  "exposure_id": 0
-}
-```
-
-### settle_payout
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "amount": 0,
-  "bucket_id": 0,
-  "exposure_id": 0,
-  "recipient": "ed0120..."
-}
-```
-
-### bucket_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "bucket_id": 0
-}
-```
-
-### risk_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{}
-```
-
-### automation_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "bucket_id": 0
-}
-```
-
-### liability_state
-
-- Kind: `View`
-- Return: `(int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "bucket_id": 0,
-  "exposure_id": 0
+  "position": "sample"
 }
 ```
 
 ## perps.perps_engine
 
-- Interface: `artifacts/compiled/perps/perps_engine.interface.json`
-- Entrypoints: `28`
+- Interface: `./artifacts/compiled/perps/perps_engine.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `31`
 - State keys: `67`
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -1910,55 +1646,54 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_engine
+### hajimari
 
-- Kind: `Public`
+- Kind: `hajimari`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
   "collateral_asset": "xor#universal",
-  "oracle_public_key": null,
-  "oracle_scheme": 0,
-  "risk_vault_contract": null
+  "custody_account": "ed0120...",
+  "oracle_account": "ed0120..."
 }
 ```
 
 ### sync_automation
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "backlog_cap": 0,
-  "cadence_slots": 0,
+  "backlog_cap": "0",
+  "cadence_slots": "0",
   "executor": "ed0120...",
-  "funding_job_id": 0,
-  "liquidation_job_id": 0,
-  "safe_mode": 0
+  "funding_job_id": "0",
+  "liquidation_job_id": "0",
+  "safe_mode": "0"
 }
 ```
 
 ### configure_trigger_lifecycle
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "cadence_slots": 0,
-  "enabled": 0,
-  "max_items_per_tick": 0
+  "cadence_slots": "0",
+  "enabled": "0",
+  "max_items_per_tick": "0"
 }
 ```
 
 ### native_lifecycle_tick
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -1968,8 +1703,18 @@ Manifest: `iroha.contracts.toml`
 
 ### engine_config
 
-- Kind: `View`
-- Return: `(AssetDefinitionId, bytes, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(AssetDefinitionId, AccountId, AccountId, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
+### collateral_pool_state
+
+- Kind: `view`
+- Return: `(AccountId, int, int, int)`
 - Sample payload:
 
 ```json
@@ -1978,55 +1723,55 @@ Manifest: `iroha.contracts.toml`
 
 ### market_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int, int, int, int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "market_id": 0
+  "market_id": "0"
 }
 ```
 
 ### market_oracle_state
 
-- Kind: `View`
-- Return: `(int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "market_id": 0
+  "market_id": "0"
 }
 ```
 
 ### position_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int, int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "position_id": 0
+  "position_id": "0"
 }
 ```
 
 ### liquidation_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "market_id": 0
+  "market_id": "0"
 }
 ```
 
 ### trigger_lifecycle_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
@@ -2036,31 +1781,31 @@ Manifest: `iroha.contracts.toml`
 
 ### position_liquidation_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "position_id": 0
+  "position_id": "0"
 }
 ```
 
 ### risk_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "market_id": 0
+  "market_id": "0"
 }
 ```
 
 ### automation_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
@@ -2068,33 +1813,64 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### bind_contract
+### fund_collateral_pool
 
-- Kind: `Public`
-- Return: `null`
+- Kind: `kotoage`
+- Return: `int`
 - Sample payload:
 
 ```json
 {
-  "contract_id": "ed0120..."
+  "amount": "0"
 }
 ```
 
-### bind_risk_vault
+### publish_market_oracle
 
-- Kind: `Public`
+- Kind: `kotoage`
+- Return: `int`
+- Sample payload:
+
+```json
+{
+  "attestation_hash": "0",
+  "confidence_bps": "0",
+  "index_price_bps": "0",
+  "mark_price_bps": "0",
+  "market_id": "0",
+  "oracle_slot": "0",
+  "status_flags": "0"
+}
+```
+
+### withdraw_collateral_surplus
+
+- Kind: `kotoage`
+- Return: `int`
+- Sample payload:
+
+```json
+{
+  "amount": "0",
+  "recipient": "ed0120..."
+}
+```
+
+### configure_oracle_account
+
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "risk_vault_contract": null
+  "oracle_account": "ed0120..."
 }
 ```
 
 ### enter_withdrawal_only
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -2104,7 +1880,7 @@ Manifest: `iroha.contracts.toml`
 
 ### exit_withdrawal_only
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -2114,256 +1890,192 @@ Manifest: `iroha.contracts.toml`
 
 ### open_position
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "margin": 0,
-  "market_id": 0,
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "requested_leverage_bps": 0,
-  "size": 0
+  "margin": "0",
+  "market_id": "0",
+  "requested_leverage_bps": "0",
+  "size": "0"
 }
 ```
 
 ### add_margin
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "position_id": 0
+  "amount": "0",
+  "position_id": "0"
 }
 ```
 
 ### remove_margin
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "position_id": 0
+  "amount": "0",
+  "position_id": "0"
 }
 ```
 
 ### sync_funding
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "market_id": 0,
-  "oracle_payload": null,
-  "oracle_signature": null
+  "market_id": "0"
 }
 ```
 
 ### run_liquidation_pass
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "market_id": 0,
-  "max_positions": 0,
-  "oracle_payload": null,
-  "oracle_signature": null
+  "market_id": "0",
+  "max_positions": "0"
 }
 ```
 
 ### close_position
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "position_id": 0
+  "position_id": "0"
 }
 ```
 
 ### register_market
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
   "asset": "xor#universal",
-  "backlog_limit": 0,
-  "funding_bps": 0,
-  "funding_interval_slots": 0,
-  "liquidation_fee_bps": 0,
-  "liquidation_stress_limit": 0,
-  "maintenance_margin_bps": 0,
-  "max_leverage_bps": 0,
-  "open_interest_cap": 0,
-  "oracle_stale_slots": 0,
-  "utilisation_clamp_bps": 0
+  "backlog_limit": "0",
+  "funding_bps": "0",
+  "funding_interval_slots": "0",
+  "liquidation_fee_bps": "0",
+  "liquidation_stress_limit": "0",
+  "maintenance_margin_bps": "0",
+  "max_leverage_bps": "0",
+  "open_interest_cap": "0",
+  "oracle_stale_slots": "0",
+  "utilisation_clamp_bps": "0"
 }
 ```
 
 ### update_market
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "active": 0,
-  "backlog_limit": 0,
-  "funding_bps": 0,
-  "funding_interval_slots": 0,
-  "guard_flags": 0,
-  "liquidation_fee_bps": 0,
-  "liquidation_stress_limit": 0,
-  "maintenance_margin_bps": 0,
-  "market_id": 0,
-  "max_leverage_bps": 0,
-  "open_interest_cap": 0,
-  "oracle_stale_slots": 0,
-  "utilisation_clamp_bps": 0
+  "active": "0",
+  "backlog_limit": "0",
+  "funding_bps": "0",
+  "funding_interval_slots": "0",
+  "guard_flags": "0",
+  "liquidation_fee_bps": "0",
+  "liquidation_stress_limit": "0",
+  "maintenance_margin_bps": "0",
+  "market_id": "0",
+  "max_leverage_bps": "0",
+  "open_interest_cap": "0",
+  "oracle_stale_slots": "0",
+  "utilisation_clamp_bps": "0"
 }
 ```
 
 ### heartbeat
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "current_backlog": 0,
-  "market_id": 0,
-  "safe_mode": 0
+  "current_backlog": "0",
+  "market_id": "0",
+  "safe_mode": "0"
 }
 ```
 
 ### modify_position
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "margin_delta": 0,
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "position_id": 0,
-  "requested_leverage_bps": 0,
-  "size_delta": 0
+  "margin_delta": "0",
+  "position_id": "0",
+  "requested_leverage_bps": "0",
+  "size_delta": "0"
 }
 ```
 
-## options.manager
+## options.factory
 
-- Interface: `artifacts/compiled/options/manager.interface.json`
-- Entrypoints: `21`
-- State keys: `48`
+- Interface: `./artifacts/compiled/options/factory.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `29`
+- State keys: `60`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "factory_account": "ed0120...",
+  "guardian": "ed0120...",
+  "oracle_authority": "ed0120...",
+  "settlement_asset": "xor#universal",
+  "stale_slots": "0"
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
 ```json
 {}
-```
-
-### init_manager
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "guardian": "ed0120...",
-  "oracle_public_key": null,
-  "oracle_scheme": 0,
-  "settlement_asset": "xor#universal"
-}
-```
-
-### configure_trigger_lifecycle
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "cadence_slots": 0,
-  "enabled": 0,
-  "max_items_per_tick": 0
-}
-```
-
-### configure_oracle_stale_slots
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "oracle_stale_slots": 0
-}
-```
-
-### native_lifecycle_tick
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### sync_automation
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "backlog_cap": 0,
-  "cadence_slots": 0,
-  "executor": "ed0120...",
-  "expiry_job_id": 0,
-  "safe_mode": 0,
-  "settlement_job_id": 0
-}
 ```
 
 ### enter_withdrawal_only
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -2373,7 +2085,7 @@ Manifest: `iroha.contracts.toml`
 
 ### exit_withdrawal_only
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -2381,452 +2093,217 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### bind_controller
+### configure_oracle_authority
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "controller": "ed0120..."
+  "oracle_authority": "ed0120..."
 }
 ```
 
-### register_template
+### configure_oracle_stale_slots
 
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "base_premium_bps": 0,
-  "collateral_multiplier_bps": 0,
-  "option_kind": 0,
-  "quote_asset": "xor#universal",
-  "strike_bps": 0,
-  "tenor_slots": 0,
-  "underlying_asset": "xor#universal"
-}
-```
-
-### update_template
-
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "active": 0,
-  "base_premium_bps": 0,
-  "collateral_multiplier_bps": 0,
-  "strike_bps": 0,
-  "template_id": 0
+  "stale_slots": "0"
 }
 ```
 
-### create_series
+### withdraw_surplus
 
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "expiry_slot": 0,
-  "max_notional": 0,
-  "premium_bps": 0,
-  "template_id": 0
-}
-```
-
-### close_series
-
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "series_id": 0,
-  "settlement_slot": 0
-}
-```
-
-### settle_series
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "series_id": 0
-}
-```
-
-### settle_series_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "attestation_hash": 0,
-  "final_mark": 0,
-  "final_quote_mark": 0,
-  "oracle_slot": 0,
-  "series_id": 0,
-  "settlement_slot": 0
-}
-```
-
-### manager_config
-
-- Kind: `View`
-- Return: `(AssetDefinitionId, int, int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{}
-```
-
-### oracle_stale_slots
-
-- Kind: `View`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### template_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "template_id": 0
-}
-```
-
-### series_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "series_id": 0
-}
-```
-
-### automation_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{}
-```
-
-### trigger_lifecycle_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{}
-```
-
-## options.factory
-
-- Interface: `artifacts/compiled/options/factory.interface.json`
-- Entrypoints: `26`
-- State keys: `60`
-
-### main
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### init_factory
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "guardian": "ed0120...",
-  "oracle_public_key": null,
-  "oracle_scheme": 0,
-  "settlement_asset": "xor#universal"
-}
-```
-
-### bind_modules
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "outperf_contract": null,
-  "risk_vault_contract": null,
-  "shout_contract": null,
-  "vault_contract": null
-}
-```
-
-### bind_manager
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "manager_contract": null
-}
-```
-
-### bind_contract
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "contract_id": "ed0120..."
+  "amount": "0",
+  "recipient": "ed0120..."
 }
 ```
 
 ### sync_automation
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "backlog_cap": 0,
-  "cadence_slots": 0,
+  "backlog_cap": "0",
+  "cadence_slots": "0",
   "executor": "ed0120...",
-  "job_id": 0,
-  "safe_mode": 0
+  "job_id": "0",
+  "safe_mode": "0"
 }
 ```
 
 ### heartbeat
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "current_backlog": 0,
-  "safe_mode": 0
+  "current_backlog": "0",
+  "safe_mode": "0"
 }
 ```
 
 ### configure_trigger_lifecycle
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "cadence_slots": 0,
-  "enabled": 0,
-  "max_items_per_tick": 0
+  "cadence_slots": "0",
+  "enabled": "0",
+  "max_items_per_tick": "0"
 }
-```
-
-### configure_oracle_stale_slots
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "oracle_stale_slots": 0
-}
-```
-
-### native_lifecycle_tick
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### enter_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### exit_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
 ```
 
 ### sync_series
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "collateral_multiplier_bps": 0,
-  "expiry_slot": 0,
-  "max_notional": 0,
-  "option_kind": 0,
-  "premium_bps": 0,
-  "series_id": 0,
-  "strike_bps": 0
+  "collateral_multiplier_bps": "0",
+  "expiry_slot": "0",
+  "max_notional": "0",
+  "option_kind": "0",
+  "premium_bps": "0",
+  "series_id": "0",
+  "strike_bps": "0"
 }
 ```
 
 ### configure_utilisation_guard
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "bump_activate_bps": 0,
-  "bump_deactivate_bps": 0,
-  "bump_percent_bps": 0,
-  "pause_threshold_bps": 0,
-  "series_id": 0
+  "bump_activate_bps": "0",
+  "bump_deactivate_bps": "0",
+  "bump_percent_bps": "0",
+  "pause_threshold_bps": "0",
+  "series_id": "0"
 }
 ```
 
 ### buy_shout
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "collateral_locked": 0,
-  "notional": 0,
-  "premium_paid": 0,
-  "series_id": 0
+  "notional": "0",
+  "series_id": "0"
 }
 ```
 
 ### buy_outperformance
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "collateral_locked": 0,
-  "notional": 0,
-  "premium_paid": 0,
-  "series_id": 0
+  "notional": "0",
+  "series_id": "0"
 }
 ```
 
-### settle_series
+### settle_outperformance_series
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "series_id": 0
+  "attestation_hash": "0",
+  "base_return_bps": "0",
+  "final_mark": "0",
+  "final_quote_mark": "0",
+  "oracle_slot": "0",
+  "quote_return_bps": "0",
+  "series_id": "0"
 }
 ```
 
-### record_shout
+### publish_shout_mark
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "position_id": 0
+  "attestation_hash": "0",
+  "mark_price_bps": "0",
+  "oracle_slot": "0",
+  "position_id": "0"
 }
 ```
 
 ### exercise_shout_position
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "position_id": 0
+  "position_id": "0"
 }
 ```
 
 ### exercise_outperformance_position
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "position_id": 0
+  "position_id": "0"
 }
+```
+
+### native_lifecycle_tick
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### factory_config
 
-- Kind: `View`
-- Return: `(AssetDefinitionId, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(AssetDefinitionId, AccountId, AccountId, int, int, int, int, int, int)`
 - Sample payload:
 
 ```json
@@ -2835,8 +2312,18 @@ Manifest: `iroha.contracts.toml`
 
 ### oracle_stale_slots
 
-- Kind: `View`
+- Kind: `view`
 - Return: `int`
+- Sample payload:
+
+```json
+{}
+```
+
+### treasury_state
+
+- Kind: `view`
+- Return: `(quantity, quantity, quantity, quantity, quantity)`
 - Sample payload:
 
 ```json
@@ -2845,31 +2332,67 @@ Manifest: `iroha.contracts.toml`
 
 ### series_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, quantity, int, int, quantity, int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "series_id": 0
+  "series_id": "0"
+}
+```
+
+### series_terms
+
+- Kind: `view`
+- Return: `(int, int)`
+- Sample payload:
+
+```json
+{
+  "series_id": "0"
 }
 ```
 
 ### position_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, int, quantity, quantity, quantity, int, quantity, int)`
 - Sample payload:
 
 ```json
 {
-  "position_id": 0
+  "position_id": "0"
+}
+```
+
+### series_settlement
+
+- Kind: `view`
+- Return: `(decimal, decimal, int, int, int)`
+- Sample payload:
+
+```json
+{
+  "series_id": "0"
+}
+```
+
+### series_returns
+
+- Kind: `view`
+- Return: `(int, int)`
+- Sample payload:
+
+```json
+{
+  "series_id": "0"
 }
 ```
 
 ### automation_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
@@ -2879,7 +2402,7 @@ Manifest: `iroha.contracts.toml`
 
 ### trigger_lifecycle_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
@@ -2887,15 +2410,32 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-## options.vault
+## cover.policy_manager
 
-- Interface: `artifacts/compiled/options/vault.interface.json`
-- Entrypoints: `14`
-- State keys: `15`
+- Interface: `./artifacts/compiled/cover/policy_manager.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `23`
+- State keys: `43`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "cover_account": "ed0120...",
+  "default_required_observations": "0",
+  "guardian": "ed0120...",
+  "oracle_authority": "ed0120...",
+  "oracle_stale_slots": "0",
+  "settlement_asset": "xor#universal"
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -2903,34 +2443,9 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_vault
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "risk_vault_contract": null,
-  "settlement_asset": "xor#universal"
-}
-```
-
-### bind_controller
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "controller": "ed0120..."
-}
-```
-
 ### enter_withdrawal_only
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -2940,7 +2455,7 @@ Manifest: `iroha.contracts.toml`
 
 ### exit_withdrawal_only
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -2948,777 +2463,180 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### sync_series
+### configure_oracle_authority
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "series_id": 0
-}
-```
-
-### sync_series_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "series_id": 0
-}
-```
-
-### record_position
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "collateral_locked": 0,
-  "owner": "ed0120...",
-  "position_id": 0,
-  "premium_paid": 0,
-  "series_id": 0
-}
-```
-
-### record_position_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "collateral_locked": 0,
-  "owner": "ed0120...",
-  "position_id": 0,
-  "premium_paid": 0,
-  "series_id": 0
-}
-```
-
-### release_position
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "collateral_release": 0,
-  "position_id": 0
-}
-```
-
-### settle_position
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "payout": 0,
-  "position_id": 0,
-  "premium_burn": 0
-}
-```
-
-### settle_position_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "payout": 0,
-  "position_id": 0,
-  "premium_burn": 0
-}
-```
-
-### vault_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "series_id": 0
-}
-```
-
-### position_accounting
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "position_id": 0
-}
-```
-
-## options.shout_option
-
-- Interface: `artifacts/compiled/options/shout_option.interface.json`
-- Entrypoints: `18`
-- State keys: `21`
-
-### main
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### init_product
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "guardian": "ed0120...",
-  "oracle_public_key": null,
-  "oracle_scheme": 0
-}
-```
-
-### bind_controller
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "controller": "ed0120..."
+  "oracle_authority": "ed0120..."
 }
 ```
 
 ### configure_oracle_stale_slots
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "oracle_stale_slots": 0
-}
-```
-
-### enter_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### exit_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### sync_series
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "expiry_slot": 0,
-  "series_id": 0,
-  "strike_bps": 0
-}
-```
-
-### sync_series_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "expiry_slot": 0,
-  "series_id": 0,
-  "strike_bps": 0
-}
-```
-
-### register_position
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "notional": 0,
-  "owner": "ed0120...",
-  "position_id": 0,
-  "series_id": 0,
-  "strike_bps": 0
-}
-```
-
-### register_position_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "notional": 0,
-  "owner": "ed0120...",
-  "position_id": 0,
-  "series_id": 0,
-  "strike_bps": 0
-}
-```
-
-### record_shout
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "position_id": 0
-}
-```
-
-### record_shout_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "attestation_hash": 0,
-  "mark_price_bps": 0,
-  "oracle_slot": 0,
-  "position_id": 0
-}
-```
-
-### exercise_position
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "position_id": 0
-}
-```
-
-### exercise_position_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "attestation_hash": 0,
-  "mark_price_bps": 0,
-  "oracle_slot": 0,
-  "position_id": 0
-}
-```
-
-### expire_series
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "series_id": 0
-}
-```
-
-### series_state
-
-- Kind: `View`
-- Return: `(int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "series_id": 0
-}
-```
-
-### position_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "position_id": 0
-}
-```
-
-### oracle_stale_slots
-
-- Kind: `View`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-## options.outperformance_option
-
-- Interface: `artifacts/compiled/options/outperformance_option.interface.json`
-- Entrypoints: `15`
-- State keys: `20`
-
-### main
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### init_product
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "guardian": "ed0120..."
-}
-```
-
-### bind_controller
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "controller": "ed0120..."
-}
-```
-
-### enter_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### exit_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### sync_series
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "collateral_multiplier_bps": 0,
-  "expiry_slot": 0,
-  "series_id": 0
-}
-```
-
-### sync_series_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "collateral_multiplier_bps": 0,
-  "expiry_slot": 0,
-  "series_id": 0
-}
-```
-
-### register_position
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "collateral_multiplier_bps": 0,
-  "notional": 0,
-  "owner": "ed0120...",
-  "position_id": 0,
-  "series_id": 0
-}
-```
-
-### register_position_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "collateral_multiplier_bps": 0,
-  "notional": 0,
-  "owner": "ed0120...",
-  "position_id": 0,
-  "series_id": 0
-}
-```
-
-### settle_series
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "base_return_bps": 0,
-  "quote_return_bps": 0,
-  "series_id": 0,
-  "settlement_slot": 0
-}
-```
-
-### settle_series_c2c
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "base_return_bps": 0,
-  "quote_return_bps": 0,
-  "series_id": 0,
-  "settlement_slot": 0
-}
-```
-
-### exercise_position
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "position_id": 0
-}
-```
-
-### expire_series
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "series_id": 0
-}
-```
-
-### series_state
-
-- Kind: `View`
-- Return: `(int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "series_id": 0
-}
-```
-
-### position_state
-
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int)`
-- Sample payload:
-
-```json
-{
-  "position_id": 0
-}
-```
-
-## cover.policy_manager
-
-- Interface: `artifacts/compiled/cover/policy_manager.interface.json`
-- Entrypoints: `21`
-- State keys: `43`
-
-### main
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### init_manager
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "oracle_public_key": null,
-  "oracle_scheme": 0,
-  "oracle_stale_slots": 0,
-  "required_observations": 0,
-  "risk_vault_contract": null,
-  "settlement_asset": "xor#universal"
+  "stale_slots": "0"
 }
 ```
 
 ### sync_automation
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "backlog_cap": 0,
-  "cadence_slots": 0,
+  "backlog_cap": "0",
+  "cadence_slots": "0",
   "executor": "ed0120...",
-  "job_id": 0,
-  "safe_mode": 0
+  "job_id": "0",
+  "safe_mode": "0"
 }
 ```
 
 ### heartbeat
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "current_backlog": 0,
-  "safe_mode": 0
+  "current_backlog": "0",
+  "safe_mode": "0"
 }
 ```
 
 ### configure_trigger_lifecycle
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "cadence_slots": 0,
-  "enabled": 0,
-  "max_items_per_tick": 0
+  "cadence_slots": "0",
+  "enabled": "0",
+  "max_items_per_tick": "0"
 }
 ```
 
-### native_lifecycle_tick
+### fund_reserve
 
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### bind_contract
-
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "contract_id": "ed0120..."
+  "amount": "0"
 }
 ```
 
-### bind_risk_vault
+### withdraw_surplus
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "risk_vault_contract": null
-}
-```
-
-### enter_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### exit_withdrawal_only
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### configure_oracle_stale_slots
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "oracle_stale_slots": 0
-}
-```
-
-### configure_next_policy_id
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "next_policy_id": 0
+  "amount": "0",
+  "recipient": "ed0120..."
 }
 ```
 
 ### register_policy
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "covered_notional": 0,
-  "lower_bound": 0,
-  "monitoring_window_slots": 0,
-  "payout_amount": 0,
-  "premium_paid": 0,
-  "required_observations": 0,
-  "upper_bound": 0
+  "covered_notional": "0",
+  "lower_bound": "0",
+  "monitoring_window_slots": "0",
+  "payout_amount": "0",
+  "premium_paid": "0",
+  "required_observations": "0",
+  "upper_bound": "0"
 }
 ```
 
 ### record_observation
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "oracle_payload": null,
-  "oracle_signature": null,
-  "policy_id": 0
+  "attestation_hash": "0",
+  "observed_price": "0",
+  "oracle_slot": "0",
+  "policy_id": "0",
+  "status_flags": "0"
 }
 ```
 
 ### route_claim
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "policy_id": 0
+  "policy_id": "0"
 }
 ```
 
 ### expire_policy
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "policy_id": 0
+  "policy_id": "0"
 }
+```
+
+### native_lifecycle_tick
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### manager_config
 
-- Kind: `View`
-- Return: `(AssetDefinitionId, bytes, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(AssetDefinitionId, AccountId, AccountId, int, int, int, int, int, int)`
+- Sample payload:
+
+```json
+{}
+```
+
+### reserve_state
+
+- Kind: `view`
+- Return: `(quantity, quantity, quantity, quantity, quantity)`
 - Sample payload:
 
 ```json
@@ -3727,19 +2645,31 @@ Manifest: `iroha.contracts.toml`
 
 ### policy_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, decimal, decimal, quantity, int, int, quantity, quantity, int, int, int, quantity)`
 - Sample payload:
 
 ```json
 {
-  "policy_id": 0
+  "policy_id": "0"
+}
+```
+
+### policy_observation
+
+- Kind: `view`
+- Return: `(decimal, int, int, int)`
+- Sample payload:
+
+```json
+{
+  "policy_id": "0"
 }
 ```
 
 ### next_policy_id
 
-- Kind: `View`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -3749,7 +2679,7 @@ Manifest: `iroha.contracts.toml`
 
 ### automation_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
@@ -3759,7 +2689,7 @@ Manifest: `iroha.contracts.toml`
 
 ### trigger_lifecycle_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
@@ -3769,13 +2699,29 @@ Manifest: `iroha.contracts.toml`
 
 ## bridge.sccp_bridge
 
-- Interface: `artifacts/compiled/bridge/sccp_bridge.interface.json`
-- Entrypoints: `23`
-- State keys: `28`
+- Interface: `./artifacts/compiled/bridge/sccp_bridge.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `25`
+- State keys: `30`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "guardian": "ed0120...",
+  "listing_fee_amount": "0",
+  "listing_fee_asset": "xor#universal",
+  "proof_authority": "ed0120...",
+  "treasury": "ed0120..."
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -3783,24 +2729,9 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_bridge
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "listing_fee_amount": 0,
-  "listing_fee_asset": "xor#universal",
-  "proof_authority": "ed0120...",
-  "treasury": "ed0120..."
-}
-```
-
 ### set_proof_authority
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -3810,123 +2741,145 @@ Manifest: `iroha.contracts.toml`
 }
 ```
 
-### register_asset
+### set_registry_enabled
 
-- Kind: `Public`
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "enabled": "0"
+}
+```
+
+### register_bridge_asset
+
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
   "asset": "xor#universal",
-  "asset_key": "name",
-  "decimals": 0,
-  "home_domain": 0
+  "asset_key": "sample",
+  "decimals": "0",
+  "home_domain": "0"
 }
 ```
 
 ### bind_asset_vault
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "asset_key": "name",
+  "asset_key": "sample",
   "vault_account": "ed0120..."
 }
 ```
 
 ### activate_route
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "asset_key": "name",
-  "local_asset": "xor#universal",
-  "remote_domain": 0,
-  "route": "name",
-  "vault_account": "ed0120..."
+  "asset_key": "sample",
+  "remote_domain": "0",
+  "route": "sample"
 }
 ```
 
 ### activate_route_governed
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "asset_key": "name",
-  "message_id": "name",
-  "remote_domain": 0,
-  "route": "name"
+  "asset_key": "sample",
+  "message_id": "sample",
+  "remote_domain": "0",
+  "route": "sample"
 }
 ```
 
 ### pause_route
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "route": "name"
+  "route": "sample"
+}
+```
+
+### emergency_pause_route
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "route": "sample"
 }
 ```
 
 ### resume_route
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "route": "name"
+  "route": "sample"
 }
 ```
 
 ### lock_to_remote
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "recipient": "name",
-  "route": "name",
-  "transfer": "name"
+  "amount": "0",
+  "recipient": "sample",
+  "route": "sample",
+  "transfer": "sample"
 }
 ```
 
 ### finalize_inbound
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "message_id": "name",
+  "amount": "0",
+  "message_id": "sample",
   "recipient": "ed0120...",
-  "route": "name"
+  "route": "sample"
 }
 ```
 
 ### listing_config
 
-- Kind: `View`
-- Return: `(AssetDefinitionId, AccountId, int, int)`
+- Kind: `view`
+- Return: `(AssetDefinitionId, AccountId, quantity, int)`
 - Sample payload:
 
 ```json
@@ -3935,8 +2888,8 @@ Manifest: `iroha.contracts.toml`
 
 ### bridge_authorities
 
-- Kind: `View`
-- Return: `(AccountId, AccountId)`
+- Kind: `view`
+- Return: `(AccountId, AccountId, AccountId)`
 - Sample payload:
 
 ```json
@@ -3945,133 +2898,146 @@ Manifest: `iroha.contracts.toml`
 
 ### mirror_asset
 
-- Kind: `View`
-- Return: `(int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, int, quantity)`
 - Sample payload:
 
 ```json
 {
-  "asset_key": "name"
+  "asset_key": "sample"
 }
 ```
 
 ### asset_config
 
-- Kind: `View`
-- Return: `(AssetDefinitionId, int, int)`
+- Kind: `view`
+- Return: `(AssetDefinitionId, AccountId, int, int)`
 - Sample payload:
 
 ```json
 {
-  "asset_key": "name"
+  "asset_key": "sample"
 }
 ```
 
 ### asset_vault_bound
 
-- Kind: `View`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "asset_key": "name"
+  "asset_key": "sample"
 }
 ```
 
 ### asset_vault_account
 
-- Kind: `View`
+- Kind: `view`
 - Return: `AccountId`
 - Sample payload:
 
 ```json
 {
-  "asset_key": "name"
+  "asset_key": "sample"
 }
 ```
 
 ### mirror_route
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "route": "name"
+  "route": "sample"
 }
 ```
 
 ### route_config
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(Name, int, AssetDefinitionId, AccountId)`
 - Sample payload:
 
 ```json
 {
-  "route": "name"
+  "route": "sample"
 }
 ```
 
 ### route_provenance
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, Name)`
 - Sample payload:
 
 ```json
 {
-  "route": "name"
+  "route": "sample"
 }
 ```
 
 ### mirror_outbound
 
-- Kind: `View`
-- Return: `(int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, int, int)`
 - Sample payload:
 
 ```json
 {
-  "transfer": "name"
+  "transfer": "sample"
 }
 ```
 
 ### outbound_config
 
-- Kind: `View`
-- Return: `(Name, AccountId, Name, int)`
+- Kind: `view`
+- Return: `(Name, AccountId, Name, quantity)`
 - Sample payload:
 
 ```json
 {
-  "transfer": "name"
+  "transfer": "sample"
 }
 ```
 
 ### inbound_consumed
 
-- Kind: `View`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
 ```json
 {
-  "message_id": "name"
+  "message_id": "sample"
 }
 ```
 
 ## intents.settlement_router
 
-- Interface: `artifacts/compiled/intents/settlement_router.interface.json`
-- Entrypoints: `5`
-- State keys: `12`
+- Interface: `./artifacts/compiled/intents/settlement_router.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `6`
+- State keys: `15`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "custody_account": "ed0120...",
+  "fee_account": "ed0120..."
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -4081,69 +3047,79 @@ Manifest: `iroha.contracts.toml`
 
 ### open_intent
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount_in": 0,
-  "deadline_slot": 0,
+  "amount_in": "0",
+  "deadline_slot": "0",
   "input_asset": "xor#universal",
-  "intent_id": "name",
-  "min_out": 0,
-  "nonce": 0,
+  "intent_id": "sample",
+  "min_out": "0",
+  "nonce": "0",
   "output_asset": "xor#universal",
-  "solver_fee_bps": 0
+  "solver_fee_bps": "0"
 }
 ```
 
 ### cancel_intent
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "intent_id": "name"
+  "intent_id": "sample"
 }
 ```
 
 ### fill_intent
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount_out": 0,
-  "intent_id": "name"
+  "amount_out": "0",
+  "intent_id": "sample"
 }
 ```
 
 ### intent_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, quantity, quantity, int, int, int, int, quantity, quantity)`
 - Sample payload:
 
 ```json
 {
-  "intent_id": "name"
+  "intent_id": "sample"
 }
 ```
 
 ## vaults.manager
 
-- Interface: `artifacts/compiled/vaults/manager.interface.json`
-- Entrypoints: `11`
-- State keys: `24`
+- Interface: `./artifacts/compiled/vaults/manager.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `12`
+- State keys: `25`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -4153,79 +3129,80 @@ Manifest: `iroha.contracts.toml`
 
 ### configure_trigger_lifecycle
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "cadence_slots": 0,
-  "enabled": 0,
-  "max_items_per_tick": 0
+  "cadence_slots": "0",
+  "enabled": "0",
+  "max_items_per_tick": "0"
 }
 ```
 
 ### register_vault
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "async_redeem": 0,
+  "async_redeem": "0",
+  "custody_account": "ed0120...",
   "share_asset": "xor#universal",
-  "strategy_code": 0,
+  "strategy_code": "0",
   "underlying_asset": "xor#universal",
-  "vault_id": "name"
+  "vault_id": "sample"
 }
 ```
 
 ### deposit
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "position_id": "name",
-  "vault_id": "name"
+  "amount": "0",
+  "position_id": "sample",
+  "vault_id": "sample"
 }
 ```
 
 ### request_redeem
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "claim_slot": 0,
-  "position_id": "name",
-  "request_id": "name",
-  "shares": 0,
-  "vault_id": "name"
+  "claim_slot": "0",
+  "position_id": "sample",
+  "request_id": "sample",
+  "shares": "0",
+  "vault_id": "sample"
 }
 ```
 
 ### claim_redeem
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "request_id": "name"
+  "request_id": "sample"
 }
 ```
 
 ### native_lifecycle_tick
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -4235,43 +3212,43 @@ Manifest: `iroha.contracts.toml`
 
 ### vault_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, int, int, quantity, quantity)`
 - Sample payload:
 
 ```json
 {
-  "vault_id": "name"
+  "vault_id": "sample"
 }
 ```
 
 ### position_state
 
-- Kind: `View`
-- Return: `int`
+- Kind: `view`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "position_id": "name"
+  "position_id": "sample"
 }
 ```
 
 ### request_state
 
-- Kind: `View`
-- Return: `(int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, int)`
 - Sample payload:
 
 ```json
 {
-  "request_id": "name"
+  "request_id": "sample"
 }
 ```
 
 ### trigger_lifecycle_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
@@ -4281,13 +3258,13 @@ Manifest: `iroha.contracts.toml`
 
 ## operators.registry
 
-- Interface: `artifacts/compiled/operators/registry.interface.json`
-- Entrypoints: `6`
-- State keys: `8`
+- Interface: `./artifacts/compiled/operators/registry.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `7`
+- State keys: `11`
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -4297,79 +3274,95 @@ Manifest: `iroha.contracts.toml`
 
 ### register_operator
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
   "bond_asset": "xor#universal",
-  "min_bond": 0,
-  "service": "name"
+  "bond_vault": "ed0120...",
+  "fee_asset": "xor#universal",
+  "fee_vault": "ed0120...",
+  "min_bond": "0",
+  "operator_owner": "ed0120...",
+  "service": "sample"
 }
 ```
 
 ### bond
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
-  "service": "name"
+  "amount": "0",
+  "service": "sample"
 }
 ```
 
 ### heartbeat
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "fees_accrued": 0,
-  "health_bps": 0,
-  "service": "name",
-  "slot": 0
+  "health_bps": "0",
+  "service": "sample",
+  "slot": "0"
+}
+```
+
+### accrue_fees
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "amount": "0",
+  "service": "sample"
 }
 ```
 
 ### claim_fees
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "service": "name"
+  "service": "sample"
 }
 ```
 
 ### operator_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, quantity, decimal, int, quantity, int)`
 - Sample payload:
 
 ```json
 {
-  "service": "name"
+  "service": "sample"
 }
 ```
 
 ## margin.portfolio_margin
 
-- Interface: `artifacts/compiled/margin/portfolio_margin.interface.json`
-- Entrypoints: `8`
-- State keys: `8`
+- Interface: `./artifacts/compiled/margin/portfolio_margin.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `9`
+- State keys: `11`
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -4379,103 +3372,120 @@ Manifest: `iroha.contracts.toml`
 
 ### register_market
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "liquidation_threshold_bps": 0,
-  "market_id": "name",
-  "risk_weight_bps": 0
+  "collateral_asset": "xor#universal",
+  "collateral_vault": "ed0120...",
+  "liquidation_threshold_bps": "0",
+  "market_id": "sample",
+  "risk_weight_bps": "0"
 }
 ```
 
 ### deposit_collateral
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "account_key": "name",
-  "amount": 0
+  "account_key": "sample",
+  "amount": "0",
+  "market_id": "sample"
 }
 ```
 
 ### withdraw_collateral
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "account_key": "name",
-  "amount": 0
+  "account_key": "sample",
+  "amount": "0"
 }
 ```
 
 ### lock_exposure
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "account_key": "name",
-  "exposure_delta": 0,
-  "market_id": "name"
+  "account_key": "sample",
+  "exposure_delta": "0",
+  "market_id": "sample"
+}
+```
+
+### release_exposure
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "account_key": "sample",
+  "exposure_delta": "0",
+  "market_id": "sample"
 }
 ```
 
 ### liquidate_account
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "account_key": "name"
+  "account_key": "sample"
 }
 ```
 
 ### market_state
 
-- Kind: `View`
-- Return: `(int, int, int)`
+- Kind: `view`
+- Return: `(int, decimal, decimal)`
 - Sample payload:
 
 ```json
 {
-  "market_id": "name"
+  "market_id": "sample"
 }
 ```
 
 ### account_health
 
-- Kind: `View`
-- Return: `(int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, quantity, decimal, int)`
 - Sample payload:
 
 ```json
 {
-  "account_key": "name"
+  "account_key": "sample"
 }
 ```
 
 ## rwa.market
 
-- Interface: `artifacts/compiled/rwa/market.interface.json`
-- Entrypoints: `7`
-- State keys: `10`
+- Interface: `./artifacts/compiled/rwa/market.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `8`
+- State keys: `12`
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -4485,217 +3495,161 @@ Manifest: `iroha.contracts.toml`
 
 ### issue_lot
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "initial_nav_per_share": 0,
-  "market_id": "name",
+  "initial_nav_per_share": "0",
+  "market_id": "sample",
   "nav_asset": "xor#universal",
   "share_asset": "xor#universal",
-  "total_shares": 0
-}
-```
-
-### bind_share_asset
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "market_id": "name",
-  "share_asset": "xor#universal"
+  "total_shares": "0"
 }
 ```
 
 ### report_nav
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "market_id": "name",
-  "nav_per_share": 0,
-  "status": 0,
-  "total_shares": 0
+  "market_id": "sample",
+  "nav_per_share": "0",
+  "status": "0",
+  "total_shares": "0"
 }
 ```
 
 ### request_redemption
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "market_id": "name",
-  "redemption_id": "name",
-  "shares": 0
+  "market_id": "sample",
+  "redemption_id": "sample",
+  "shares": "0"
 }
 ```
 
 ### settle_redemption
 
-- Kind: `Public`
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "redemption_id": "sample"
+}
+```
+
+### cancel_redemption
+
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "redemption_id": "name"
+  "redemption_id": "sample"
 }
 ```
 
 ### rwa_market_state
 
-- Kind: `View`
-- Return: `(int, int, int, int)`
+- Kind: `view`
+- Return: `(int, decimal, quantity, int)`
 - Sample payload:
 
 ```json
 {
-  "market_id": "name"
+  "market_id": "sample"
+}
+```
+
+### redemption_state
+
+- Kind: `view`
+- Return: `(int, quantity, quantity, int)`
+- Sample payload:
+
+```json
+{
+  "redemption_id": "sample"
 }
 ```
 
 ## dlmm_hooks.hook_manager
 
-- Interface: `artifacts/compiled/dlmm_hooks/hook_manager.interface.json`
-- Entrypoints: `15`
-- State keys: `38`
+- Interface: `./artifacts/compiled/dlmm_hooks/hook_manager.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `16`
+- State keys: `39`
 
-### main
+### hajimari
 
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{}
-```
-
-### init_trigger_twamm
-
-- Kind: `Public`
+- Kind: `hajimari`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
   "base_asset": "xor#universal",
-  "cadence_slots": 0,
-  "enabled": 0,
-  "max_orders_per_tick": 0,
-  "quote_asset": "xor#universal"
+  "custody_account": "ed0120...",
+  "guardian": "ed0120...",
+  "quote_asset": "xor#universal",
+  "router_contract": "0x"
 }
 ```
 
-### bind_contract
+### main
 
-- Kind: `Public`
-- Return: `null`
+- Kind: `view`
+- Return: `int`
 - Sample payload:
 
 ```json
-{
-  "contract_id": "ed0120..."
-}
-```
-
-### bind_router
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "router_contract": null
-}
+{}
 ```
 
 ### configure_hook_policy
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "enabled": 0,
-  "hook_id": "name",
-  "max_fee_pips": 0,
-  "phase": 0
+  "enabled": "0",
+  "hook_id": "sample",
+  "max_fee_pips": "0",
+  "phase": "0"
 }
 ```
 
-### place_limit_order
+### configure_trigger_twamm
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount_in": 0,
-  "hook_id": "name",
-  "min_out": 0,
-  "order_id": "name"
+  "cadence_slots": "0",
+  "enabled": "0",
+  "max_orders_per_tick": "0"
 }
 ```
 
-### schedule_twamm_v2
+### enter_withdrawal_only
 
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "input_is_base": 0,
-  "interval_slots": 0,
-  "min_total_out": 0,
-  "order_id": "name",
-  "slice_in": 0,
-  "start_slot": 0,
-  "total_in": 0
-}
-```
-
-### cancel_twamm
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "order_id": "name"
-}
-```
-
-### claim_twamm
-
-- Kind: `Public`
-- Return: `int`
-- Sample payload:
-
-```json
-{
-  "order_id": "name"
-}
-```
-
-### native_twamm_tick
-
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
@@ -4703,59 +3657,136 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### record_execution
+### exit_withdrawal_only
 
-- Kind: `Public`
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
+```
+
+### place_limit_order
+
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount_in": 0,
-  "amount_out": 0,
-  "order_id": "name"
+  "amount_in": "0",
+  "hook_id": "sample",
+  "min_out": "0",
+  "order_id": "sample"
 }
+```
+
+### record_execution
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "amount_in": "0",
+  "amount_out": "0",
+  "order_id": "sample"
+}
+```
+
+### schedule_twamm
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "input_is_base": "0",
+  "interval_slots": "0",
+  "min_total_out": "0",
+  "order_id": "sample",
+  "slice_in": "0",
+  "start_slot": "0",
+  "total_in": "0"
+}
+```
+
+### cancel_twamm
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "order_id": "sample"
+}
+```
+
+### claim_twamm
+
+- Kind: `kotoage`
+- Return: `quantity`
+- Sample payload:
+
+```json
+{
+  "order_id": "sample"
+}
+```
+
+### native_twamm_tick
+
+- Kind: `kotoage`
+- Return: `null`
+- Sample payload:
+
+```json
+{}
 ```
 
 ### hook_policy
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "hook_id": "name"
+  "hook_id": "sample"
 }
 ```
 
 ### quote_hooked_swap
 
-- Kind: `View`
-- Return: `(int, int, int, int, int)`
+- Kind: `view`
+- Return: `(quantity, quantity, quantity, quantity, int)`
 - Sample payload:
 
 ```json
 {
-  "order_id": "name"
+  "order_id": "sample"
 }
 ```
 
 ### twamm_order_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, quantity, quantity, quantity, quantity, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "order_id": "name"
+  "order_id": "sample"
 }
 ```
 
 ### twamm_trigger_state
 
-- Kind: `View`
+- Kind: `view`
 - Return: `(int, int, int, int, int, int, int)`
 - Sample payload:
 
@@ -4765,13 +3796,25 @@ Manifest: `iroha.contracts.toml`
 
 ## escrow.conditional_escrow
 
-- Interface: `artifacts/compiled/escrow/conditional_escrow.interface.json`
-- Entrypoints: `10`
-- State keys: `13`
+- Interface: `./artifacts/compiled/escrow/conditional_escrow.interface.json`
+- `kotoage`/`言挙げ`, `view`, `hajimari`/`始まり`, `kaizen`/`改善`: `9`
+- State keys: `10`
+
+### hajimari
+
+- Kind: `hajimari`
+- Return: `null`
+- Sample payload:
+
+```json
+{
+  "escrow_account": "ed0120..."
+}
+```
 
 ### main
 
-- Kind: `Public`
+- Kind: `view`
 - Return: `int`
 - Sample payload:
 
@@ -4779,62 +3822,40 @@ Manifest: `iroha.contracts.toml`
 {}
 ```
 
-### init_escrow
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{}
-```
-
-### bind_contract
-
-- Kind: `Public`
-- Return: `null`
-- Sample payload:
-
-```json
-{
-  "contract_id": "ed0120..."
-}
-```
-
 ### open_escrow
 
-- Kind: `Public`
+- Kind: `kotoage`
 - Return: `null`
 - Sample payload:
 
 ```json
 {
-  "amount": 0,
+  "amount": "0",
   "asset": "xor#universal",
-  "condition_code": 0,
-  "escrow_id": "name",
-  "expiry_slot": 0,
+  "condition_code": "0",
+  "escrow_id": "sample",
+  "expiry_slot": "0",
   "taker": "ed0120..."
 }
 ```
 
 ### accept_escrow
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "condition_code": 0,
-  "escrow_id": "name"
+  "condition_code": "0",
+  "escrow_id": "sample"
 }
 ```
 
 ### native_by_call_settle
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
@@ -4843,44 +3864,44 @@ Manifest: `iroha.contracts.toml`
 
 ### cancel_escrow
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "escrow_id": "name"
+  "escrow_id": "sample"
 }
 ```
 
 ### refund_expired
 
-- Kind: `Public`
-- Return: `int`
+- Kind: `kotoage`
+- Return: `quantity`
 - Sample payload:
 
 ```json
 {
-  "escrow_id": "name"
+  "escrow_id": "sample"
 }
 ```
 
 ### escrow_state
 
-- Kind: `View`
-- Return: `(int, int, int, int, int, int)`
+- Kind: `view`
+- Return: `(int, quantity, int, int, int, int)`
 - Sample payload:
 
 ```json
 {
-  "escrow_id": "name"
+  "escrow_id": "sample"
 }
 ```
 
 ### escrow_config
 
-- Kind: `View`
-- Return: `(int, int)`
+- Kind: `view`
+- Return: `AccountId`
 - Sample payload:
 
 ```json

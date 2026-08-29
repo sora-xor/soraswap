@@ -27,7 +27,6 @@
     "minimum_samples": 61,
     "maximum_monitoring_sample_age_seconds": 30,
     "minimum_validator_count": 4,
-    "maximum_canonical_lead": 1,
     "maximum_finality_age_ms": 30000,
     "derivatives_pause_mode": "external_fail_closed"
   }

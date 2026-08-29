@@ -1,7 +1,6 @@
 import { CoverManagerModel } from "../cover/manager";
-import { OptionsStackModel } from "../options/stack";
-import { OraclePayload, PerpsEngineModel } from "../perps/engine";
-import { RiskVaultModel } from "../shared/riskVault";
+import { OptionsFactoryModel } from "../options/factory";
+import { MarketOraclePublication, PerpsEngineModel } from "../perps/engine";
 
 type AuctionSide = "bid" | "ask";
 type AuctionOrderStatus = "active" | "cancelled" | "settled";
@@ -629,28 +628,47 @@ describe("Trigger-native suite simulations", () => {
   });
 
   test("options and cover trigger lifecycle models keep finalized state immutable under replay and stale observations", () => {
-    const optionVault = new RiskVaultModel();
-    const options = new OptionsStackModel(optionVault);
-    options.configureAutomation(8, 0, false);
-    const shoutTemplate = options.registerTemplate("shout", 10_000, 10_000, 300);
-    const outperformanceTemplate = options.registerTemplate("outperformance", 10_000, 10_000, 300);
-    const shoutSeries = options.createSeries(shoutTemplate, 40, 10_000, 300);
-    const outperformanceSeries = options.createSeries(outperformanceTemplate, 40, 10_000, 300);
-    const shoutPosition = options.buyShout("alice", shoutSeries, 1_000, 30, 500);
-    const outperformancePosition = options.buyOutperformance("bob", outperformanceSeries, 1_000, 30, 500);
+    const options = new OptionsFactoryModel({ oracleStaleSlots: 4 });
+    options.syncAutomation(8, false);
+    options.exitWithdrawalOnly();
+    options.syncSeries(1, {
+      kind: "shout",
+      maxNotional: 10_000,
+      premiumBps: 300,
+      collateralMultiplierBps: 10_000,
+      expirySlot: 40,
+      strikeBps: 10_000
+    }, 1);
+    options.syncSeries(2, {
+      kind: "outperformance",
+      maxNotional: 10_000,
+      premiumBps: 300,
+      collateralMultiplierBps: 10_000,
+      expirySlot: 40,
+      strikeBps: 10_000
+    }, 1);
+    const shoutPosition = options.buyShout("alice", 1, 1_000, 10);
+    const outperformancePosition = options.buyOutperformance("bob", 2, 1_000, 10);
 
-    expect(options.exerciseShout(shoutPosition, 11_000)).toBe(100);
-    expect(() => options.exerciseShout(shoutPosition, 11_000)).toThrow("position not active");
-    options.settleOutperformance(outperformancePosition, 12_000, 10_000);
-    expect(options.exerciseOutperformance(outperformancePosition)).toBe(200);
-    expect(() => options.exerciseOutperformance(outperformancePosition)).toThrow("outperformance settlement missing");
+    options.publishShoutMark(shoutPosition, 11_000, 20, 200, 20);
+    expect(options.exerciseShoutPosition("alice", shoutPosition, 20)).toBe(100);
+    expect(() => options.exerciseShoutPosition("alice", shoutPosition, 20)).toThrow("position inactive");
+    options.settleOutperformanceSeries(2, {
+      finalMark: 12_000,
+      finalQuoteMark: 10_000,
+      baseReturnBps: 12_000,
+      quoteReturnBps: 10_000,
+      oracleSlot: 40,
+      attestationHash: 400
+    }, 40);
+    expect(options.exerciseOutperformancePosition("bob", outperformancePosition)).toBe(200);
+    expect(() => options.exerciseOutperformancePosition("bob", outperformancePosition)).toThrow("position inactive");
 
-    const coverVault = new RiskVaultModel();
-    const cover = new CoverManagerModel(coverVault, 2);
-    cover.configureAutomation(10, 0, false);
-    cover.fundClaims(10_000);
-    const policyId = cover.registerPolicy({
-      owner: "carol",
+    const cover = new CoverManagerModel({ defaultRequiredObservations: 2, oracleStaleSlots: 4 });
+    cover.syncAutomation(10, false);
+    cover.exitWithdrawalOnly();
+    cover.fundReserve(10_000);
+    const policyId = cover.registerPolicy("carol", {
       lowerBound: 9_500,
       upperBound: 10_500,
       payoutAmount: 1_000,
@@ -658,29 +676,32 @@ describe("Trigger-native suite simulations", () => {
       requiredObservations: 2,
       coveredNotional: 1_500,
       premiumPaid: 50
-    });
-    cover.expirePolicy(policyId);
+    }, 0);
+    cover.expirePolicy(policyId, 2);
     expect(cover.policy(policyId).status).toBe("expired");
-    expect(() => cover.recordObservation(policyId, 12_000, { oracleSlot: 2, currentSlot: 3, statusFlags: 0 })).toThrow("policy expired");
-    expect(() => cover.routeClaim(policyId)).toThrow("policy not claimable");
+    expect(() => cover.recordObservation(policyId, 12_000, 2, 0, 200, 3)).toThrow("policy not active");
+    expect(() => cover.routeClaim("carol", policyId)).toThrow("policy not claimable");
   });
 
   test("perps native lifecycle uses cached valid oracle state, caps trigger scans, and pays no keeper reward", () => {
-    const vault = new RiskVaultModel();
-    const engine = new PerpsEngineModel(vault);
-    vault.deposit(1, 100_000);
+    const engine = new PerpsEngineModel();
+    engine.syncAutomation(10, false);
+    engine.exitWithdrawalOnly();
+    engine.fundCollateralPool(100_000);
     const marketId = engine.registerMarket({
+      asset: "xor#universal",
       maxLeverageBps: 100_000,
       maintenanceMarginBps: 1_000,
       liquidationFeeBps: 900,
       openInterestCap: 50_000,
       fundingBps: 100,
+      fundingIntervalSlots: 4,
       oracleStaleSlots: 4,
       backlogLimit: 10,
       utilisationClampBps: 10_000,
       liquidationStressLimit: 4
     });
-    const oracle = (overrides: Partial<OraclePayload> = {}): OraclePayload => ({
+    const oracle = (overrides: Partial<MarketOraclePublication> = {}): MarketOraclePublication => ({
       markPriceBps: 10_000,
       indexPriceBps: 10_000,
       confidenceBps: 50,
@@ -691,16 +712,29 @@ describe("Trigger-native suite simulations", () => {
       ...overrides
     });
 
-    const positionId = engine.openPosition("alice", marketId, 10_000, 1_500, oracle());
-    engine.syncFunding(marketId, oracle({ markPriceBps: 8_000, indexPriceBps: 8_000, oracleSlot: 20, currentSlot: 20, attestationHash: 200 }));
+    engine.publishMarketOracle(marketId, oracle());
+    const positionId = engine.openPosition("alice", marketId, 10_000, 1_500, 100_000, 10);
+    engine.publishMarketOracle(marketId, oracle({
+      markPriceBps: 8_000,
+      indexPriceBps: 8_000,
+      oracleSlot: 20,
+      currentSlot: 20,
+      attestationHash: 200
+    }));
     expect(engine.runNativeLifecyclePass(marketId, 1, 20)).toEqual({ scanned: 1, queued: 1, recovered: 0, liquidated: 0 });
     expect(engine.runNativeLifecyclePass(marketId, 1, 21)).toEqual({ scanned: 1, queued: 0, recovered: 0, liquidated: 1 });
     expect(engine.position(positionId)).toMatchObject({ status: "liquidated", lastKeeperReward: 0 });
     expect(() => engine.runNativeLifecyclePass(marketId, 5, 21)).toThrow("native scan size exceeds cap");
 
-    const stalePosition = engine.openPosition("bob", marketId, 2_000, 500, oracle({ oracleSlot: 30, currentSlot: 30, attestationHash: 300 }));
+    engine.publishMarketOracle(marketId, oracle({ oracleSlot: 30, currentSlot: 30, attestationHash: 300 }));
+    const stalePosition = engine.openPosition("bob", marketId, 2_000, 500, 100_000, 30);
     expect(engine.runNativeLifecyclePass(marketId, 1, 40)).toEqual({ scanned: 0, queued: 0, recovered: 0, liquidated: 0 });
     expect(engine.position(stalePosition).status).toBe("open");
-    expect(() => engine.syncFunding(marketId, oracle({ statusFlags: 1, oracleSlot: 41, currentSlot: 41, attestationHash: 301 }))).toThrow("oracle degraded");
+    expect(() => engine.publishMarketOracle(marketId, oracle({
+      statusFlags: 1,
+      oracleSlot: 41,
+      currentSlot: 41,
+      attestationHash: 301
+    }))).toThrow("oracle degraded");
   });
 });

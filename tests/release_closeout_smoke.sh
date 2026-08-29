@@ -488,7 +488,7 @@ make_pin_fixture() {
   resume_pin_bundle="$bundle_parent/$bundle_name"
   resume_pin_root="$iroha_root"
   mkdir -p "$resume_pin_bundle/bin"
-  for binary in irohad iroha; do
+  for binary in iroha3d iroha; do
     printf '#!/bin/sh\n# Iroha Git SHA: %s\nexit 0\n' "$resume_pin_sha" \
       > "$resume_pin_bundle/bin/$binary"
     chmod +x "$resume_pin_bundle/bin/$binary"
@@ -500,8 +500,8 @@ make_pin_fixture() {
     git_status_lines:[],
     cargo_profile:"release",
     bundle_name:$bundle_name,
-    irohad_features:["embedded-soracloud-runtime","sccp-test-fixtures"],
-    binaries:["bin/irohad","bin/iroha"],
+    iroha3d_features:["embedded-soracloud-runtime","sccp-test-fixtures"],
+    binaries:["bin/iroha3d","bin/iroha"],
     prebundle_checks:[
       {name:"soraswap_smart_contract_deploy_router_regression",skipped:false},
       {name:"soraswap_three_hop_nested_transfer_canary",skipped:false}
@@ -543,7 +543,7 @@ expect_failure \
   release_local_acceptance_pin_state_json "$resume_pin_root" "$pin_unsigned_manifest_bundle" "$resume_pin_sha"
 
 pin_features_bundle="$(copy_pin_bundle "$TMP_DIR/pin-features")"
-jq '.irohad_features = ["embedded-soracloud-runtime"]' "$pin_features_bundle/rollout.manifest.json" \
+jq '.iroha3d_features = ["embedded-soracloud-runtime"]' "$pin_features_bundle/rollout.manifest.json" \
   > "$pin_features_bundle/rollout.manifest.json.tmp"
 mv "$pin_features_bundle/rollout.manifest.json.tmp" "$pin_features_bundle/rollout.manifest.json"
 refresh_pin_bundle_integrity "$pin_features_bundle"
@@ -610,7 +610,16 @@ soraswap_client_config_has_placeholder_values() { return 1; }
 config_chain_id_from_config() { echo production-chain; }
 production_client_config_taira_chain_blocker_message() { return 1; }
 soraswap_value_looks_placeholder() { return 1; }
-soraswap_required_oracle_public_key_hex() { echo "ed0120bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; }
+soraswap_prepare_oracle_client_config() {
+  typeset -g SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG="$PWD/config/production/oracle.client.toml"
+  typeset -g SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED=0
+  typeset -g SORASWAP_ACTIVE_ORACLE_ACCOUNT="i105-production-oracle"
+}
+soraswap_cleanup_oracle_client_config() {
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED
+  unset SORASWAP_ACTIVE_ORACLE_ACCOUNT
+}
 authority_from_config() { echo "i105-production-signer"; }
 soraswap_production_min_fee_balance() { echo "${SORASWAP_PRODUCTION_MIN_FEE_BALANCE:-10}"; }
 soraswap_print_preflight_report_reasons() { return 0; }
@@ -705,6 +714,7 @@ make_resume_root "$production_resume_root"
 mkdir -p "$production_resume_root/config/production" "$production_resume_root/deployments/production"
 cat > "$production_resume_root/config/production/production.client.toml" <<'EOF'
 chain = "production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://torii.production.example"
 EOF
 chmod 600 "$production_resume_root/config/production/production.client.toml"

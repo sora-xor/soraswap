@@ -390,10 +390,10 @@ poll_tx_status() {
   local attempt=1
   local result status_kind
   while (( attempt <= tx_status_attempts )); do
-    result="$(http_json GET "$base_url/api/pipeline/transactions/status?environment=${public_env}&hash=${tx_hash}")"
+    result="$(http_json GET "$base_url/api/pipeline/transactions/status?environment=${public_env}&hash=${tx_hash}&scope=global")"
     status_kind="$(jq -r '.status_kind // empty' <<<"$result")"
     case "$status_kind" in
-      Applied|Committed|Rejected|Expired|TimedOut)
+      Applied|Committed|Rejected|Expired)
         printf '%s\n' "$result"
         return 0
         ;;
@@ -443,74 +443,6 @@ inspect_view_result() {
     <<<"$inspect_json"
 }
 
-rejection_signal_text() {
-  local payload_json="$1"
-  python3 - "$payload_json" <<'PY'
-import base64
-import json
-import re
-import sys
-
-payload = json.loads(sys.argv[1])
-values = [
-    payload.get("rejection_reason"),
-    (payload.get("response_json") or {}).get("rejection_reason"),
-    ((payload.get("response_json") or {}).get("status") or {}).get("rejection_reason"),
-    payload.get("response_text"),
-]
-parts = []
-for value in values:
-    if not isinstance(value, str) or not value:
-        continue
-    parts.append(value)
-    try:
-        raw = base64.b64decode(value, validate=False)
-    except Exception:
-        continue
-    printable = b" ".join(re.findall(rb"[ -~]{4,}", raw))
-    if printable:
-        parts.append(printable.decode("utf-8", "ignore"))
-print(" ".join(parts).lower())
-PY
-}
-
-message_replay_rejection_matches() {
-  local payload_json="$1"
-  local rejection_text
-  rejection_text="$(rejection_signal_text "$payload_json")"
-  [[ "$rejection_text" == *"message consumed"* ]] \
-    || [[ "$rejection_text" == *"already"* ]] \
-    || [[ "$rejection_text" == *"duplicate"* ]] \
-    || [[ "$rejection_text" == *"replay"* ]] \
-    || [[ "$rejection_text" == *"assertion failed (constraint violation)"* ]] \
-    || [[ "$rejection_text" == *"constraint violation"* ]] \
-    || [[ "$rejection_text" == *"proof range overlaps existing proof"* ]] \
-    || [[ "$rejection_text" == *"bridge proof range overlaps existing proof"* ]] \
-    || [[ "$rejection_text" == *"range overlaps existing proof"* ]]
-}
-
-proof_replay_rejection_matches() {
-  local payload_json="$1"
-  local rejection_text
-  rejection_text="$(rejection_signal_text "$payload_json")"
-  [[ "$rejection_text" == *"already"* ]] \
-    || [[ "$rejection_text" == *"duplicate"* ]] \
-    || [[ "$rejection_text" == *"replay"* ]] \
-    || [[ "$rejection_text" == *"proof range overlaps existing proof"* ]] \
-    || [[ "$rejection_text" == *"bridge proof range overlaps existing proof"* ]] \
-    || [[ "$rejection_text" == *"range overlaps existing proof"* ]]
-}
-
-rejection_status_json() {
-  local payload_json="$1"
-  local rejection_text
-  rejection_text="$(rejection_signal_text "$payload_json")"
-  rejection_text="$(soraswap_redact_sensitive_text "$rejection_text")"
-  jq -cn \
-    --arg rejection_reason "${rejection_text:-rejected}" \
-    '{status_kind: "Rejected", rejection_reason: $rejection_reason, immediate: true}'
-}
-
 derive_route_literal() {
   local selected_recent_item_json="$1"
   local job_result_json="$2"
@@ -520,10 +452,8 @@ derive_route_literal() {
   route_literal="$(
     jq -r '
       .route_id
-      // .payload_projection.Transfer.route_id.TextUtf8.value
-      // .payload_projection.Transfer.route_id.value
-      // .response_json.payload_projection.Transfer.route_id.TextUtf8.value
-      // .response_json.payload_projection.Transfer.route_id.value
+      // .payload_projection.Transfer.route_id.CanonicalText.value
+      // .response_json.payload_projection.Transfer.route_id.CanonicalText.value
       // empty
     ' <<<"$selected_recent_item_json" 2>/dev/null || true
   )"
@@ -534,8 +464,7 @@ derive_route_literal() {
 
   route_literal="$(
     jq -r '
-      .response_json.payload_projection.Transfer.route_id.TextUtf8.value
-      // .response_json.payload_projection.Transfer.route_id.value
+      .response_json.payload_projection.Transfer.route_id.CanonicalText.value
       // empty
     ' <<<"$job_result_json" 2>/dev/null || true
   )"
@@ -708,7 +637,7 @@ if [[ -z "$message_id" ]]; then
         message_id: $message_id
       }')"
     if candidate_inspect_json="$(http_json POST "$base_url/api/bridge/inspect" "$candidate_inspect_payload" 2>/dev/null)" \
-      && inspect_view_result "$candidate_inspect_json" inbound_consumed >/dev/null 2>&1; then
+      && [[ "$(inspect_view_result "$candidate_inspect_json" inbound_consumed 2>/dev/null || true)" == "0" ]]; then
       selection_source="cached_evidence"
       message_id="$cached_message_id"
       route="$cached_route"
@@ -716,75 +645,6 @@ if [[ -z "$message_id" ]]; then
       selected_recent_item_json="$(jq -c '.message_selection.selected_recent_item // null' <<<"$cached_console_report_json" 2>/dev/null || printf 'null')"
     fi
   fi
-fi
-
-if [[ -z "$message_id" ]]; then
-  selection_source="recent_messages_replay_route"
-  while IFS= read -r candidate_item_json; do
-    [[ -n "$candidate_item_json" ]] || continue
-    candidate_message_id="$(jq -r '.message_id_hex // empty' <<<"$candidate_item_json")"
-    candidate_route="$(jq -r '.route_id // empty' <<<"$candidate_item_json")"
-    candidate_inspect_payload="$(jq -cn \
-      --arg environment "$public_env" \
-      --arg route "$candidate_route" \
-      --arg message_id "$candidate_message_id" \
-      '{
-        environment: $environment,
-        route: $route,
-        message_id: $message_id
-      }')"
-    if ! candidate_inspect_json="$(http_json POST "$base_url/api/bridge/inspect" "$candidate_inspect_payload" 2>/dev/null)"; then
-      continue
-    fi
-    if ! inspect_view_result "$candidate_inspect_json" inbound_consumed >/dev/null 2>&1; then
-      continue
-    fi
-    message_id="$candidate_message_id"
-    route="$candidate_route"
-    selected_recent_item_json="$candidate_item_json"
-    inspect_json="$candidate_inspect_json"
-    break
-  done < <(
-    jq -cr \
-      --arg route "$bridge_route_hint" \
-      '.response_json.items[]?
-        | select((.kind // "") == "transfer" and (.target_domain // 0) > 0 and (.route_id // "") == $route)' \
-      <<<"$recent_result_json"
-  )
-fi
-
-if [[ -z "$message_id" ]]; then
-  selection_source="recent_messages_replay_any_route"
-  while IFS= read -r candidate_item_json; do
-    [[ -n "$candidate_item_json" ]] || continue
-    candidate_message_id="$(jq -r '.message_id_hex // empty' <<<"$candidate_item_json")"
-    candidate_route="$(jq -r '.route_id // empty' <<<"$candidate_item_json")"
-    candidate_inspect_payload="$(jq -cn \
-      --arg environment "$public_env" \
-      --arg route "$candidate_route" \
-      --arg message_id "$candidate_message_id" \
-      '{
-        environment: $environment,
-        route: $route,
-        message_id: $message_id
-      }')"
-    if ! candidate_inspect_json="$(http_json POST "$base_url/api/bridge/inspect" "$candidate_inspect_payload" 2>/dev/null)"; then
-      continue
-    fi
-    if ! inspect_view_result "$candidate_inspect_json" inbound_consumed >/dev/null 2>&1; then
-      continue
-    fi
-    message_id="$candidate_message_id"
-    route="$candidate_route"
-    selected_recent_item_json="$candidate_item_json"
-    inspect_json="$candidate_inspect_json"
-    break
-  done < <(
-    jq -cr \
-      '.response_json.items[]?
-        | select((.kind // "") == "transfer" and (.target_domain // 0) > 0)' \
-      <<<"$recent_result_json"
-  )
 fi
 
 if [[ -z "$message_id" ]]; then
@@ -839,7 +699,11 @@ if ! jq -e '.[0] == 1' <<<"$route_provenance_json" >/dev/null; then
 fi
 echo "bridge inspect verified route provenance" >&2
 submission_expectation="apply"
-consumed_before_submit=0
+if ! consumed_before_submit="$(inspect_view_result "$inspect_json" inbound_consumed 2>/dev/null)" \
+  || [[ "$consumed_before_submit" != "0" ]]; then
+  echo "selected SCCP message was already consumed; a fresh finalized transfer is required" >&2
+  exit 1
+fi
 destination_proof_b64="$(canonical_base64_file "$bridge_destination_proof_file")"
 native_proof_b64="$(canonical_base64_file "$bridge_native_proof_file")"
 proof_submit_payload="$(jq -cn \
@@ -877,22 +741,11 @@ if [[ -n "$proof_tx_hash" ]]; then
   proof_status_json="$(poll_tx_status "$proof_tx_hash")"
   proof_status_kind="$(jq -r '.status_kind // empty' <<<"$proof_status_json" 2>/dev/null || true)"
   echo "bridge proof transaction status: ${proof_status_kind:-unknown}" >&2
-  if [[ "$submission_expectation" == "replay_reject" ]]; then
-    if jq -e '(.status_kind // "") | test("^(Applied|Committed|Skipped)$")' <<<"$proof_status_json" >/dev/null 2>&1; then
-      :
-    else
-      jq -e '(.status_kind // "") == "Rejected"' <<<"$proof_status_json" >/dev/null
-      proof_replay_rejection_matches "$proof_status_json"
-    fi
-  else
-    if ! jq -e '(.status_kind // "") | test("^(Applied|Committed)$")' <<<"$proof_status_json" >/dev/null; then
-      echo "bridge proof transaction did not apply" >&2
-      printf '%s\n' "$(soraswap_redact_sensitive_text "$proof_status_json")" >&2
-      exit 1
-    fi
+  if ! jq -e '(.status_kind // "") | test("^(Applied|Committed)$")' <<<"$proof_status_json" >/dev/null; then
+    echo "bridge proof transaction did not apply" >&2
+    printf '%s\n' "$(soraswap_redact_sensitive_text "$proof_status_json")" >&2
+    exit 1
   fi
-elif [[ "$submission_expectation" == "replay_reject" ]] && proof_replay_rejection_matches "$proof_submit_json"; then
-  proof_status_json="$(rejection_status_json "$proof_submit_json")"
 else
   echo "bridge proof submission did not return a transaction hash" >&2
   printf '%s\n' "$(soraswap_redact_sensitive_text "$proof_submit_json")" >&2
@@ -913,19 +766,12 @@ if [[ -n "$message_tx_hash" ]]; then
     exit 1
   fi
   message_status_json="$(poll_tx_status "$message_tx_hash")"
-elif [[ "$submission_expectation" == "replay_reject" ]] && message_replay_rejection_matches "$message_submit_json"; then
-  message_status_json="$(rejection_status_json "$message_submit_json")"
 else
   echo "bridge message submission did not return a transaction hash" >&2
   printf '%s\n' "$(soraswap_redact_sensitive_text "$message_submit_json")" >&2
   exit 1
 fi
-if [[ "$submission_expectation" == "replay_reject" ]]; then
-  jq -e '(.status_kind // "") == "Rejected"' <<<"$message_status_json" >/dev/null
-  message_replay_rejection_matches "$message_status_json"
-else
-  jq -e '(.status_kind // "") | test("^(Applied|Committed)$")' <<<"$message_status_json" >/dev/null
-fi
+jq -e '(.status_kind // "") | test("^(Applied|Committed)$")' <<<"$message_status_json" >/dev/null
 native_response_message_id="$(jq -r '.response_json.message_id_hex // empty' <<<"$message_submit_json")"
 native_response_route_hash="$(jq -r '.response_json.route_configuration_hash_hex // empty' <<<"$message_submit_json")"
 native_response_counterparty="$(jq -r '.response_json.counterparty_chain // empty' <<<"$message_submit_json")"

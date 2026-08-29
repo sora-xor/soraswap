@@ -1,23 +1,22 @@
 chain = "fc56984b-2be7-431d-840e-21514d1883f0"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://taira.sora.org/"
 
 # Fill these with your public testnet credentials and keep the copied file
 # untracked. The example stays in git; the real file should not.
 #
-# The canonical Taira profile uses the chain id above and account prefix 369.
-# If the public host is temporarily serving an existing Sora-prefix localnet
-# state, set `chain = "00000000-0000-0000-0000-000000000000"` and replace
-# `profile = "taira"` with `chain_discriminant = 753` in your untracked copy.
+# The canonical Taira profile uses the chain and network identity above and
+# derives chain discriminant 369. Testnet identity overrides are unsupported.
+# Its XOR definition is `6TEAJqbb8oEPmLncoNiMRbLEK6tw`, permanently bound to
+# `xor#universal`, with required numeric scale `9`.
 #
-# The SoraSwap testnet scripts will now try, in order:
-# 1. self-registration of the signer on-chain
-# 2. Torii /v1/accounts/onboard when enabled
-# 3. faucet-puzzle probing for a funding path
-#
-# If all of those are unavailable, the scripts will stop with the exact live
-# rejection reason.
+# Signer autofunding is owned by the current compiled
+# `iroha taira write-canary` command. When this signer is missing or unfunded,
+# set SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE to a runtime-only mode-0600 regular
+# non-symlink with exactly one hard link, containing the exact Taira onboarding
+# token with no trailing newline. The token does not belong in this config.
 [account]
-domain = "change-me.universal"
+domain = "universal"
 profile = "taira"
 public_key = "ed0120CHANGE_ME"
 private_key = "802620CHANGE_ME"

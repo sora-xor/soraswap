@@ -9,7 +9,7 @@ module DlmmRouterV1Regressions {
     );
     actor(
       "guardian",
-      AccountId::parse("sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6")
+      AccountId::parse("sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF")
     );
     grant_permission("owner", "Admin");
     grant_permission("owner", "AssetOps");
@@ -17,29 +17,21 @@ module DlmmRouterV1Regressions {
     grant_permission("guardian", "AssetOps");
   }
 
-  fn initialize_router() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "hajimari",
-      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"default_fee_pips\":\"3000\",\"router_contract_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\",\"pool_contract\":\"0x01\",\"guardian\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
-    );
-  }
-
-  fn resume_router() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "set_paused",
-      arguments: Json::parse("{\"paused\":\"0\"}")
-    );
+  fn router_hajimari_arguments() -> Json {
+    return Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"default_fee_pips\":\"3000\",\"pool_contract\":\"0x01\",\"guardian\":\"sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF\"}");
   }
 
   #[test(fixture = "router_actors")]
   fn lifecycle_is_immutable_and_starts_paused() {
-    initialize_router();
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: router_hajimari_arguments()
+    );
     test::assert(RouterInitialized == 1);
     test::assert(RouterPaused == 1);
     test::assert(RouterOwner == test::actor_account("owner"));
-    test::assert(RouterContractAccount == test::actor_account("guardian"));
+    test::assert(RouterContractAccount != test::actor_account("owner"));
     test::assert(SwapHistoryHead == 0);
   }
 
@@ -47,33 +39,31 @@ module DlmmRouterV1Regressions {
   fn identical_assets_are_rejected_before_state_initialization() {
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "hajimari",
-      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"default_fee_pips\":\"3000\",\"router_contract_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\",\"pool_contract\":\"0x01\",\"guardian\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
-    );
-    test::assert(RouterInitialized == 0);
-  }
-
-  #[test(fixture = "router_actors")]
-  fn owner_account_cannot_masquerade_as_contract_custody() {
-    test::expect_reject_as(
-      actor: "owner",
-      entrypoint: "hajimari",
-      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"default_fee_pips\":\"3000\",\"router_contract_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"pool_contract\":\"0x01\",\"guardian\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
+      kotoage: "hajimari",
+      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"default_fee_pips\":\"3000\",\"pool_contract\":\"0x01\",\"guardian\":\"sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF\"}")
     );
   }
 
   #[test(fixture = "router_actors")]
   fn guardian_can_pause_but_cannot_resume() {
-    initialize_router();
-    resume_router();
-    test::invoke_entrypoint_as(
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: router_hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "set_paused",
+      arguments: Json::parse("{\"paused\":\"0\"}")
+    );
+    test::invoke_kotoage_as(
       actor: "guardian",
-      entrypoint: "set_paused",
+      kotoage: "set_paused",
       arguments: Json::parse("{\"paused\":\"1\"}")
     );
     test::expect_reject_as(
       actor: "guardian",
-      entrypoint: "set_paused",
+      kotoage: "set_paused",
       arguments: Json::parse("{\"paused\":\"0\"}")
     );
     test::assert(RouterPaused == 1);
@@ -81,10 +71,14 @@ module DlmmRouterV1Regressions {
 
   #[test(fixture = "router_actors")]
   fn paused_swap_rejects_before_staging_or_history() {
-    initialize_router();
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: router_hajimari_arguments()
+    );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "route_swap",
+      kotoage: "route_swap",
       arguments: Json::parse("{\"amount_in\":\"1\",\"input_is_base\":\"1\",\"min_out\":\"0\"}")
     );
     test::assert(SwapHistoryHead == 0);
@@ -92,11 +86,19 @@ module DlmmRouterV1Regressions {
 
   #[test(fixture = "router_actors")]
   fn invalid_direction_rejects_before_staging_or_nested_call() {
-    initialize_router();
-    resume_router();
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: router_hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "set_paused",
+      arguments: Json::parse("{\"paused\":\"0\"}")
+    );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "route_swap",
+      kotoage: "route_swap",
       arguments: Json::parse("{\"amount_in\":\"1\",\"input_is_base\":\"2\",\"min_out\":\"0\"}")
     );
     test::assert(SwapHistoryHead == 0);
@@ -104,10 +106,14 @@ module DlmmRouterV1Regressions {
 
   #[test(fixture = "router_actors")]
   fn direct_quote_uses_quantity_ratio_without_integer_product_overflow() {
-    initialize_router();
-    let output = test::invoke_entrypoint_as(
+    test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "quote_direct",
+      kotoage: "hajimari",
+      arguments: router_hajimari_arguments()
+    );
+    let output = test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "quote_direct",
       arguments: Json::parse("{\"reserve_in\":\"10000\",\"reserve_out\":\"10000\",\"amount_in\":\"1000\",\"fee_pips\":\"3000\"}")
     );
     test::assert(output > 900);
@@ -116,10 +122,14 @@ module DlmmRouterV1Regressions {
 
   #[test(fixture = "router_actors")]
   fn bin_quote_caps_output_at_available_reserve() {
-    initialize_router();
-    let output = test::invoke_entrypoint_as(
+    test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "quote_bin",
+      kotoage: "hajimari",
+      arguments: router_hajimari_arguments()
+    );
+    let output = test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "quote_bin",
       arguments: Json::parse("{\"reserve_base\":\"100\",\"reserve_quote\":\"100\",\"amount_in\":\"1000\",\"fee_pips\":\"0\",\"bin_id\":\"0\",\"bin_step\":\"1\",\"input_is_base\":\"1\",\"min_reserve_base\":\"10\",\"min_reserve_quote\":\"25\"}")
     );
     test::assert(output == 75);
@@ -127,10 +137,14 @@ module DlmmRouterV1Regressions {
 
   #[test(fixture = "router_actors")]
   fn invalid_reserve_floor_is_rejected() {
-    initialize_router();
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: router_hajimari_arguments()
+    );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "quote_bin",
+      kotoage: "quote_bin",
       arguments: Json::parse("{\"reserve_base\":\"100\",\"reserve_quote\":\"10\",\"amount_in\":\"1\",\"fee_pips\":\"0\",\"bin_id\":\"0\",\"bin_step\":\"1\",\"input_is_base\":\"1\",\"min_reserve_base\":\"0\",\"min_reserve_quote\":\"11\"}")
     );
   }

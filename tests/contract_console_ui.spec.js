@@ -28,7 +28,7 @@ function bridgeEntrypoints() {
       kind: "View",
       permission: "",
       params: [
-        { name: "asset_key", type_name: "String" },
+        { name: "asset_key", type_name: "Name" },
       ],
       return_type: "MirrorAsset",
     },
@@ -37,76 +37,94 @@ function bridgeEntrypoints() {
       kind: "View",
       permission: "",
       params: [
-        { name: "route", type_name: "String" },
+        { name: "route", type_name: "Name" },
       ],
       return_type: "MirrorRoute",
     },
     {
-      name: "register_asset",
-      kind: "Call",
-      permission: "Operator",
+      name: "register_bridge_asset",
+      kind: "Kotoage",
+      permission: "AssetOps",
       params: [
-        { name: "asset_key", type_name: "String" },
-        { name: "registrant", type_name: "AccountId" },
-        { name: "asset", type_name: "String" },
-        { name: "home_domain", type_name: "u32" },
-        { name: "decimals", type_name: "u32" },
+        { name: "asset_key", type_name: "Name" },
+        { name: "asset", type_name: "AssetDefinitionId" },
+        { name: "home_domain", type_name: "int" },
+        { name: "decimals", type_name: "int" },
       ],
       return_type: "Unit",
     },
     {
-      name: "activate_route",
-      kind: "Call",
-      permission: "Operator",
+      name: "bind_asset_vault",
+      kind: "Kotoage",
+      permission: "Entry",
       params: [
-        { name: "route", type_name: "String" },
-        { name: "asset_key", type_name: "String" },
-        { name: "remote_domain", type_name: "u32" },
-        { name: "local_asset", type_name: "String" },
+        { name: "asset_key", type_name: "Name" },
         { name: "vault_account", type_name: "AccountId" },
       ],
       return_type: "Unit",
     },
     {
-      name: "pause_route",
-      kind: "Call",
-      permission: "Operator",
+      name: "activate_route",
+      kind: "Kotoage",
+      permission: "Entry",
       params: [
-        { name: "route", type_name: "String" },
+        { name: "route", type_name: "Name" },
+        { name: "asset_key", type_name: "Name" },
+        { name: "remote_domain", type_name: "int" },
+      ],
+      return_type: "Unit",
+    },
+    {
+      name: "activate_route_governed",
+      kind: "Kotoage",
+      permission: "Entry",
+      params: [
+        { name: "message_id", type_name: "Name" },
+        { name: "route", type_name: "Name" },
+        { name: "asset_key", type_name: "Name" },
+        { name: "remote_domain", type_name: "int" },
+      ],
+      return_type: "Unit",
+    },
+    {
+      name: "pause_route",
+      kind: "Kotoage",
+      permission: "Entry",
+      params: [
+        { name: "route", type_name: "Name" },
       ],
       return_type: "Unit",
     },
     {
       name: "resume_route",
-      kind: "Call",
-      permission: "Operator",
+      kind: "Kotoage",
+      permission: "Entry",
       params: [
-        { name: "route", type_name: "String" },
+        { name: "route", type_name: "Name" },
       ],
       return_type: "Unit",
     },
     {
       name: "lock_to_remote",
-      kind: "Call",
-      permission: "Operator",
+      kind: "Kotoage",
+      permission: "AssetOps",
       params: [
-        { name: "route", type_name: "String" },
-        { name: "transfer", type_name: "String" },
-        { name: "sender", type_name: "AccountId" },
-        { name: "recipient", type_name: "String" },
-        { name: "amount", type_name: "u64" },
+        { name: "route", type_name: "Name" },
+        { name: "transfer", type_name: "Name" },
+        { name: "recipient", type_name: "Name" },
+        { name: "amount", type_name: "quantity" },
       ],
-      return_type: "Unit",
+      return_type: "int",
     },
     {
       name: "finalize_inbound",
-      kind: "Call",
-      permission: "Operator",
+      kind: "Kotoage",
+      permission: "AssetOps",
       params: [
-        { name: "route", type_name: "String" },
-        { name: "message_id", type_name: "String" },
-        { name: "recipient", type_name: "String" },
-        { name: "amount", type_name: "u64" },
+        { name: "route", type_name: "Name" },
+        { name: "message_id", type_name: "Name" },
+        { name: "recipient", type_name: "AccountId" },
+        { name: "amount", type_name: "quantity" },
       ],
       return_type: "Unit",
     },
@@ -117,7 +135,8 @@ function makeBridgeContract(address, manifestPath) {
   return {
     contract_key: "bridge.sccp_bridge",
     contract_address: address,
-    dataspace: "universal",
+    dataspace_alias: "universal",
+    dataspace_id: "0",
     deploy_nonce: 7,
     verification: "verified",
     contract_source: "contracts/bridge/sccp_bridge.ko",
@@ -150,7 +169,8 @@ function createCatalog() {
           {
             contract_key: "n3x",
             contract_address: "tairac1localn3x000000000000000000000000000000000000000",
-            dataspace: "universal",
+            dataspace_alias: "universal",
+            dataspace_id: "0",
             deploy_nonce: 3,
             verification: "verified",
             contract_source: "contracts/n3x/n3x.ko",
@@ -449,6 +469,28 @@ async function installApiMocks(page, apiState, overrides = {}) {
       return;
     }
 
+    if (path.startsWith("/api/assets/definitions/")) {
+      const selector = decodeURIComponent(path.slice("/api/assets/definitions/".length));
+      const assetResponse = typeof overrides.assetDefinitionResponseFactory === "function"
+        ? overrides.assetDefinitionResponseFactory({ selector, environment })
+        : {
+          ok: true,
+          upstream_status: 200,
+          response_json: {
+            id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            alias: selector,
+            spec: { scale: 9 },
+            alias_binding: {
+              alias: selector,
+              status: "permanent",
+              bound_at_ms: 1,
+            },
+          },
+        };
+      await fulfillJson(route, assetResponse, assetResponse.ok === true ? 200 : 502);
+      return;
+    }
+
     if (path === "/api/sccp/capabilities") {
       await fulfillJson(route, capabilityMap[environment] || capabilityMap.local);
       return;
@@ -487,15 +529,11 @@ async function installApiMocks(page, apiState, overrides = {}) {
         upstream_status: 200,
         status_kind: "Committed",
         status_scope: scope,
-        status_summary: "Committed",
-        status_diagnostics: [],
+        status_resolved_from: "state",
+        status_block_height: 91,
         response_json: {
           hash,
-          status: {
-            kind: "Committed",
-          },
-          summary: "Committed",
-          diagnostics: [],
+          status: { kind: "Committed", block_height: 91 },
           scope,
           resolved_from: "state",
         },
@@ -506,7 +544,9 @@ async function installApiMocks(page, apiState, overrides = {}) {
     if (path === "/api/bridge/inspect" && request.method() === "POST") {
       const body = JSON.parse(request.postData() || "{}");
       apiState.bridgeInspects.push(body);
-      await fulfillJson(route, {
+      const bridgeInspectResponse = typeof overrides.bridgeInspectResponseFactory === "function"
+        ? overrides.bridgeInspectResponseFactory({ body, attempt: apiState.bridgeInspects.length })
+        : {
         ok: true,
         contract: {
           contract_address: {
@@ -534,7 +574,8 @@ async function installApiMocks(page, apiState, overrides = {}) {
             },
           },
         ],
-      });
+      };
+      await fulfillJson(route, bridgeInspectResponse, bridgeInspectResponse.ok === true ? 200 : 502);
       return;
     }
 
@@ -669,6 +710,7 @@ test("loads catalog, SCCP discovery, and environment-specific history state", as
   await expect(page.locator("#environment-select option")).toHaveCount(3);
   await expect(page.locator("#environment-summary")).toContainText("Torii: http://127.0.0.1:8080 (deployment)");
   await expect(page.locator("#environment-summary")).toContainText("Signer: configured (auto:tmp/iroha-localnet/client.toml)");
+  await expect(page.locator("#contract-dataspace-display")).toHaveText("universal (0)");
   await expect(page.locator("#bridge-summary")).toContainText(`Bridge: ${LOCAL_BRIDGE_ADDRESS}`);
   await expect(page.locator("#proof-status-summary")).toContainText("Loaded SCCP V1 discovery for local: 2 governed lanes, 2 retained route revisions.");
   await expect(page.locator("#sccp-counterparty-list")).toContainText("ethereum_sepolia");
@@ -704,13 +746,19 @@ test("confirms only generic signed calls and warns on ambiguous ABI defaults", a
   await expect(page.locator("#signed-confirmation-dialog")).toBeHidden();
   await expect(page.locator("#request-status")).toContainText("Request succeeded");
 
-  await page.locator("#entrypoint-select").selectOption("register_asset");
+  await page.locator("#entrypoint-select").selectOption("register_bridge_asset");
+  await page.locator("#template-payload").click();
+  expect(JSON.parse(await page.locator("#payload-input").inputValue())).toEqual({
+    asset_key: "",
+    asset: "",
+    home_domain: "0",
+    decimals: "0",
+  });
   await page.locator("#payload-input").fill(prettyJsonForTest({
     asset_key: "",
-    registrant: null,
-    asset: "",
-    home_domain: 0,
-    decimals: 0,
+    asset: null,
+    home_domain: "0",
+    decimals: "0",
   }));
   await page.locator("#run-request").click();
 
@@ -729,17 +777,16 @@ test("confirms only generic signed calls and warns on ambiguous ABI defaults", a
   expect(apiState.requests[0].path).toBe("/api/call");
   expect(apiState.requests[0].body.payload).toMatchObject({
     asset_key: "",
-    registrant: null,
-    asset: "",
-    home_domain: 0,
-    decimals: 0,
+    asset: null,
+    home_domain: "0",
+    decimals: "0",
   });
 });
 
 test("rejects malformed generic and bridge advanced payloads before confirmation", async ({ page }) => {
   const apiState = await bootConsole(page);
 
-  await page.locator("#entrypoint-select").selectOption("register_asset");
+  await page.locator("#entrypoint-select").selectOption("register_bridge_asset");
   await page.locator("#payload-input").fill("{ not valid json");
   await page.locator("#run-request").click();
   await expect(page.locator("#request-status")).toContainText("Payload JSON must be valid JSON");
@@ -765,13 +812,12 @@ test("rejects malformed generic and bridge advanced payloads before confirmation
 test("sanitizes sensitive fields in signed confirmation payloads", async ({ page }) => {
   const apiState = await bootConsole(page);
 
-  await page.locator("#entrypoint-select").selectOption("register_asset");
+  await page.locator("#entrypoint-select").selectOption("register_bridge_asset");
   await page.locator("#payload-input").fill(prettyJsonForTest({
     asset_key: "xor",
-    registrant: "i105localbridgeoperator@universal",
     asset: "xor#universal",
-    home_domain: 1,
-    decimals: 18,
+    home_domain: "1",
+    decimals: "18",
     private_key: "generic-secret-value",
     "private-key": "dash-secret-value",
     nested: {
@@ -816,10 +862,10 @@ test("validates codec-specific recipients and builds bridge requests from labele
   await page.locator("#build-bridge-request").click();
 
   await expect(page.locator("#bridge-validation-summary")).toContainText("Transfer Id is required for lock_to_remote.");
-  await expect(page.locator("#bridge-validation-summary")).toContainText("Amount must be greater than zero for lock_to_remote.");
+  await expect(page.locator("#bridge-validation-summary")).toContainText("Amount must be a canonical positive quantity string for lock_to_remote.");
 
   await page.locator("#bridge-transfer-input").fill("xor_eth_0001");
-  await page.locator("#bridge-amount-input").fill("25");
+  await page.locator("#bridge-amount-input").fill("0.25");
   await page.locator("#bridge-recipient-input").fill("not-an-evm-address");
   await page.locator("#build-bridge-request").click();
 
@@ -831,9 +877,68 @@ test("validates codec-specific recipients and builds bridge requests from labele
   await expect(page.locator("#bridge-summary")).toContainText("Built lock_to_remote from the bridge action form");
   await expect(page.locator("#contract-select")).toHaveValue("bridge.sccp_bridge");
   await expect(page.locator("#entrypoint-select")).toHaveValue("lock_to_remote");
-  await expect(page.locator("#payload-input")).toHaveValue(/"route": "eth_lane"/);
-  await expect(page.locator("#payload-input")).toHaveValue(/"transfer": "xor_eth_0001"/);
-  await expect(page.locator("#payload-input")).toHaveValue(/"amount": 25/);
+  expect(JSON.parse(await page.locator("#payload-input").inputValue())).toEqual({
+    route: "eth_lane",
+    transfer: "xor_eth_0001",
+    recipient: "0x1111111111111111111111111111111111111111",
+    amount: "0.25",
+  });
+
+  await page.locator("#bridge-action-select").selectOption("register_bridge_asset");
+  await page.locator("#bridge-asset-key-input").fill("xor");
+  await page.locator("#bridge-asset-definition-input").fill("xor#universal");
+  await page.locator("#bridge-home-domain-input").fill("0");
+  await expect(page.locator("#bridge-decimals-input")).toHaveAttribute("readonly", "");
+  await expect(page.locator("#bridge-decimals-input")).toHaveValue("9");
+  await page.locator("#build-bridge-request").click();
+  expect(JSON.parse(await page.locator("#payload-input").inputValue())).toEqual({
+    asset_key: "xor",
+    asset: "xor#universal",
+    home_domain: "0",
+    decimals: "9",
+  });
+
+  await page.locator("#bridge-action-select").selectOption("bind_asset_vault");
+  await page.locator("#build-bridge-request").click();
+  expect(JSON.parse(await page.locator("#payload-input").inputValue())).toEqual({
+    asset_key: "xor",
+    vault_account: "i105localbridgeoperator@universal",
+  });
+
+  await page.locator("#bridge-action-select").selectOption("activate_route");
+  await page.locator("#build-bridge-request").click();
+  expect(JSON.parse(await page.locator("#payload-input").inputValue())).toEqual({
+    route: "eth_lane",
+    asset_key: "xor",
+    remote_domain: "1",
+  });
+});
+
+test("retains a same-identity bridge snapshot when a routed refresh is incomplete", async ({ page }) => {
+  await bootConsole(page, {
+    bridgeInspectResponseFactory: ({ body, attempt }) => attempt === 1
+      ? {
+        ok: true,
+        contract: { contract_address: LOCAL_BRIDGE_ADDRESS },
+        requested_keys: {
+          asset_key: body.asset_key || null,
+          route: body.route || null,
+          transfer: body.transfer || null,
+          message_id: body.message_id || null,
+        },
+        views: [{ entrypoint: "mirror_route", response_json: [body.route || "eth_lane", 1] }],
+      }
+      : { ok: false, error: "incomplete routed read" },
+  });
+
+  await page.locator("#bridge-route-input").fill("eth_lane");
+  await page.locator("#refresh-bridge-snapshot").click();
+  await expect(page.locator("#bridge-summary")).toContainText("Bridge snapshot loaded");
+  const completeSnapshot = await page.locator("#bridge-snapshot-preview").textContent();
+
+  await page.locator("#refresh-bridge-snapshot").click();
+  await expect(page.locator("#bridge-summary")).toContainText("retaining the last complete result");
+  await expect(page.locator("#bridge-snapshot-preview")).toHaveText(completeSnapshot);
 });
 
 test("persists bridge bookmarks and signed transaction tracking across reloads", async ({ page }) => {
@@ -861,6 +966,10 @@ test("persists bridge bookmarks and signed transaction tracking across reloads",
 
   await expect(page.locator("#transaction-history-list")).toContainText(`tx_hash_hex: ${CALL_TX_HASH}`);
   await expect(page.locator("#transaction-history-list")).toContainText("Committed");
+  await expect(page.locator("#transaction-history-list")).toContainText("Committed block: 91");
+  await expect(page.locator("#transaction-history-list")).toContainText("Resolved from: state");
+  await expect.poll(() => apiState.statusLookups.length).toBeGreaterThan(0);
+  expect(apiState.statusLookups.every((lookup) => lookup.scope === "global")).toBe(true);
   await expect.poll(() => apiState.bridgeInspects.length).toBeGreaterThan(0);
   await expect(page.locator("#bridge-snapshot-preview")).toContainText('"route": "eth_lane"');
 
@@ -986,18 +1095,16 @@ test("marks tracked transactions as timed out when no terminal status arrives", 
   });
 
   const apiState = await bootConsole(page, {
-    statusResponseFactory: () => ({
+    statusResponseFactory: ({ hash }) => ({
       ok: true,
       upstream_status: 200,
       status_kind: "Queued",
-      status_scope: "auto",
-      status_summary: "Queued",
-      status_diagnostics: [],
+      status_scope: "global",
+      status_resolved_from: "queue",
       response_json: {
+        hash,
         status: { kind: "Queued" },
-        summary: "Queued",
-        diagnostics: [],
-        scope: "auto",
+        scope: "global",
         resolved_from: "queue",
       },
     }),
@@ -1014,6 +1121,7 @@ test("marks tracked transactions as timed out when no terminal status arrives", 
   await expect(page.locator("#transaction-history-list")).toContainText("Tracking timed out before a terminal transaction status was returned.");
   await expect(page.locator("#transaction-summary")).toContainText("Timed out: 1");
   await expect.poll(() => apiState.statusLookups.length).toBeGreaterThan(0);
+  expect(apiState.statusLookups.every((lookup) => lookup.scope === "global")).toBe(true);
 
   const trackedStatuses = await readLocalStorageJson(page, TRANSACTION_STATUSES_KEY);
   expect(trackedStatuses[CALL_TX_HASH].statusKind).toBe("TimedOut");

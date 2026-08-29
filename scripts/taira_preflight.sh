@@ -31,8 +31,8 @@ case "$public_env" in
     setup_config_example="config/testnet/taira.client.toml.example"
     setup_config_path="${SORASWAP_CLIENT_CONFIG:-$DEFAULT_TESTNET_CLIENT}"
     setup_target="taira-preflight"
-    chain_id="${SORASWAP_TESTNET_CHAIN_ID:-$SORASWAP_TESTNET_CHAIN_ID_DEFAULT}"
-    chain_id_setup_hint="SORASWAP_TESTNET_CHAIN_ID"
+    chain_id="$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+    chain_id_setup_hint="canonical Taira chain in the client config"
     mutation_gate_var="SORASWAP_ALLOW_TESTNET_MUTATIONS"
     nested_probe_setup_command="SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make testnet-nested-call-probe"
     ;;
@@ -88,9 +88,10 @@ next setup:
   chmod 600 $config_report_path
   export SORASWAP_CLIENT_CONFIG="$config_report_path"
   export $mutation_gate_var=1
-  # Optional: override the default oracle provider, which is the client config signer.
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX=<public oracle key>
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX=<private oracle key>
+  cp $setup_config_example config/$public_env/oracle.client.toml
+  # edit the copied file with a distinct oracle signer on the same chain and Torii endpoint
+  chmod 600 config/$public_env/oracle.client.toml
+  export SORASWAP_ORACLE_CLIENT_CONFIG=config/$public_env/oracle.client.toml
   # Production additionally requires an explicit account chain_discriminant and approved fee minimum.
   export SORASWAP_PRODUCTION_MIN_FEE_BALANCE=<approved minimum>
   make $setup_target
@@ -130,11 +131,11 @@ config_security_valid=true
 config_usable=false
 config_path_environment=""
 mutation_gate=false
-oracle_public_key_present=false
-oracle_private_key_present=false
-oracle_keypair_verified=false
-oracle_public_key_source="missing"
-oracle_private_key_source="missing"
+oracle_client_config_present=false
+oracle_client_config_valid=false
+oracle_account_derivable=false
+oracle_account_distinct=false
+oracle_client_config_source="missing"
 authority=""
 authority_source="unset"
 authority_derivable=false
@@ -325,6 +326,21 @@ if [[ "$public_env" == "testnet" && -n "${SORASWAP_TAIRA_DIRECT_TORII_HOST:-}" &
   fi
 fi
 
+if [[ "$public_env" == "testnet" && "$config_usable" == "true" ]]; then
+  if [[ "$SORASWAP_BASE_ASSET_ALIAS" != "$SORASWAP_TAIRA_XOR_ASSET_ALIAS" ]]; then
+    add_blocker "Taira base asset alias must be $SORASWAP_TAIRA_XOR_ASSET_ALIAS"
+  fi
+  if [[ "$SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID" != "$SORASWAP_TAIRA_XOR_ASSET_DEFINITION_ID" \
+    || "$SORASWAP_XOR_ASSET_DEFINITION_ID" != "$SORASWAP_TAIRA_XOR_ASSET_DEFINITION_ID" ]]; then
+    add_blocker "Taira XOR definition must be $SORASWAP_TAIRA_XOR_ASSET_DEFINITION_ID"
+  fi
+  if ! taira_xor_asset_id="$(asset_definition_id_for_alias "$config" "$SORASWAP_TAIRA_XOR_ASSET_ALIAS" 2>/dev/null)"; then
+    add_blocker "live Taira XOR must resolve as permanent alias $SORASWAP_TAIRA_XOR_ASSET_ALIAS, definition $SORASWAP_TAIRA_XOR_ASSET_DEFINITION_ID, scale $SORASWAP_TAIRA_XOR_ASSET_SCALE"
+  elif [[ "$taira_xor_asset_id" != "$SORASWAP_TAIRA_XOR_ASSET_DEFINITION_ID" ]]; then
+    add_blocker "live Taira XOR resolved to an unexpected definition id"
+  fi
+fi
+
 if [[ "$config_usable" == "true" ]]; then
   chain_id="$(chain_id_override_for_config "$config" 2>/dev/null || true)"
   if [[ -z "$chain_id" ]]; then
@@ -332,7 +348,11 @@ if [[ "$config_usable" == "true" ]]; then
   fi
 fi
 if [[ -z "$chain_id" ]]; then
-  add_blocker "$public_display_label chain id is unavailable; set $chain_id_setup_hint or provide chain in the client config"
+  if [[ "$public_env" == "testnet" ]]; then
+    add_blocker "$public_display_label chain id is unavailable; provide the canonical Taira chain in the client config"
+  else
+    add_blocker "$public_display_label chain id is unavailable; set $chain_id_setup_hint or provide chain in the client config"
+  fi
 fi
 
 if [[ -n "$block_1_json" && -n "$chain_id" ]] && jq -e . >/dev/null 2>&1 <<<"$block_1_json"; then
@@ -349,7 +369,7 @@ fi
 
 if [[ "$chain_fingerprint_available" != "true" ]]; then
   if [[ -z "$chain_id" ]]; then
-    add_warning "could not assemble live chain fingerprint because $chain_id_setup_hint/client config chain is unavailable"
+    add_warning "could not assemble live chain fingerprint because the required client config chain is unavailable"
   else
     add_warning "could not fetch live chain fingerprint from $torii_root/v1/explorer/blocks/1"
   fi
@@ -457,50 +477,25 @@ if [[ "$mutation_gate" == "true" ]]; then
   fi
 fi
 
-if soraswap_value_looks_placeholder "${SORASWAP_ORACLE_PUBLIC_KEY_HEX:-}"; then
-  add_blocker "SORASWAP_ORACLE_PUBLIC_KEY_HEX is an example value"
-elif [[ -n "${SORASWAP_ORACLE_PUBLIC_KEY_HEX:-}" ]]; then
-  if soraswap_oracle_public_key_hex_for_config "$config" >/dev/null 2>&1; then
-    oracle_public_key_present=true
-    oracle_public_key_source="env"
-  else
-    add_blocker "SORASWAP_ORACLE_PUBLIC_KEY_HEX is not a usable Ed25519 public key"
-  fi
-elif [[ "$config_usable" == "true" ]] \
-  && soraswap_oracle_public_key_hex_for_config "$config" >/dev/null 2>&1; then
-  oracle_public_key_present=true
-  oracle_public_key_source="client_config_signer"
+oracle_client_config="${SORASWAP_ORACLE_CLIENT_CONFIG:-}"
+if soraswap_value_looks_placeholder "$oracle_client_config"; then
+  add_blocker "SORASWAP_ORACLE_CLIENT_CONFIG is an example value"
+elif [[ -z "$oracle_client_config" ]]; then
+  add_blocker "SORASWAP_ORACLE_CLIENT_CONFIG is required for the $public_display_label typed oracle signer"
 else
-    add_blocker "oracle public key is unavailable; set SORASWAP_ORACLE_PUBLIC_KEY_HEX or provide public_key in the $public_display_label client config"
-fi
-
-if soraswap_value_looks_placeholder "${SORASWAP_ORACLE_PRIVATE_KEY_HEX:-}"; then
-  add_blocker "SORASWAP_ORACLE_PRIVATE_KEY_HEX is an example value"
-elif [[ -n "${SORASWAP_ORACLE_PRIVATE_KEY_HEX:-}" ]]; then
-  if soraswap_oracle_private_key_hex_for_config "$config" >/dev/null 2>&1; then
-    oracle_private_key_present=true
-    oracle_private_key_source="env"
-  else
-    add_blocker "SORASWAP_ORACLE_PRIVATE_KEY_HEX is not usable"
-  fi
-elif [[ "$config_usable" == "true" ]] \
-  && soraswap_oracle_private_key_hex_for_config "$config" >/dev/null 2>&1; then
-  oracle_private_key_present=true
-  oracle_private_key_source="client_config_signer"
-else
-    add_blocker "oracle private key is unavailable; set SORASWAP_ORACLE_PRIVATE_KEY_HEX or provide private_key in the $public_display_label client config"
-fi
-
-if [[ "$oracle_public_key_present" == "true" && "$oracle_private_key_present" == "true" ]]; then
-  oracle_keypair_error=""
-  if oracle_keypair_error="$(soraswap_oracle_keypair_matches_for_config "$config" 2>&1 >/dev/null)"; then
-    oracle_keypair_verified=true
-  else
-    if [[ -n "$oracle_keypair_error" ]]; then
-      add_blocker "$oracle_keypair_error"
+  oracle_client_config_present=true
+  if [[ "$config_usable" == "true" ]]; then
+    if soraswap_prepare_oracle_client_config "$config" >/dev/null 2>&1; then
+      oracle_client_config_valid=true
+      oracle_account_derivable=true
+      oracle_account_distinct=true
+      oracle_client_config_source="env"
     else
-      add_blocker "oracle private key does not match configured oracle public key"
+      add_blocker "SORASWAP_ORACLE_CLIENT_CONFIG is invalid or does not select a secure distinct signer for this public environment"
     fi
+    soraswap_cleanup_oracle_client_config || true
+  else
+    add_blocker "SORASWAP_ORACLE_CLIENT_CONFIG cannot be validated until the primary client config is usable"
   fi
 fi
 
@@ -531,7 +526,7 @@ if [[ "$config_usable" == "true" ]]; then
         && { [[ -z "$signer_fee_balance" ]] || ! numeric_gt_zero "$signer_fee_balance"; }; then
         case "$public_env" in
           testnet)
-            add_warning "signer exists but does not currently show a positive $signer_fee_asset_label fee balance; deploy-testnet will try the faucet"
+            add_warning "signer exists but does not currently show a positive $signer_fee_asset_label fee balance; deploy-testnet will invoke the current Iroha Taira write canary and require SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE"
             ;;
           production)
             add_blocker "production signer exists but does not currently show a positive $signer_fee_asset_label fee balance"
@@ -561,7 +556,7 @@ if [[ "$config_usable" == "true" ]]; then
     else
       case "$public_env" in
         testnet)
-          add_warning "signer account is not query-visible yet; deploy-testnet will try self-registration/onboard/faucet"
+          add_warning "signer account is not query-visible yet; deploy-testnet will invoke the current Iroha Taira write canary and require SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE"
           ;;
         production)
           add_blocker "production signer account is not query-visible; create and fund the signer before running production release"
@@ -652,8 +647,7 @@ report_json="$(jq -cn \
   --arg current_block_height "$current_block_height" \
   --arg authority "$authority" \
   --arg authority_source "$authority_source" \
-  --arg oracle_public_key_source "$oracle_public_key_source" \
-  --arg oracle_private_key_source "$oracle_private_key_source" \
+  --arg oracle_client_config_source "$oracle_client_config_source" \
   --arg signer_fee_asset_id "$signer_fee_asset_id" \
   --arg signer_fee_asset_label "$signer_fee_asset_label" \
   --arg signer_fee_balance "$signer_fee_balance" \
@@ -672,9 +666,10 @@ report_json="$(jq -cn \
   --argjson mcp_enabled "$mcp_enabled" \
   --argjson mcp_metadata_valid "$mcp_metadata_valid" \
   --argjson mcp_tool_count "$mcp_tool_count" \
-  --argjson oracle_public_key_present "$oracle_public_key_present" \
-  --argjson oracle_private_key_present "$oracle_private_key_present" \
-  --argjson oracle_keypair_verified "$oracle_keypair_verified" \
+  --argjson oracle_client_config_present "$oracle_client_config_present" \
+  --argjson oracle_client_config_valid "$oracle_client_config_valid" \
+  --argjson oracle_account_derivable "$oracle_account_derivable" \
+  --argjson oracle_account_distinct "$oracle_account_distinct" \
   --argjson authority_derivable "$authority_derivable" \
   --argjson signer_account_exists "$signer_account_exists" \
   --argjson signer_assets_query_available "$signer_assets_query_available" \
@@ -710,11 +705,11 @@ report_json="$(jq -cn \
     },
     environment: {
       mutations_allowed: $mutation_gate,
-      oracle_public_key_present: $oracle_public_key_present,
-      oracle_private_key_present: $oracle_private_key_present,
-      oracle_keypair_verified: $oracle_keypair_verified,
-      oracle_public_key_source: $oracle_public_key_source,
-      oracle_private_key_source: $oracle_private_key_source
+      oracle_client_config_present: $oracle_client_config_present,
+      oracle_client_config_valid: $oracle_client_config_valid,
+      oracle_account_derivable: $oracle_account_derivable,
+      oracle_account_distinct: $oracle_account_distinct,
+      oracle_client_config_source: $oracle_client_config_source
     },
     endpoint: {
       torii_root: $torii_root,

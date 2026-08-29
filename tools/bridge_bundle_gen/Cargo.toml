@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-iroha_sccp = { path = "../../../iroha/crates/iroha_sccp", features = ["serde", "std"] }
-norito = { path = "../../../iroha/crates/norito" }
-serde_json = "1.0"
+iroha_sccp = { path = "../../../../iroha/crates/iroha_sccp" }
+norito = { path = "../../../../iroha/crates/norito" }
+
+[dev-dependencies]
+iroha_sccp = { path = "../../../../iroha/crates/iroha_sccp", features = ["test-fixtures"] }
+
+# This crate is intentionally standalone, so it must repeat the source patches
+# that Iroha's workspace root applies to transitive Halo2 dependencies.
+[patch.crates-io]
+halo2-axiom = { path = "../../../../iroha/vendor/halo2-axiom" }
+halo2curves-axiom = { path = "../../../../iroha/vendor/halo2curves-axiom" }

@@ -4,6 +4,414 @@
   "title": "SoraSwap production cutover monitoring snapshot",
   "type": "object",
   "additionalProperties": false,
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^hash:[0-9A-F]{64}#[0-9A-F]{4}$"
+    },
+    "uint64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "positiveUint64": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "uint32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "heightContextId": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {"$ref": "#/$defs/hash"}
+    },
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "details"],
+      "properties": {
+        "phase": {"enum": ["awaiting_proposal", "reconstructing_payload", "validating_payload", "prepare", "commit", "pending_apply"]},
+        "details": {"type": "null"}
+      }
+    },
+    "bodyState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "details"],
+      "properties": {
+        "state": {"enum": ["missing", "reconstructing", "stored", "validated", "pending_apply", "applied"]},
+        "details": {"type": "null"}
+      }
+    },
+    "consensusMode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "details"],
+      "properties": {
+        "mode": {"enum": ["permissioned", "npos"]},
+        "details": {"type": "null"}
+      }
+    },
+    "globalPhase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "details"],
+      "properties": {
+        "phase": {"enum": ["prepare", "commit"]},
+        "details": {"type": "null"}
+      }
+    },
+    "workStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "details"],
+      "properties": {
+        "stage": {"enum": ["idle", "queued", "running", "complete"]},
+        "details": {"type": "null"}
+      }
+    },
+    "queueKind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queue", "details"],
+      "properties": {
+        "queue": {"enum": ["ingress", "deferred_normal", "deferred_progress", "deferred_completion", "runtime_normal", "runtime_progress", "runtime_completion", "effect_completion", "network_ingress", "effect_dispatch"]},
+        "details": {"type": "null"}
+      }
+    },
+    "livenessBlocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocker", "details"],
+      "properties": {
+        "blocker": {"enum": ["missing_proposal", "body_unavailable", "prepare_quorum_missing", "commit_quorum_missing", "timeout_certificate_missing", "scheduler_starvation", "application_pending", "successor_activation_pending", "local_control_pending"]},
+        "details": {"type": "null"}
+      }
+    },
+    "ignoreReason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "details"],
+      "properties": {
+        "reason": {"enum": ["wrong_height", "wrong_view", "stale_generation", "busy", "duplicate", "no_matching_work", "observer", "view_closed", "already_decided", "recovery_pending", "irrelevant_view", "unsafe_proposal"]},
+        "details": {"type": "null"}
+      }
+    },
+    "outboundIntentKind": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "details"],
+      "properties": {
+        "kind": {"enum": ["proposal", "prepare_vote", "commit_vote", "prepare_qc", "commit_qc", "timeout_vote", "timeout_certificate"]},
+        "details": {"type": "null"}
+      }
+    },
+    "outboundIntentStage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "details"],
+      "properties": {
+        "stage": {"enum": ["pending_persistence", "pending_signature", "queued", "sent"]},
+        "details": {"type": "null"}
+      }
+    },
+    "progressTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transition", "details"],
+      "properties": {
+        "transition": {"enum": ["proposal_admitted", "body_available", "body_stored", "body_validated", "prepare_vote_admitted", "commit_vote_admitted", "timeout_vote_admitted", "prepare_quorum", "lock_installed", "commit_quorum", "timeout_certificate_installed", "decision_persisted", "applied", "successor_height_activated", "recovery_replayed"]},
+        "details": {"type": "null"}
+      }
+    },
+    "dualQuorum": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min_signers", "total_power"],
+      "properties": {
+        "min_signers": {"type": "integer", "minimum": 1, "maximum": 31},
+        "total_power": {"type": "integer", "minimum": 4, "maximum": 31}
+      }
+    },
+    "heightContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["epoch", "epoch_end_height", "mode", "epoch_seed", "validator_count", "quorum"],
+      "properties": {
+        "epoch": {"$ref": "#/$defs/uint64"},
+        "epoch_end_height": {"$ref": "#/$defs/positiveUint64"},
+        "mode": {"$ref": "#/$defs/consensusMode"},
+        "epoch_seed": {"type": "string", "pattern": "^[0-9A-F]{64}$"},
+        "validator_count": {"enum": [4, 7, 10, 13, 16, 19, 22, 25, 28, 31]},
+        "quorum": {"$ref": "#/$defs/dualQuorum"}
+      }
+    },
+    "consensusRound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_id", "height", "view"],
+      "properties": {
+        "context_id": {"$ref": "#/$defs/heightContextId"},
+        "height": {"$ref": "#/$defs/positiveUint64"},
+        "view": {"$ref": "#/$defs/uint64"}
+      }
+    },
+    "blockSubject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parent_block_hash", "block_hash", "payload_hash"],
+      "properties": {
+        "parent_block_hash": {"oneOf": [{"$ref": "#/$defs/hash"}, {"type": "null"}]},
+        "block_hash": {"$ref": "#/$defs/hash"},
+        "payload_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "merkleTreeCommitment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "leaf_count"],
+      "properties": {
+        "root": {"$ref": "#/$defs/hash"},
+        "leaf_count": {"$ref": "#/$defs/positiveUint64"}
+      }
+    },
+    "mergeCarrier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "entry_hash"],
+      "properties": {
+        "version": {"const": 1},
+        "entry_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "executionCommitment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parent_state_root", "post_state_root", "ordinary_writes_root", "topup_anchor_root", "topup_anchor_count", "native_amx_application_manifest_version", "native_amx_application_manifest_root", "native_amx_application_manifest_count", "lane_finality_manifest", "merge_carrier", "executed_block_wire_len", "executed_block_wire_hash"],
+      "properties": {
+        "parent_state_root": {"$ref": "#/$defs/hash"},
+        "post_state_root": {"$ref": "#/$defs/hash"},
+        "ordinary_writes_root": {"$ref": "#/$defs/hash"},
+        "topup_anchor_root": {"oneOf": [{"$ref": "#/$defs/hash"}, {"type": "null"}]},
+        "topup_anchor_count": {"type": "integer", "minimum": 0, "maximum": 16},
+        "native_amx_application_manifest_version": {"const": 1},
+        "native_amx_application_manifest_root": {"$ref": "#/$defs/hash"},
+        "native_amx_application_manifest_count": {"type": "integer", "minimum": 0, "maximum": 1024},
+        "lane_finality_manifest": {"oneOf": [{"$ref": "#/$defs/merkleTreeCommitment"}, {"type": "null"}]},
+        "merge_carrier": {"oneOf": [{"$ref": "#/$defs/mergeCarrier"}, {"type": "null"}]},
+        "executed_block_wire_len": {"$ref": "#/$defs/positiveUint64"},
+        "executed_block_wire_hash": {"$ref": "#/$defs/hash"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"topup_anchor_count": {"const": 0}}},
+          "then": {"properties": {"topup_anchor_root": {"type": "null"}}},
+          "else": {"properties": {"topup_anchor_root": {"$ref": "#/$defs/hash"}}}
+        },
+        {
+          "if": {"properties": {"native_amx_application_manifest_count": {"const": 0}}},
+          "then": {"properties": {"native_amx_application_manifest_root": {"const": "hash:45A5D35A09D284480FBA74A402D7F303B82DA0C153FC1E1083AEFC822ED07C2D#7C0F"}}},
+          "else": {"properties": {"native_amx_application_manifest_root": {"not": {"const": "hash:45A5D35A09D284480FBA74A402D7F303B82DA0C153FC1E1083AEFC822ED07C2D#7C0F"}}}}
+        }
+      ]
+    },
+    "quorumCertificateRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["round", "proposal_round", "phase", "subject", "execution_commitment"],
+      "properties": {
+        "round": {"$ref": "#/$defs/consensusRound"},
+        "proposal_round": {"$ref": "#/$defs/consensusRound"},
+        "phase": {"$ref": "#/$defs/globalPhase"},
+        "subject": {"$ref": "#/$defs/blockSubject"},
+        "execution_commitment": {"$ref": "#/$defs/executionCommitment"}
+      }
+    },
+    "timeoutCertificateRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["round", "highest_prepare_qc", "certificate_hash"],
+      "properties": {
+        "round": {"$ref": "#/$defs/consensusRound"},
+        "highest_prepare_qc": {"oneOf": [{"$ref": "#/$defs/quorumCertificateRef"}, {"type": "null"}]},
+        "certificate_hash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "commitQcStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["certificate", "validator_count", "signer_count", "min_signers", "signed_power", "total_power"],
+      "properties": {
+        "certificate": {"$ref": "#/$defs/quorumCertificateRef"},
+        "validator_count": {"enum": [4, 7, 10, 13, 16, 19, 22, 25, 28, 31]},
+        "signer_count": {"type": "integer", "minimum": 1, "maximum": 31},
+        "min_signers": {"type": "integer", "minimum": 1, "maximum": 31},
+        "signed_power": {"$ref": "#/$defs/positiveUint64"},
+        "total_power": {"$ref": "#/$defs/positiveUint64"}
+      }
+    },
+    "voteQuorumStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["round", "proposal_round", "subject", "execution_commitment", "signer_count", "signed_power", "min_signers", "total_power"],
+      "properties": {
+        "round": {"$ref": "#/$defs/consensusRound"},
+        "proposal_round": {"$ref": "#/$defs/consensusRound"},
+        "subject": {"$ref": "#/$defs/blockSubject"},
+        "execution_commitment": {"$ref": "#/$defs/executionCommitment"},
+        "signer_count": {"type": "integer", "minimum": 0, "maximum": 31},
+        "signed_power": {"$ref": "#/$defs/uint64"},
+        "min_signers": {"type": "integer", "minimum": 1, "maximum": 31},
+        "total_power": {"$ref": "#/$defs/positiveUint64"}
+      }
+    },
+    "timeoutQuorumStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["round", "signer_count", "signed_power", "min_signers", "total_power", "certificate_formed"],
+      "properties": {
+        "round": {"$ref": "#/$defs/consensusRound"},
+        "signer_count": {"type": "integer", "minimum": 0, "maximum": 31},
+        "signed_power": {"$ref": "#/$defs/uint64"},
+        "min_signers": {"type": "integer", "minimum": 1, "maximum": 31},
+        "total_power": {"$ref": "#/$defs/positiveUint64"},
+        "certificate_formed": {"type": "boolean"}
+      }
+    },
+    "outboundIntentStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "round", "stage"],
+      "properties": {
+        "kind": {"$ref": "#/$defs/outboundIntentKind"},
+        "round": {"$ref": "#/$defs/consensusRound"},
+        "proposal_round": {"$ref": "#/$defs/consensusRound"},
+        "subject": {"$ref": "#/$defs/blockSubject"},
+        "execution_commitment": {"$ref": "#/$defs/executionCommitment"},
+        "stage": {"$ref": "#/$defs/outboundIntentStage"}
+      },
+      "oneOf": [
+        {
+          "properties": {"kind": {"properties": {"kind": {"const": "proposal"}}}},
+          "required": ["proposal_round", "subject"],
+          "not": {"required": ["execution_commitment"]}
+        },
+        {
+          "properties": {"kind": {"properties": {"kind": {"enum": ["timeout_vote", "timeout_certificate"]}}}},
+          "not": {"anyOf": [{"required": ["proposal_round"]}, {"required": ["subject"]}, {"required": ["execution_commitment"]}]}
+        },
+        {
+          "properties": {"kind": {"properties": {"kind": {"enum": ["prepare_vote", "commit_vote", "prepare_qc", "commit_qc"]}}}},
+          "required": ["proposal_round", "subject", "execution_commitment"]
+        }
+      ]
+    },
+    "workStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate", "body_recovery", "body_store", "validation", "application", "successor_height"],
+      "properties": {
+        "candidate": {"$ref": "#/$defs/workStage"},
+        "body_recovery": {"$ref": "#/$defs/workStage"},
+        "body_store": {"$ref": "#/$defs/workStage"},
+        "validation": {"$ref": "#/$defs/workStage"},
+        "application": {"$ref": "#/$defs/workStage"},
+        "successor_height": {"$ref": "#/$defs/workStage"}
+      }
+    },
+    "queueStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["queue", "depth", "capacity", "service_debt"],
+      "properties": {
+        "queue": {"$ref": "#/$defs/queueKind"},
+        "depth": {"$ref": "#/$defs/uint32"},
+        "capacity": {"type": "integer", "minimum": 1, "maximum": 4294967295},
+        "oldest_age_ms": {"$ref": "#/$defs/uint64"},
+        "service_debt": {"$ref": "#/$defs/uint64"}
+      },
+      "oneOf": [
+        {
+          "properties": {"depth": {"const": 0}},
+          "not": {"required": ["oldest_age_ms"]}
+        },
+        {
+          "properties": {"depth": {"minimum": 1}},
+          "required": ["oldest_age_ms"]
+        }
+      ]
+    },
+    "progressStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "round", "transition", "age_ms"],
+      "properties": {
+        "generation": {"$ref": "#/$defs/uint64"},
+        "round": {"$ref": "#/$defs/consensusRound"},
+        "transition": {"$ref": "#/$defs/progressTransition"},
+        "age_ms": {"$ref": "#/$defs/uint64"}
+      }
+    },
+    "ignoreCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "count"],
+      "properties": {
+        "reason": {"$ref": "#/$defs/ignoreReason"},
+        "count": {"$ref": "#/$defs/uint64"}
+      }
+    },
+    "livenessStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generation", "prepare_quorums", "commit_quorums", "timeout_quorums", "outbound_intents", "work", "queues", "no_progress_age_ms", "ignore_counts"],
+      "properties": {
+        "generation": {"$ref": "#/$defs/uint64"},
+        "prepare_quorums": {"type": "array", "maxItems": 31, "items": {"$ref": "#/$defs/voteQuorumStatus"}},
+        "commit_quorums": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/voteQuorumStatus"}},
+        "timeout_quorums": {"type": "array", "maxItems": 31, "items": {"$ref": "#/$defs/timeoutQuorumStatus"}},
+        "outbound_intents": {"type": "array", "maxItems": 7, "items": {"$ref": "#/$defs/outboundIntentStatus"}},
+        "work": {"$ref": "#/$defs/workStatus"},
+        "queues": {"type": "array", "maxItems": 10, "items": {"$ref": "#/$defs/queueStatus"}},
+        "last_progress": {"$ref": "#/$defs/progressStatus"},
+        "no_progress_age_ms": {"$ref": "#/$defs/uint64"},
+        "blocker": {"$ref": "#/$defs/livenessBlocker"},
+        "ignore_counts": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/ignoreCount"}}
+      }
+    },
+    "sumeragiV2Status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol_version", "node_fingerprint", "build_fingerprint", "config_fingerprint", "restart_required", "height_context_id", "height", "view", "phase", "leader", "body_state", "last_committed_height", "height_context", "liveness"],
+      "properties": {
+        "protocol_version": {"const": 4},
+        "node_fingerprint": {"$ref": "#/$defs/hash"},
+        "build_fingerprint": {"$ref": "#/$defs/hash"},
+        "config_fingerprint": {"$ref": "#/$defs/hash"},
+        "restart_required": {"type": "boolean"},
+        "height_context_id": {"$ref": "#/$defs/heightContextId"},
+        "height": {"$ref": "#/$defs/positiveUint64"},
+        "view": {"$ref": "#/$defs/uint64"},
+        "phase": {"$ref": "#/$defs/phase"},
+        "leader": {"$ref": "#/$defs/uint32"},
+        "locked_prepare_qc": {"$ref": "#/$defs/quorumCertificateRef"},
+        "highest_prepare_qc": {"$ref": "#/$defs/quorumCertificateRef"},
+        "last_timeout_certificate": {"$ref": "#/$defs/timeoutCertificateRef"},
+        "body_state": {"$ref": "#/$defs/bodyState"},
+        "pending_persistence_id": {"$ref": "#/$defs/positiveUint64"},
+        "last_committed_height": {"$ref": "#/$defs/uint64"},
+        "last_committed_subject": {"$ref": "#/$defs/blockSubject"},
+        "height_context": {"$ref": "#/$defs/heightContext"},
+        "last_commit_qc": {"$ref": "#/$defs/commitQcStatus"},
+        "liveness": {"$ref": "#/$defs/livenessStatus"}
+      }
+    }
+  },
   "required": ["schema", "sampled_at", "sequence", "bindings", "validator_set_sha256", "validators", "api_failures", "oracles", "balances", "readonly_routes", "shared_derivatives_regression"],
   "properties": {
     "schema": {"const": "soraswap-production-monitoring-snapshot/v1"},
@@ -43,21 +451,15 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "status_block_height", "canonical_height", "commit_qc_height", "highest_qc_height", "finality_age_ms", "status_queue_size", "status_queue_queued", "status_queue_inflight", "proposal_queue_depth", "tx_queue_depth", "oldest_queue_age_ms", "lane_backlog", "api_failures"],
+        "required": ["id", "status_block_height", "finality_age_ms", "status_queue_size", "status_queue_queued", "status_queue_inflight", "sumeragi", "api_failures"],
         "properties": {
-          "id": {"type": "string", "pattern": "^ed0120[0-9a-f]{64}$"},
+          "id": {"$ref": "#/$defs/hash"},
           "status_block_height": {"type": "integer", "minimum": 1},
-          "canonical_height": {"type": "integer", "minimum": 1},
-          "commit_qc_height": {"type": "integer", "minimum": 1},
-          "highest_qc_height": {"type": "integer", "minimum": 1},
           "finality_age_ms": {"type": "integer", "minimum": 0},
           "status_queue_size": {"type": "integer", "minimum": 0},
           "status_queue_queued": {"type": "integer", "minimum": 0},
           "status_queue_inflight": {"type": "integer", "minimum": 0},
-          "proposal_queue_depth": {"type": "integer", "minimum": 0},
-          "tx_queue_depth": {"type": "integer", "minimum": 0},
-          "oldest_queue_age_ms": {"type": "integer", "minimum": 0},
-          "lane_backlog": {"type": "integer", "minimum": 0},
+          "sumeragi": {"$ref": "#/$defs/sumeragiV2Status"},
           "api_failures": {"type": "integer", "minimum": 0}
         }
       }

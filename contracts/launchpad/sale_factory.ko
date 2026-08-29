@@ -76,8 +76,6 @@ seiyaku SaleFactory {
   state StateMap<Name, quantity> RefundedPayment;
   state StateMap<Name, quantity> TreasuryPaymentReleased;
 
-  state StateMap<Name, Name> SeedPositionId;
-  state StateMap<Name, int> SeedBinId;
   state StateMap<Name, quantity> SeedPaymentAmount;
   state StateMap<Name, quantity> SeedSaleAmount;
   state StateMap<Name, quantity> SeedPaymentUsed;
@@ -202,7 +200,7 @@ seiyaku SaleFactory {
     require(Closed.get(sale).unwrap_or(0) == 1, SaleFactoryError::SaleOpen);
     require(Successful.get(sale).unwrap_or(0) == 1, SaleFactoryError::SaleFailed);
     require(Seeded.get(sale).unwrap_or(0) == 0, SaleFactoryError::SaleSeeded);
-    require(SeedPositionId.contains(sale), SaleFactoryError::SeedPlanMissing);
+    require(SeedPaymentAmount.contains(sale), SaleFactoryError::SeedPlanMissing);
     let base_amount = SeedPaymentAmount.get(sale).unwrap_or(zero_quantity());
     let quote_amount = SeedSaleAmount.get(sale).unwrap_or(zero_quantity());
     require(base_amount > zero_quantity() && quote_amount > zero_quantity(), SaleFactoryError::InvalidAmount);
@@ -223,11 +221,8 @@ seiyaku SaleFactory {
       contract: SeedExecutorContract,
       entrypoint: "seed_liquidity",
       returns: "quantity",
-      position_id: SeedPositionId.get(sale).unwrap_or(missing_name()),
-      funding_account: FactoryAccount,
-      bin_id: SeedBinId.get(sale).unwrap_or(0),
-      base_amount: base_amount,
-      quote_amount: quote_amount
+      amount_in: base_amount,
+      min_out: quote_amount
     );
     require(shares > zero_quantity(), SaleFactoryError::SeedActivationFailed);
     SeedInventory[sale] = SeedInventory.get(sale).unwrap_or(zero_quantity()) - quote_amount;
@@ -249,10 +244,10 @@ seiyaku SaleFactory {
   }
 
   hajimari(
-    AccountId factory_account,
     bytes executor_contract,
     AccountId guardian
   ) {
+    let factory_account = context::seiyaku_subject();
     require(factory_account != context::authority(), SaleFactoryError::InvalidAuthoritySeparation);
     require(guardian != context::authority() && guardian != factory_account, SaleFactoryError::InvalidAuthoritySeparation);
     FactoryInitialized = 1;
@@ -420,18 +415,14 @@ seiyaku SaleFactory {
     return amount;
   }
 
-  kotoage fn register_seed_liquidity(
+  kotoage fn configure_seed_liquidity(
     Name sale,
-    Name position_id,
-    int bin_id,
     quantity payment_amount,
     quantity sale_amount
   ) authorize("Entry") {
     assert_sale_owner(sale: sale);
     require(Seeded.get(sale).unwrap_or(0) == 0, SaleFactoryError::SaleSeeded);
     require(payment_amount > zero_quantity() && sale_amount > zero_quantity(), SaleFactoryError::InvalidAmount);
-    SeedPositionId[sale] = position_id;
-    SeedBinId[sale] = bin_id;
     SeedPaymentAmount[sale] = payment_amount;
     SeedSaleAmount[sale] = sale_amount;
   }
@@ -635,8 +626,14 @@ seiyaku SaleFactory {
     );
   }
 
-  view fn factory_binding_details() -> (AccountId, bytes, int, int) {
-    return (FactoryAccount, SeedExecutorContract, 1, 1);
+  view fn factory_config() -> (AccountId, AccountId, AccountId, bytes, int) {
+    return (
+      FactoryOwner,
+      FactoryGuardian,
+      FactoryAccount,
+      SeedExecutorContract,
+      FactoryWithdrawalOnly
+    );
   }
 
   view fn activation_state(Name sale) -> (int, quantity) {

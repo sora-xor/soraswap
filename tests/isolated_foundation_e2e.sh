@@ -23,25 +23,26 @@ copy_file_atomic() {
 }
 
 snapshot_retained_latest() {
-  local file source
+  local file source contract_key
 
   mkdir -p "$report_dir"
   for file in \
     chain.latest.json \
     deploy.latest.json \
     contracts.latest.json \
-    smoke.latest.json \
-    soraswap.bundle.deploy.json; do
+    smoke.latest.json; do
     source="$report_dir/$file"
     if [[ -f "$source" ]]; then
       copy_file_atomic "$source" "$snapshot_dir/$file"
     fi
   done
 
-  for source in "$report_dir"/*.deploy.json(N) "$report_dir"/*.manifest.json(N); do
-    if [[ "${source:t}" == "soraswap.foundation.bundle.deploy.json" ]]; then
-      continue
-    fi
+  for source in "$report_dir"/*.deploy.json(N); do
+    contract_key="$(jq -r '.contract_key // empty' "$source" 2>/dev/null || true)"
+    [[ -n "$contract_key" && "${source:t}" == "${contract_key}.deploy.json" ]] || continue
+    copy_file_atomic "$source" "$snapshot_dir/${source:t}"
+  done
+  for source in "$report_dir"/*.manifest.json(N); do
     copy_file_atomic "$source" "$snapshot_dir/${source:t}"
   done
 }
@@ -56,15 +57,6 @@ publish_foundation_latest() {
       copy_file_atomic "$source" "$destination"
     fi
   done
-
-  source="$snapshot_dir/foundation-deploy/soraswap.bundle.deploy.json"
-  if [[ ! -f "$source" ]]; then
-    source="$report_dir/soraswap.bundle.deploy.json"
-  fi
-  destination="$report_dir/soraswap.foundation.bundle.deploy.json"
-  if [[ -f "$source" ]]; then
-    copy_file_atomic "$source" "$destination"
-  fi
 }
 
 restore_retained_latest() {
@@ -74,8 +66,7 @@ restore_retained_latest() {
     chain.latest.json \
     deploy.latest.json \
     contracts.latest.json \
-    smoke.latest.json \
-    soraswap.bundle.deploy.json; do
+    smoke.latest.json; do
     source="$snapshot_dir/$file"
     destination="$report_dir/$file"
     if [[ -f "$source" ]]; then
@@ -85,19 +76,11 @@ restore_retained_latest() {
     fi
   done
 
-  for destination in "$report_dir"/*.deploy.json(N); do
-    if [[ "${destination:t}" != "soraswap.bundle.deploy.json" \
-      && "${destination:t}" != "soraswap.foundation.bundle.deploy.json" ]]; then
-      rm -f "$destination"
-    fi
-  done
+  rm -f "$report_dir"/*.deploy.json(N)
   rm -f "$report_dir"/*.manifest.json(N)
 
   for source in "$snapshot_dir"/*.deploy.json(N) "$snapshot_dir"/*.manifest.json(N); do
-    if [[ "${source:t}" != "soraswap.bundle.deploy.json" \
-      && "${source:t}" != "soraswap.foundation.bundle.deploy.json" ]]; then
-      copy_file_atomic "$source" "$report_dir/${source:t}"
-    fi
+    copy_file_atomic "$source" "$report_dir/${source:t}"
   done
 }
 
@@ -121,6 +104,5 @@ trap cleanup EXIT
 export SORASWAP_BOOTSTRAP_SCOPE="${SORASWAP_BOOTSTRAP_SCOPE:-foundation}"
 export SORASWAP_DEPLOY_SCOPE="${SORASWAP_DEPLOY_SCOPE:-foundation}"
 export SORASWAP_SMOKE_SCOPE="${SORASWAP_SMOKE_SCOPE:-foundation}"
-export SORASWAP_ISOLATED_DEPLOY_ARTIFACT_SNAPSHOT_DIR="$snapshot_dir/foundation-deploy"
 
 zsh "$ROOT/tests/isolated_e2e.sh"

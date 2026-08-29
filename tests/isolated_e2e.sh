@@ -183,7 +183,7 @@ isolated_command_matches_peer_config() {
 
   command_words=("${(@z)command_line}")
   (( ${#command_words[@]} > 0 )) || return 1
-  [[ "${command_words[1]:t}" == "irohad" ]] || return 1
+  [[ "${command_words[1]:t}" == "iroha3d" ]] || return 1
 
   for (( index = 2; index <= ${#command_words[@]}; index++ )); do
     if [[ "${command_words[$index]}" == "--config" ]]; then
@@ -276,7 +276,7 @@ isolated_audit_live_peer_pids() {
     peer_config="$localnet_dir/${peer_name}.toml"
     if [[ ! -f "$peer_config" || -L "$peer_config" ]] \
       || ! isolated_command_matches_peer_config "$command_line" "$peer_config"; then
-      echo "isolated local cleanup refused live PID $pid: command line does not reference the exact $(soraswap_display_path "$peer_config") irohad config" >&2
+      echo "isolated local cleanup refused live PID $pid: command line does not reference the exact $(soraswap_display_path "$peer_config") iroha3d config" >&2
       return 70
     fi
     isolated_audited_live_pids+=("$pid")
@@ -398,30 +398,6 @@ isolated_require_disabled_timeout() {
   fi
 }
 
-snapshot_post_deploy_artifacts() {
-  local destination_dir="${SORASWAP_ISOLATED_DEPLOY_ARTIFACT_SNAPSHOT_DIR:-}"
-  local source destination tmp
-
-  if [[ -z "$destination_dir" ]]; then
-    return 0
-  fi
-
-  mkdir -p "$destination_dir"
-  source="$ROOT/deployments/local/soraswap.bundle.deploy.json"
-  destination="$destination_dir/soraswap.bundle.deploy.json"
-  if [[ -f "$source" ]]; then
-    tmp="$(mktemp "${destination}.XXXXXX")" || return 1
-    if ! cp -p "$source" "$tmp"; then
-      rm -f "$tmp"
-      return 1
-    fi
-    if ! mv "$tmp" "$destination"; then
-      rm -f "$tmp"
-      return 1
-    fi
-  fi
-}
-
 isolated_main() {
   local requested_localnet_dir candidate_tag default_localnet_dir selected_ports
   local -a port_pair
@@ -476,32 +452,29 @@ isolated_main() {
   export SORASWAP_LOCALNET_CONSENSUS_MODE="${SORASWAP_LOCALNET_CONSENSUS_MODE:-permissioned}"
   export SORASWAP_LOCALNET_BLOCK_TIME_MS="${SORASWAP_LOCALNET_BLOCK_TIME_MS:-5000}"
   export SORASWAP_LOCALNET_COMMIT_TIME_MS="${SORASWAP_LOCALNET_COMMIT_TIME_MS:-5000}"
-  export SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS="${SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS:-600}"
+  export SORASWAP_CONTRACT_ACTIVATION_MAX_TIME_SECS="${SORASWAP_CONTRACT_ACTIVATION_MAX_TIME_SECS:-600}"
   export SORASWAP_ASSERT_BOOTSTRAP_STATE="${SORASWAP_ASSERT_BOOTSTRAP_STATE:-1}"
-  export SORASWAP_BOOTSTRAP_SCOPE="${SORASWAP_BOOTSTRAP_SCOPE:-full}"
+  export SORASWAP_BOOTSTRAP_SCOPE="${SORASWAP_BOOTSTRAP_SCOPE:-${SORASWAP_DEPLOY_SCOPE:-full}}"
   export SORASWAP_SMOKE_SCOPE="${SORASWAP_SMOKE_SCOPE:-$SORASWAP_BOOTSTRAP_SCOPE}"
-  export SORASWAP_CONTRACT_APP_CHUNK_SIZE="${SORASWAP_CONTRACT_APP_CHUNK_SIZE:-1}"
-  export SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS=0
 
-  local default_release_irohad="$ROOT/../iroha/target/release/irohad"
-  if [[ -z "${IROHAD_BIN:-}" && -x "$default_release_irohad" ]] \
-    && ! path_is_newer_than "$default_release_irohad" \
-      "$ROOT/../iroha/Cargo.toml" \
-      "$ROOT/../iroha/Cargo.lock" \
-      "$ROOT/../iroha/crates/irohad" \
-      "$ROOT/../iroha/crates/iroha_core" \
-      "$ROOT/../iroha/crates/ivm" \
-      "$ROOT/../iroha/crates/iroha_torii"; then
-    export IROHAD_BIN="$default_release_irohad"
+  local default_release_iroha3d="$SORASWAP_IROHA_ROOT/target/release/iroha3d"
+  if [[ -z "${IROHA3D_BIN:-}" && -x "$default_release_iroha3d" ]] \
+    && ! path_is_newer_than "$default_release_iroha3d" \
+      "$SORASWAP_IROHA_ROOT/Cargo.toml" \
+      "$SORASWAP_IROHA_ROOT/Cargo.lock" \
+      "$SORASWAP_IROHA_ROOT/crates/irohad" \
+      "$SORASWAP_IROHA_ROOT/crates/iroha_core" \
+      "$SORASWAP_IROHA_ROOT/crates/ivm" \
+      "$SORASWAP_IROHA_ROOT/crates/iroha_torii"; then
+    export IROHA3D_BIN="$default_release_iroha3d"
   fi
-  export SORASWAP_IROHA_CLI_BIN="${SORASWAP_IROHA_CLI_BIN:-$ROOT/../iroha/target/debug/iroha}"
+  export SORASWAP_IROHA_CLI_BIN="${SORASWAP_IROHA_CLI_BIN:-$SORASWAP_IROHA_ROOT/target/debug/iroha}"
   export SORASWAP_SKIP_IROHA_CLI_BUILD="${SORASWAP_SKIP_IROHA_CLI_BUILD:-1}"
 
   echo "isolated local acceptance ports: API=$SORASWAP_LOCALNET_BASE_API_PORT P2P=$SORASWAP_LOCALNET_BASE_P2P_PORT"
 
   zsh "$ROOT/scripts/local_up.sh"
   zsh "$ROOT/scripts/deploy_local.sh"
-  snapshot_post_deploy_artifacts
   SORASWAP_CLIENT_CONFIG="$SORASWAP_LOCALNET_DIR/client.toml" \
     zsh "$ROOT/scripts/smoke_local.sh"
 

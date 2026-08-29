@@ -1,40 +1,15 @@
 # Launchpad State Layout
 
 Sale factory singleton state:
-- `FactoryOwnerSet`
-- `FactoryOwner`
-- `FactoryContractBound`
-- `FactoryContractId`
-- `SeedExecutorBound`
-- `SeedExecutorContract`
+- immutable initialization: `FactoryInitialized`, `FactoryOwner`, `FactoryGuardian`, `FactoryAccount`, `SeedExecutorContract`
+- fail-closed mode: `FactoryWithdrawalOnly`
+- bounded lifecycle: `LaunchLifecycleCadenceSlots`, `LaunchLifecycleMaxItems`, `LaunchLifecycleEnabled`, `LaunchLifecycleNextSlot`, `LaunchLifecycleCursor`, `LaunchLifecycleLastSlot`, `LaunchLifecycleLastProcessed`, `NextSaleIndex`, `SaleByIndex`
 
 Per-sale maps:
-- `SaleOwner`
-- `SaleAsset`
-- `PaymentAsset`
-- `Treasury`
-- `UnitPrice`
-- `SoftCap`
-- `HardCap`
-- `Raised`
-- `Sold`
-- `Closed`
-- `Successful`
-- `Seeded`
-- `SeedInventory`
-- `SeedVault`
-- `SeedPositionId`
-- `SeedBinId`
-- `SeedPaymentAmount`
-- `SeedSaleAmount`
-- `SeedPaymentUsed`
-- `SeedSaleUsed`
-- `SeedActivationValue`
-- `ClaimInventory`
-- `ClaimedSupply`
-- `RefundedPayment`
-- `ClaimStartSlot`
-- `ClaimEndSlot`
+- identity and terms: `SaleOwner`, `SaleAsset`, `PaymentAsset`, `Treasury`, `UnitPrice`, `SoftCap`, `HardCap`, `ClaimStartSlot`, `ClaimEndSlot`
+- lifecycle totals: `Raised`, `Sold`, `Closed`, `Successful`, `Seeded`
+- custody accounting: `SeedInventory`, `ClaimInventory`, `ClaimedSupply`, `RefundedPayment`, `TreasuryPaymentReleased`
+- seed plan and result: `SeedPaymentAmount`, `SeedSaleAmount`, `SeedPaymentUsed`, `SeedSaleUsed`, `SeedActivationShares`
 
 Per-allocation maps:
 - `AllocationSale`
@@ -45,83 +20,81 @@ Per-allocation maps:
 - `AllocationRefunded`
 
 Liquidity executor singleton state:
-- `ExecutorInitialized`
-- `ExecutorOwner`
-- `PoolContract`
-- `BaseAsset`
-- `QuoteAsset`
-- `ExecutorContractBound`
-- `ExecutorContractId`
-- `SaleFactoryBound`
-- `SaleFactoryContractId`
+- immutable initialization: `ExecutorInitialized`, `ExecutorOwner`, `ExecutorGuardian`, `PoolContract`, `BaseAsset`, `QuoteAsset`, `ExecutorContractAccount`, `SaleFactoryContractAccount`
+- fail-closed mode: `ExecutorPaused`
+- aggregate execution journal: `SeedCount`, `TotalBaseAmount`, `TotalQuoteAmount`, `TotalShares`, `LastSeedSlot`
 
 View tuple fields returned by `mirror_sale()`:
-- `soraswap_launchpad_seed_registered`
-- `soraswap_launchpad_raised`
-- `soraswap_launchpad_sold`
-- `soraswap_launchpad_closed`
-- `soraswap_launchpad_successful`
-- `soraswap_launchpad_seeded`
-- `soraswap_launchpad_seed_inventory`
-- `soraswap_launchpad_seed_bin_id`
-- `soraswap_launchpad_seed_payment_amount`
-- `soraswap_launchpad_seed_sale_amount`
-- `soraswap_launchpad_claim_inventory`
-- `soraswap_launchpad_claim_start_slot`
-- `soraswap_launchpad_claim_end_slot`
+1. sale exists
+2. raised payment amount
+3. sold sale-asset amount
+4. closed
+5. successful
+6. seeded
+7. remaining seed inventory
+8. remaining claim inventory
+9. claimed supply
+10. refunded payment
+11. seed payment used
+12. seed sale amount used
+13. seed activation shares
 
 View tuple fields returned by `sale_config()`:
-- `soraswap_launchpad_sale_asset`
-- `soraswap_launchpad_payment_asset`
-- `soraswap_launchpad_treasury`
-- `soraswap_launchpad_unit_price`
-- `soraswap_launchpad_soft_cap`
-- `soraswap_launchpad_hard_cap`
-- `soraswap_launchpad_claim_start_slot_config`
-- `soraswap_launchpad_claim_end_slot_config`
+1. sale asset
+2. payment asset
+3. treasury
+4. unit price
+5. soft cap
+6. hard cap
+7. claim start slot
+8. claim end slot
 
 View tuple fields returned by `mirror_sale_accounting()`:
-- `soraswap_launchpad_seed_payment_used`
-- `soraswap_launchpad_seed_sale_used`
-- `soraswap_launchpad_claimed_supply`
-- `soraswap_launchpad_refunded_payment`
+1. raised payment
+2. treasury payment released
+3. refunded payment
+4. seed payment used
 
-View tuple fields returned by `factory_binding_state()`:
-- `soraswap_launchpad_factory_contract_bound`
-- `soraswap_launchpad_seed_executor_bound`
-
-View tuple fields returned by `factory_owner_state()`:
-- `soraswap_launchpad_factory_owner_set`
-- `soraswap_launchpad_factory_owner`
-
-View tuple fields returned by `factory_binding_details()`:
-- `soraswap_launchpad_factory_owner`
-- `soraswap_launchpad_factory_contract_id`
-- `soraswap_launchpad_factory_contract_bound`
-- `soraswap_launchpad_seed_executor_bound`
+View tuple fields returned by `factory_config()`:
+1. owner
+2. guardian
+3. factory contract subject
+4. executor contract address bytes
+5. withdrawal-only mode
 
 View tuple fields returned by `activation_state(sale)`:
-- `soraswap_launchpad_seed_executor_bound`
-- `soraswap_launchpad_seed_activation_value`
+1. seeded
+2. activation shares
 
 View tuple fields returned by `mirror_allocation()`:
-- `soraswap_launchpad_allocation_registered`
-- `soraswap_launchpad_allocation_payment_amount`
-- `soraswap_launchpad_allocation_sale_amount`
-- `soraswap_launchpad_allocation_claimed`
-- `soraswap_launchpad_allocation_refunded`
+1. allocation exists
+2. payment amount
+3. sale amount
+4. claimed amount
+5. refunded
 
 View tuple fields returned by `executor_config()`:
-- `soraswap_launchpad_executor_base_asset`
-- `soraswap_launchpad_executor_quote_asset`
-- `soraswap_launchpad_executor_contract_bound`
-- `soraswap_launchpad_executor_sale_factory_bound`
+1. pool contract address bytes
+2. base asset
+3. quote asset
+4. owner
+5. guardian
+6. executor contract subject
+7. sale-factory contract subject
+8. paused
+
+View tuple fields returned by `liquidity_state()`:
+1. seed count
+2. total base amount
+3. total quote amount
+4. total shares
+5. last seed slot
 
 Notes:
-- `Raised` tracks total payment-side sale proceeds; `RefundedPayment` and `SeedPaymentUsed` partition the payment-side proceeds between refunds and committed DLMM seeding.
-- `ClaimInventory` tracks remaining sale-token inventory available for contributor claims, while `ClaimedSupply` records the amount already settled out to buyers.
-- `SeedInventory` tracks remaining sale-token inventory available for DLMM seeding, while `SeedSaleUsed` records the committed amount.
-- `SeedPositionId`, `SeedVault`, `SeedBinId`, `SeedPaymentAmount`, and `SeedSaleAmount` form the registered DLMM seed plan for a sale, while `SeedActivationValue` records the on-chain executor result for the canonical activation path.
-- `FactoryOwnerSet` is explicit and is written only by `init_factory()`. Admin flows no longer lazily capture the first caller as owner.
-- `claim_allocation(...)` uses `block_height()` internally for claim-window enforcement, and only `contribute_recorded(...)` creates allocations.
-- Trigger lifecycle state is stored in `LaunchLifecycleCadenceSlots`, `LaunchLifecycleMaxItems`, `LaunchLifecycleEnabled`, `LaunchLifecycleNextSlot`, `LaunchLifecycleCursor`, `LaunchLifecycleLastSlot`, and `LaunchLifecycleLastProcessed`. `SaleByIndex` and `NextSaleIndex` bound trigger scans.
+- `FactoryAccount` and `ExecutorContractAccount` are captured from `context::seiyaku_subject()` and never accepted as deployer input. `SaleFactoryContractAccount` and both nested contract addresses are immutable.
+- The factory owns per-sale plans and returned share attribution. The executor intentionally stores only aggregate execution totals; it cannot select a per-sale position or bin.
+- The pool owns the single `launchpad_executor` position at its immutable initialization bin. No launchpad position, vault, or bin maps exist in either launchpad contract.
+- `Raised` tracks payment-side proceeds. `RefundedPayment`, `SeedPaymentUsed`, and `TreasuryPaymentReleased` are the mutually constrained disposition totals for those proceeds.
+- `ClaimInventory` tracks remaining contributor inventory and `ClaimedSupply` tracks settled inventory. `SeedInventory` tracks the independent sale-asset balance available for DLMM seeding.
+- Claim and lifecycle scheduling uses chain `block_height()`, and only `contribute_recorded(...)` creates allocations. `SaleByIndex` and the hard sale limit bound every trigger scan.
+- All transfers use `DataSpaceId::parse("0")`, the Taira universal dataspace.

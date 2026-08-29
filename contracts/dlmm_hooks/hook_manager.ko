@@ -30,6 +30,7 @@ seiyaku DlmmHookManager {
     ActiveOrderLimit = 23,
     SlotIndexCorrupt = 24,
     InvalidAuthoritySeparation = 25,
+    IdenticalAssets = 26,
   }
 
   state int HookManagerInitialized;
@@ -176,7 +177,7 @@ seiyaku DlmmHookManager {
     var chosen = 0;
     for offset in range(64) {
       if found == 0 {
-        let candidate = ((TwammNextSlotCursor - 1 + offset) % 64) + 1;
+        let candidate = (TwammNextSlotCursor - 1 + offset) % 64 + 1;
         if TwammSlotOccupied.get(candidate).unwrap_or(0) == 0 {
           found = 1;
           chosen = candidate;
@@ -244,14 +245,26 @@ seiyaku DlmmHookManager {
       amount_in: amount_in,
       remaining: remaining
     );
-    let amount_out = contract::invoke(
-      contract: HookManagerRouterContract,
-      entrypoint: "route_swap",
-      returns: "quantity",
-      amount_in: amount_in,
-      input_is_base: TwammOrderInputIsBase.get(order_id).unwrap_or(0),
-      min_out: min_out
-    );
+    let input_is_base = TwammOrderInputIsBase.get(order_id).unwrap_or(0);
+    var amount_out = zero_quantity();
+    if input_is_base == 1 {
+      amount_out = contract::invoke(
+        contract: HookManagerRouterContract,
+        entrypoint: "route_exact_in_base",
+        returns: "quantity",
+        amount_in: amount_in,
+        min_out: min_out
+      );
+    } else {
+      require(input_is_base == 0, DlmmHookManagerError::InvalidDirection);
+      amount_out = contract::invoke(
+        contract: HookManagerRouterContract,
+        entrypoint: "route_exact_in_quote",
+        returns: "quantity",
+        amount_in: amount_in,
+        min_out: min_out
+      );
+    }
     require(amount_out >= min_out, DlmmHookManagerError::InsufficientOutput);
     TwammOrderRemainingIn[order_id] = remaining - amount_in;
     TwammOrderExecutedIn[order_id] =
@@ -272,6 +285,23 @@ seiyaku DlmmHookManager {
     return 1;
   }
 
+  fn assert_valid_initialization(
+    AssetDefinitionId base_asset,
+    AssetDefinitionId quote_asset,
+    AccountId custody_account,
+    AccountId guardian
+  ) {
+    require(base_asset != quote_asset, DlmmHookManagerError::IdenticalAssets);
+    require(
+      custody_account != context::authority(),
+      DlmmHookManagerError::InvalidAuthoritySeparation
+    );
+    require(
+      guardian != context::authority() && guardian != custody_account,
+      DlmmHookManagerError::InvalidAuthoritySeparation
+    );
+  }
+
   hajimari(
     AssetDefinitionId base_asset,
     AssetDefinitionId quote_asset,
@@ -279,8 +309,12 @@ seiyaku DlmmHookManager {
     bytes router_contract,
     AccountId guardian
   ) {
-    require(custody_account != context::authority(), DlmmHookManagerError::InvalidAuthoritySeparation);
-    require(guardian != context::authority() && guardian != custody_account, DlmmHookManagerError::InvalidAuthoritySeparation);
+    assert_valid_initialization(
+      base_asset: base_asset,
+      quote_asset: quote_asset,
+      custody_account: custody_account,
+      guardian: guardian
+    );
     HookManagerInitialized = 1;
     HookManagerOwner = context::authority();
     HookManagerGuardian = guardian;
@@ -381,7 +415,7 @@ seiyaku DlmmHookManager {
       LimitOrderExecutedOut.get(order_id).unwrap_or(zero_quantity()) + amount_out;
   }
 
-  kotoage fn schedule_twamm_v2(
+  kotoage fn schedule_twamm(
     Name order_id,
     quantity total_in,
     quantity slice_in,
@@ -468,7 +502,7 @@ seiyaku DlmmHookManager {
     var processed = 0;
     for offset in range(64) {
       if processed < TwammMaxOrdersPerTick {
-        let slot = ((TwammNextSlotCursor - 1 + offset) % 64) + 1;
+        let slot = (TwammNextSlotCursor - 1 + offset) % 64 + 1;
         if TwammSlotOccupied.get(slot).unwrap_or(0) == 1 {
           require(TwammOrderBySlot.contains(slot), DlmmHookManagerError::SlotIndexCorrupt);
           processed = processed + execute_twamm_order(

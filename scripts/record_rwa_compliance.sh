@@ -160,11 +160,11 @@ ready_preflight_chain_fingerprint_json() {
     and ((.blockers // []) | length) == 0
     and ((.warnings // []) | length) == 0
     and (.environment.mutations_allowed // false) == true
-    and (.environment.oracle_public_key_present // false) == true
-    and (.environment.oracle_private_key_present // false) == true
-    and (.environment.oracle_keypair_verified // false) == true
-    and ((.environment.oracle_public_key_source // "") | type == "string" and length > 0)
-    and ((.environment.oracle_private_key_source // "") | type == "string" and length > 0)
+    and (.environment.oracle_client_config_present // false) == true
+    and (.environment.oracle_client_config_valid // false) == true
+    and (.environment.oracle_account_derivable // false) == true
+    and (.environment.oracle_account_distinct // false) == true
+    and ((.environment.oracle_client_config_source // "") | type == "string" and length > 0)
     and ((.endpoint.mcp_http_status // "") | tostring) == "200"
     and (.endpoint.mcp.enabled // false) == true
     and (.endpoint.mcp.metadata_valid // false) == true
@@ -306,11 +306,11 @@ valid_completed_report_matches_chain() {
         and ((.blockers // []) | length) == 0
         and ((.warnings // []) | length) == 0
         and (.environment.mutations_allowed // false) == true
-        and (.environment.oracle_public_key_present // false) == true
-        and (.environment.oracle_private_key_present // false) == true
-        and (.environment.oracle_keypair_verified // false) == true
-        and ((.environment.oracle_public_key_source // "") | type == "string" and length > 0)
-        and ((.environment.oracle_private_key_source // "") | type == "string" and length > 0)
+        and (.environment.oracle_client_config_present // false) == true
+        and (.environment.oracle_client_config_valid // false) == true
+        and (.environment.oracle_account_derivable // false) == true
+        and (.environment.oracle_account_distinct // false) == true
+        and ((.environment.oracle_client_config_source // "") | type == "string" and length > 0)
         and ((.endpoint.mcp_http_status // "") | tostring) == "200"
         and (.endpoint.mcp.enabled // false) == true
         and (.endpoint.mcp.metadata_valid // false) == true

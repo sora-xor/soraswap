@@ -24,11 +24,25 @@ function requireBinaryFlag(name, rawValue) {
   throw new Error(`${name} must be 0 or 1; got '${rawValue}'`);
 }
 
+function optionalBrowserChannel(name, rawValue) {
+  if (rawValue === undefined || rawValue === "") {
+    return undefined;
+  }
+  if (rawValue === "chrome" || rawValue === "msedge") {
+    return rawValue;
+  }
+  throw new Error(`${name} must be chrome or msedge; got '${rawValue}'`);
+}
+
 const staticServerPort = requireTcpPort("SORASWAP_PLAYWRIGHT_PORT", process.env.SORASWAP_PLAYWRIGHT_PORT || "43174");
 const staticServerUrl = `http://127.0.0.1:${staticServerPort}`;
 const staticServerEnabled = requireBinaryFlag(
   "SORASWAP_PLAYWRIGHT_STATIC_SERVER",
   process.env.SORASWAP_PLAYWRIGHT_STATIC_SERVER,
+);
+const browserChannel = optionalBrowserChannel(
+  "PLAYWRIGHT_SYSTEM_BROWSER_CHANNEL",
+  process.env.PLAYWRIGHT_SYSTEM_BROWSER_CHANNEL,
 );
 
 module.exports = defineConfig({
@@ -43,6 +57,7 @@ module.exports = defineConfig({
   use: {
     baseURL: staticServerUrl,
     headless: true,
+    channel: browserChannel,
   },
   webServer: staticServerEnabled
     ? {

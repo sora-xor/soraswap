@@ -56,46 +56,16 @@ source = "contracts/farms/farm.ko"
 artifact = "artifacts/compiled/farms/farm.to"
 
 [[contracts]]
-name = "risk.risk_vault"
-alias = "risk_vault::risk.universal"
-source = "contracts/risk/risk_vault.ko"
-artifact = "artifacts/compiled/risk/risk_vault.to"
-
-[[contracts]]
 name = "perps.perps_engine"
 alias = "perps_engine::perps.universal"
 source = "contracts/perps/perps_engine.ko"
 artifact = "artifacts/compiled/perps/perps_engine.to"
 
 [[contracts]]
-name = "options.manager"
-alias = "manager::options.universal"
-source = "contracts/options/manager.ko"
-artifact = "artifacts/compiled/options/manager.to"
-
-[[contracts]]
 name = "options.factory"
 alias = "factory::options.universal"
 source = "contracts/options/factory.ko"
 artifact = "artifacts/compiled/options/factory.to"
-
-[[contracts]]
-name = "options.vault"
-alias = "vault::options.universal"
-source = "contracts/options/vault.ko"
-artifact = "artifacts/compiled/options/vault.to"
-
-[[contracts]]
-name = "options.shout_option"
-alias = "shout_option::options.universal"
-source = "contracts/options/shout_option.ko"
-artifact = "artifacts/compiled/options/shout_option.to"
-
-[[contracts]]
-name = "options.outperformance_option"
-alias = "outperformance_option::options.universal"
-source = "contracts/options/outperformance_option.ko"
-artifact = "artifacts/compiled/options/outperformance_option.to"
 
 [[contracts]]
 name = "cover.policy_manager"
@@ -185,6 +155,9 @@ path = "tests/kotodama/dlmm_router_v1_regressions.test.ko"
 path = "tests/kotodama/launchpad_liquidity_executor_v1_regressions.test.ko"
 
 [[tests]]
+path = "tests/kotodama/launchpad_sale_factory_v1_regressions.test.ko"
+
+[[tests]]
 path = "tests/kotodama/automation_job_queue_regressions.test.ko"
 
 [[tests]]
@@ -194,18 +167,6 @@ path = "tests/kotodama/perps_admin_regressions.test.ko"
 path = "tests/kotodama/options_factory_admin_regressions.test.ko"
 
 [[tests]]
-path = "tests/kotodama/options_manager_admin_regressions.test.ko"
-
-[[tests]]
-path = "tests/kotodama/options_shout_oracle_regressions.test.ko"
-
-[[tests]]
-path = "tests/kotodama/options_vault_v1_regressions.test.ko"
-
-[[tests]]
-path = "tests/kotodama/outperformance_option_v1_regressions.test.ko"
-
-[[tests]]
 path = "tests/kotodama/cover_policy_manager_admin_regressions.test.ko"
 
 [[tests]]
@@ -213,9 +174,6 @@ path = "tests/kotodama/bridge_governance_regressions.test.ko"
 
 [[tests]]
 path = "tests/kotodama/sccp_bridge_v1_regressions.test.ko"
-
-[[tests]]
-path = "tests/kotodama/risk_vault_v1_regressions.test.ko"
 
 [[smoke]]
 id = "n3x_state_view"

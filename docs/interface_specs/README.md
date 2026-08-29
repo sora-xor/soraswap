@@ -1,6 +1,6 @@
 # Interface Specs
 
-These notes describe the current public entrypoint surface of the SoraSwap contracts. The derivatives stack is intentionally split across multiple contracts, routed through `risk_vault`, and kept behind one shared acceptance gate rather than treated as independent rollout units.
+These notes describe the current public entrypoint surface of the SoraSwap contracts. Perps, options, and cover are self-contained first-release contracts with independent custody/accounting and distinct typed-oracle authorization.
 
 - [`n3x_hub.md`](./n3x_hub.md)
 - [`bridge.md`](./bridge.md)
@@ -10,7 +10,6 @@ These notes describe the current public entrypoint surface of the SoraSwap contr
 - [`referral.md`](./referral.md)
 - [`automation.md`](./automation.md)
 - [`farms.md`](./farms.md)
-- [`risk_vault.md`](./risk_vault.md)
 - [`perps.md`](./perps.md)
 - [`options.md`](./options.md)
 - [`cover.md`](./cover.md)

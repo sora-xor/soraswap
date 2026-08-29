@@ -1,8 +1,9 @@
-// Options position factory with shared-vault collateralization.
+// Self-contained, fully collateralized options position factory.
 //
-// Buying is fully typed and atomic across the risk vault, accounting vault,
-// and product modules. Oracle-derived mutations remain private until the
-// compiler-owned schema-bound signed-attestation verifier is wired in.
+// Kotodama's current cross-contract call is deliberately swap-shaped, so an
+// arbitrary manager/vault/product call graph is not deployable. The factory is
+// the canonical ledger and computes both products locally. The configured oracle
+// account submits typed marks; its transaction signature binds the arguments.
 
 seiyaku OptionsFactory {
   error enum OptionsFactoryError {
@@ -24,7 +25,7 @@ seiyaku OptionsFactory {
     InvalidBacklogCap = 16,
     InvalidBacklog = 17,
     InvalidSafeMode = 18,
-    InvalidOracleScheme = 19,
+    OracleAuthorityMismatch = 19,
     InvalidOracleStaleSlots = 20,
     InvalidOracleSlot = 21,
     InvalidMark = 22,
@@ -44,10 +45,11 @@ seiyaku OptionsFactory {
     PositionInactive = 36,
     PositionKindMismatch = 37,
     PositionLimit = 38,
-    ModuleCallFailed = 39,
-    PayoutMismatch = 40,
+    InsufficientReserve = 39,
+    PayoutExceedsCollateral = 40,
     IndexCorrupt = 41,
     InvalidAuthoritySeparation = 42,
+    ReserveInvariant = 43,
   }
 
   state int OptFactoryInitialized;
@@ -56,14 +58,11 @@ seiyaku OptionsFactory {
   state AccountId OptFactoryAccount;
   state AssetDefinitionId OptFactorySettlementAsset;
   state int OptFactoryWithdrawalOnly;
-  state bytes OptFactoryRiskVaultContract;
-  state bytes OptFactoryManagerContract;
-  state bytes OptFactoryVaultContract;
-  state bytes OptFactoryShoutContract;
-  state bytes OptFactoryOutperformanceContract;
-  state bytes OptFactoryOraclePublicKey;
-  state int OptFactoryOracleScheme;
+  state AccountId OptFactoryOracleAuthority;
   state int OptFactoryOracleStaleSlots;
+  state quantity OptFactoryReservedCollateral;
+  state quantity OptFactoryPremiumAccrued;
+  state quantity OptFactorySettledPayouts;
 
   state AccountId OptFactoryAutomationExecutor;
   state int OptFactoryAutomationJobId;
@@ -99,6 +98,8 @@ seiyaku OptionsFactory {
   state StateMap<int, int> OptFactorySeriesAttestationHash;
   state StateMap<int, decimal> OptFactorySeriesFinalMark;
   state StateMap<int, decimal> OptFactorySeriesFinalQuoteMark;
+  state StateMap<int, int> OptFactorySeriesFinalBaseReturnBps;
+  state StateMap<int, int> OptFactorySeriesFinalQuoteReturnBps;
   state StateMap<int, int> OptFactorySeriesSettlementReady;
 
   state StateMap<int, AccountId> OptFactoryPositionOwner;
@@ -143,6 +144,13 @@ seiyaku OptionsFactory {
     return right;
   }
 
+  fn min_quantity(quantity left, quantity right) -> quantity {
+    if left <= right {
+      return left;
+    }
+    return right;
+  }
+
   fn assert_owner() {
     require(OptFactoryOwner == context::authority(), OptionsFactoryError::OwnerMismatch);
   }
@@ -152,6 +160,13 @@ seiyaku OptionsFactory {
       return;
     }
     require(OptFactoryGuardian == context::authority(), OptionsFactoryError::GuardianMismatch);
+  }
+
+  fn assert_oracle_authority() {
+    require(
+      OptFactoryOracleAuthority == context::authority(),
+      OptionsFactoryError::OracleAuthorityMismatch
+    );
   }
 
   fn assert_risk_on() {
@@ -195,6 +210,20 @@ seiyaku OptionsFactory {
     }
   }
 
+  fn factory_balance() -> quantity {
+    return ledger::asset::balance(
+      account: OptFactoryAccount,
+      asset_definition: OptFactorySettlementAsset
+    );
+  }
+
+  fn assert_reserve_backed() {
+    require(
+      factory_balance() >= OptFactoryReservedCollateral,
+      OptionsFactoryError::InsufficientReserve
+    );
+  }
+
   fn bps_amount(quantity amount, int bps) -> quantity {
     let decimal scale = 10_000;
     let rate = decimal::from_int(value: bps) / scale;
@@ -228,170 +257,73 @@ seiyaku OptionsFactory {
     return base;
   }
 
-  fn risk_vault_deposit(quantity amount) -> quantity {
-    return contract::invoke(
-      contract: OptFactoryRiskVaultContract,
-      entrypoint: "deposit",
-      returns: "quantity",
-      bucket_id: 2,
-      amount: amount
+  fn assert_oracle_fresh(int oracle_slot) {
+    let current_slot = context::block_height();
+    require(oracle_slot >= 0 && current_slot >= oracle_slot, OptionsFactoryError::InvalidOracleSlot);
+    require(current_slot - oracle_slot <= OptFactoryOracleStaleSlots, OptionsFactoryError::OracleStale);
+  }
+
+  fn outperformance_payout(int position_id) -> quantity {
+    let series_id = OptFactoryPositionSeriesId.get(position_id).unwrap_or(0);
+    let outperformance_bps = max_int(
+      left: OptFactorySeriesFinalBaseReturnBps.get(series_id).unwrap_or(0) -
+        OptFactorySeriesFinalQuoteReturnBps.get(series_id).unwrap_or(0),
+      right: 0
+    );
+    let decimal bps_scale = 10_000;
+    let outperformance_rate = decimal::from_int(value: outperformance_bps) / bps_scale;
+    let collateral_rate = decimal::from_int(
+      value: OptFactorySeriesCollateralMultiplierBps.get(series_id).unwrap_or(0)
+    ) / bps_scale;
+    return OptFactoryPositionNotional.get(position_id).unwrap_or(zero_quantity()) *
+      outperformance_rate * collateral_rate;
+  }
+
+  fn shout_payout(int position_id, int mark_price_bps) -> quantity {
+    let series_id = OptFactoryPositionSeriesId.get(position_id).unwrap_or(0);
+    let floor_bps = max_int(
+      left: OptFactoryPositionShoutFloorBps.get(position_id).unwrap_or(0),
+      right: mark_price_bps
+    );
+    let intrinsic_bps = floor_bps - OptFactorySeriesStrikeBps.get(series_id).unwrap_or(0);
+    if intrinsic_bps <= 0 {
+      return zero_quantity();
+    }
+    return bps_amount(
+      amount: OptFactoryPositionNotional.get(position_id).unwrap_or(zero_quantity()),
+      bps: intrinsic_bps
     );
   }
 
-  fn risk_vault_lock(
-    int position_id,
-    quantity notional,
-    quantity collateral
-  ) -> int {
-    return contract::invoke(
-      contract: OptFactoryRiskVaultContract,
-      entrypoint: "lock_liability",
-      returns: "int",
-      bucket_id: 2,
-      exposure_id: position_id,
-      notional: notional,
-      collateral_locked: collateral,
-      backlog: OptFactoryAutomationBacklog
+  fn close_position(int position_id, quantity desired_payout) -> quantity {
+    let collateral = OptFactoryPositionCollateralLocked.get(position_id).unwrap_or(zero_quantity());
+    require(
+      OptFactoryReservedCollateral >= collateral,
+      OptionsFactoryError::ReserveInvariant
     );
-  }
-
-  fn risk_vault_release(int position_id) -> int {
-    return contract::invoke(
-      contract: OptFactoryRiskVaultContract,
-      entrypoint: "release_liability",
-      returns: "int",
-      bucket_id: 2,
-      exposure_id: position_id,
-      backlog: OptFactoryAutomationBacklog
+    let payout = min_quantity(left: desired_payout, right: collateral);
+    require(factory_balance() >= payout, OptionsFactoryError::InsufficientReserve);
+    move_settlement_asset(
+      source: OptFactoryAccount,
+      destination: OptFactoryPositionOwner.get(position_id).unwrap_or(OptFactoryOwner),
+      amount: payout
     );
-  }
-
-  fn risk_vault_payout(
-    int position_id,
-    AccountId recipient,
-    quantity amount
-  ) -> quantity {
-    return contract::invoke(
-      contract: OptFactoryRiskVaultContract,
-      entrypoint: "settle_payout",
-      returns: "quantity",
-      bucket_id: 2,
-      exposure_id: position_id,
-      recipient: recipient,
-      amount: amount
-    );
-  }
-
-  fn vault_sync_series(int series_id) {
-    let accepted = contract::invoke(
-      contract: OptFactoryVaultContract,
-      entrypoint: "sync_series_c2c",
-      returns: "int",
-      series_id: series_id
-    );
-    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
-  }
-
-  fn vault_record_position(
-    int position_id,
-    int series_id,
-    AccountId owner,
-    quantity collateral,
-    quantity premium
-  ) {
-    let accepted = contract::invoke(
-      contract: OptFactoryVaultContract,
-      entrypoint: "record_position_c2c",
-      returns: "int",
-      position_id: position_id,
+    OptFactoryReservedCollateral = OptFactoryReservedCollateral - collateral;
+    OptFactorySettledPayouts = OptFactorySettledPayouts + payout;
+    OptFactoryPositionCollateralLocked[position_id] = zero_quantity();
+    OptFactoryPositionRecordedPayout[position_id] = payout;
+    OptFactoryPositionSettlementReady[position_id] = 1;
+    OptFactoryPositionStatus[position_id] = 2;
+    let series_id = OptFactoryPositionSeriesId.get(position_id).unwrap_or(0);
+    let notional = OptFactoryPositionNotional.get(position_id).unwrap_or(zero_quantity());
+    let open_notional = OptFactorySeriesOpenNotional.get(series_id).unwrap_or(zero_quantity());
+    require(open_notional >= notional, OptionsFactoryError::IndexCorrupt);
+    OptFactorySeriesOpenNotional[series_id] = open_notional - notional;
+    OptFactorySeriesUtilisationBps[series_id] = utilisation_bps(
       series_id: series_id,
-      owner: owner,
-      collateral_locked: collateral,
-      premium_paid: premium
+      next_open_notional: open_notional - notional
     );
-    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
-  }
-
-  fn vault_settle_position(
-    int position_id,
-    quantity payout,
-    quantity premium_burn
-  ) {
-    let accepted = contract::invoke(
-      contract: OptFactoryVaultContract,
-      entrypoint: "settle_position_c2c",
-      returns: "int",
-      position_id: position_id,
-      payout: payout,
-      premium_burn: premium_burn
-    );
-    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
-  }
-
-  fn sync_product_series(
-    int series_id,
-    int option_kind,
-    int expiry_slot,
-    int strike_bps,
-    int collateral_multiplier_bps
-  ) {
-    if option_kind == 1 {
-      let accepted = contract::invoke(
-        contract: OptFactoryShoutContract,
-        entrypoint: "sync_series_c2c",
-        returns: "int",
-        series_id: series_id,
-        expiry_slot: expiry_slot,
-        strike_bps: strike_bps
-      );
-      require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
-    } else {
-      let accepted = contract::invoke(
-        contract: OptFactoryOutperformanceContract,
-        entrypoint: "sync_series_c2c",
-        returns: "int",
-        series_id: series_id,
-        expiry_slot: expiry_slot,
-        collateral_multiplier_bps: collateral_multiplier_bps
-      );
-      require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
-    }
-  }
-
-  fn register_product_position(
-    int position_id,
-    int series_id,
-    int option_kind,
-    AccountId owner,
-    quantity notional,
-    int strike_bps,
-    int collateral_multiplier_bps
-  ) {
-    if option_kind == 1 {
-      let accepted = contract::invoke(
-        contract: OptFactoryShoutContract,
-        entrypoint: "register_position_c2c",
-        returns: "int",
-        position_id: position_id,
-        series_id: series_id,
-        owner: owner,
-        notional: notional,
-        strike_bps: strike_bps
-      );
-      require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
-    } else {
-      let accepted = contract::invoke(
-        contract: OptFactoryOutperformanceContract,
-        entrypoint: "register_position_c2c",
-        returns: "int",
-        position_id: position_id,
-        series_id: series_id,
-        owner: owner,
-        notional: notional,
-        collateral_multiplier_bps: collateral_multiplier_bps
-      );
-      require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
-    }
+    return payout;
   }
 
   fn buy_position(int series_id, int expected_kind, quantity notional) -> int {
@@ -416,36 +348,23 @@ seiyaku OptionsFactory {
     );
     require(premium > zero_quantity(), OptionsFactoryError::InvalidPremium);
     require(collateral >= notional, OptionsFactoryError::InvalidCollateral);
+    assert_reserve_backed();
+    let funding = premium + collateral;
+    var projected_balance = factory_balance();
+    if context::authority() != OptFactoryAccount {
+      projected_balance = projected_balance + funding;
+    }
+    require(
+      projected_balance >= OptFactoryReservedCollateral + collateral,
+      OptionsFactoryError::InsufficientReserve
+    );
     move_settlement_asset(
       source: context::authority(),
       destination: OptFactoryAccount,
-      amount: premium + collateral
+      amount: funding
     );
-    require(
-      risk_vault_deposit(amount: premium + collateral) >= premium + collateral,
-      OptionsFactoryError::ModuleCallFailed
-    );
-    risk_vault_lock(
-      position_id: position_id,
-      notional: notional,
-      collateral: collateral
-    );
-    vault_record_position(
-      position_id: position_id,
-      series_id: series_id,
-      owner: context::authority(),
-      collateral: collateral,
-      premium: premium
-    );
-    register_product_position(
-      position_id: position_id,
-      series_id: series_id,
-      option_kind: expected_kind,
-      owner: context::authority(),
-      notional: notional,
-      strike_bps: OptFactorySeriesStrikeBps.get(series_id).unwrap_or(0),
-      collateral_multiplier_bps: OptFactorySeriesCollateralMultiplierBps.get(series_id).unwrap_or(0)
-    );
+    OptFactoryReservedCollateral = OptFactoryReservedCollateral + collateral;
+    OptFactoryPremiumAccrued = OptFactoryPremiumAccrued + premium;
     OptFactorySeriesOpenNotional[series_id] = next_open;
     OptFactorySeriesUtilisationBps[series_id] = next_utilisation;
     OptFactoryPositionOwner[position_id] = context::authority();
@@ -464,7 +383,7 @@ seiyaku OptionsFactory {
     return position_id;
   }
 
-  fn apply_verified_series_settlement(
+  fn apply_oracle_series_settlement(
     int series_id,
     decimal final_mark,
     decimal final_quote_mark,
@@ -473,65 +392,56 @@ seiyaku OptionsFactory {
     int oracle_slot,
     int attestation_hash
   ) {
+    assert_oracle_authority();
     assert_series_exists(series_id: series_id);
-    require(OptFactorySeriesStatus.get(series_id).unwrap_or(0) == 2, OptionsFactoryError::SeriesNotExpired);
-    require(final_mark >= zero_decimal() && final_quote_mark >= zero_decimal(), OptionsFactoryError::InvalidMark);
-    require(base_return_bps >= -1_000_000 && quote_return_bps >= -1_000_000, OptionsFactoryError::InvalidMark);
-    require(attestation_hash > 0, OptionsFactoryError::MissingAttestation);
     let current_slot = context::block_height();
-    require(oracle_slot >= 0 && current_slot >= oracle_slot, OptionsFactoryError::InvalidOracleSlot);
-    require(current_slot - oracle_slot <= OptFactoryOracleStaleSlots, OptionsFactoryError::OracleStale);
+    require(current_slot >= OptFactorySeriesExpirySlot.get(series_id).unwrap_or(0), OptionsFactoryError::SeriesNotExpired);
+    require(
+      OptFactorySeriesStatus.get(series_id).unwrap_or(0) == 1 ||
+      OptFactorySeriesStatus.get(series_id).unwrap_or(0) == 2,
+      OptionsFactoryError::SeriesInactive
+    );
+    require(final_mark >= zero_decimal() && final_quote_mark >= zero_decimal(), OptionsFactoryError::InvalidMark);
+    require(
+      base_return_bps >= -1_000_000 && base_return_bps <= 1_000_000 &&
+      quote_return_bps >= -1_000_000 && quote_return_bps <= 1_000_000,
+      OptionsFactoryError::InvalidMark
+    );
+    require(attestation_hash > 0, OptionsFactoryError::MissingAttestation);
+    assert_oracle_fresh(oracle_slot: oracle_slot);
     require(
       oracle_slot > OptFactorySeriesOracleSlot.get(series_id).unwrap_or(-1),
       OptionsFactoryError::OracleSlotReplay
     );
     require(OptFactorySeriesKind.get(series_id).unwrap_or(0) == 2, OptionsFactoryError::PositionKindMismatch);
-    let accepted = contract::invoke(
-      contract: OptFactoryOutperformanceContract,
-      entrypoint: "settle_series_c2c",
-      returns: "int",
-      series_id: series_id,
-      base_return_bps: base_return_bps,
-      quote_return_bps: quote_return_bps,
-      settlement_slot: current_slot
-    );
-    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
     OptFactorySeriesStatus[series_id] = 3;
     OptFactorySeriesLastSettlementSlot[series_id] = current_slot;
     OptFactorySeriesOracleSlot[series_id] = oracle_slot;
     OptFactorySeriesAttestationHash[series_id] = attestation_hash;
     OptFactorySeriesFinalMark[series_id] = final_mark;
     OptFactorySeriesFinalQuoteMark[series_id] = final_quote_mark;
+    OptFactorySeriesFinalBaseReturnBps[series_id] = base_return_bps;
+    OptFactorySeriesFinalQuoteReturnBps[series_id] = quote_return_bps;
     OptFactorySeriesSettlementReady[series_id] = 1;
   }
 
-  fn apply_verified_shout_mark(
+  fn apply_oracle_shout_mark(
     int position_id,
     int mark_price_bps,
     int oracle_slot,
     int attestation_hash
   ) {
+    assert_oracle_authority();
     assert_position_exists(position_id: position_id);
     require(OptFactoryPositionKind.get(position_id).unwrap_or(0) == 1, OptionsFactoryError::PositionKindMismatch);
     require(OptFactoryPositionStatus.get(position_id).unwrap_or(0) == 1, OptionsFactoryError::PositionInactive);
     require(mark_price_bps >= 0, OptionsFactoryError::InvalidMark);
     require(attestation_hash > 0, OptionsFactoryError::MissingAttestation);
-    require(oracle_slot >= 0 && context::block_height() >= oracle_slot, OptionsFactoryError::InvalidOracleSlot);
-    require(context::block_height() - oracle_slot <= OptFactoryOracleStaleSlots, OptionsFactoryError::OracleStale);
+    assert_oracle_fresh(oracle_slot: oracle_slot);
     require(
       oracle_slot > OptFactoryPositionLastOracleSlot.get(position_id).unwrap_or(-1),
       OptionsFactoryError::OracleSlotReplay
     );
-    let accepted = contract::invoke(
-      contract: OptFactoryShoutContract,
-      entrypoint: "record_shout_c2c",
-      returns: "int",
-      position_id: position_id,
-      mark_price_bps: mark_price_bps,
-      oracle_slot: oracle_slot,
-      attestation_hash: attestation_hash
-    );
-    require(accepted == 1, OptionsFactoryError::ModuleCallFailed);
     OptFactoryPositionShoutFloorBps[position_id] = max_int(
       left: OptFactoryPositionShoutFloorBps.get(position_id).unwrap_or(0),
       right: mark_price_bps
@@ -545,33 +455,29 @@ seiyaku OptionsFactory {
     AssetDefinitionId settlement_asset,
     AccountId factory_account,
     AccountId guardian,
-    bytes risk_vault_contract,
-    bytes manager_contract,
-    bytes vault_contract,
-    bytes shout_contract,
-    bytes outperformance_contract,
-    bytes oracle_public_key,
-    int oracle_scheme,
-    int oracle_stale_slots
+    AccountId oracle_authority,
+    int stale_slots
   ) {
     require(factory_account != context::authority(), OptionsFactoryError::InvalidAuthoritySeparation);
     require(guardian != context::authority() && guardian != factory_account, OptionsFactoryError::InvalidAuthoritySeparation);
-    require(oracle_scheme > 0, OptionsFactoryError::InvalidOracleScheme);
-    require(oracle_stale_slots >= 0, OptionsFactoryError::InvalidOracleStaleSlots);
+    require(
+      oracle_authority != context::authority() &&
+      oracle_authority != guardian &&
+      oracle_authority != factory_account,
+      OptionsFactoryError::InvalidAuthoritySeparation
+    );
+    require(stale_slots >= 0, OptionsFactoryError::InvalidOracleStaleSlots);
     OptFactoryInitialized = 1;
     OptFactoryOwner = context::authority();
     OptFactoryGuardian = guardian;
     OptFactoryAccount = factory_account;
     OptFactorySettlementAsset = settlement_asset;
     OptFactoryWithdrawalOnly = 1;
-    OptFactoryRiskVaultContract = risk_vault_contract;
-    OptFactoryManagerContract = manager_contract;
-    OptFactoryVaultContract = vault_contract;
-    OptFactoryShoutContract = shout_contract;
-    OptFactoryOutperformanceContract = outperformance_contract;
-    OptFactoryOraclePublicKey = oracle_public_key;
-    OptFactoryOracleScheme = oracle_scheme;
-    OptFactoryOracleStaleSlots = oracle_stale_slots;
+    OptFactoryOracleAuthority = oracle_authority;
+    OptFactoryOracleStaleSlots = stale_slots;
+    OptFactoryReservedCollateral = zero_quantity();
+    OptFactoryPremiumAccrued = zero_quantity();
+    OptFactorySettledPayouts = zero_quantity();
     OptFactoryAutomationExecutor = context::authority();
     OptFactoryAutomationJobId = 0;
     OptFactoryAutomationCadence = 0;
@@ -601,6 +507,40 @@ seiyaku OptionsFactory {
   kotoage fn exit_withdrawal_only() authorize("Admin") {
     assert_owner();
     OptFactoryWithdrawalOnly = 0;
+  }
+
+  kotoage fn configure_oracle_authority(AccountId oracle_authority) authorize("Admin") {
+    assert_owner();
+    require(
+      oracle_authority != OptFactoryOwner &&
+      oracle_authority != OptFactoryGuardian &&
+      oracle_authority != OptFactoryAccount,
+      OptionsFactoryError::InvalidAuthoritySeparation
+    );
+    OptFactoryOracleAuthority = oracle_authority;
+  }
+
+  kotoage fn configure_oracle_stale_slots(int stale_slots) authorize("Admin") {
+    assert_owner();
+    require(stale_slots >= 0, OptionsFactoryError::InvalidOracleStaleSlots);
+    OptFactoryOracleStaleSlots = stale_slots;
+  }
+
+  kotoage fn withdraw_surplus(
+    AccountId recipient,
+    quantity amount
+  ) authorize("AssetOps") {
+    assert_owner();
+    require(amount > zero_quantity(), OptionsFactoryError::InvalidCollateral);
+    require(
+      factory_balance() >= OptFactoryReservedCollateral + amount,
+      OptionsFactoryError::InsufficientReserve
+    );
+    move_settlement_asset(
+      source: OptFactoryAccount,
+      destination: recipient,
+      amount: amount
+    );
   }
 
   kotoage fn sync_automation(
@@ -680,6 +620,8 @@ seiyaku OptionsFactory {
       OptFactorySeriesAttestationHash[series_id] = 0;
       OptFactorySeriesFinalMark[series_id] = zero_decimal();
       OptFactorySeriesFinalQuoteMark[series_id] = zero_decimal();
+      OptFactorySeriesFinalBaseReturnBps[series_id] = 0;
+      OptFactorySeriesFinalQuoteReturnBps[series_id] = 0;
       OptFactorySeriesSettlementReady[series_id] = 0;
     } else {
       require(
@@ -694,14 +636,6 @@ seiyaku OptionsFactory {
     OptFactorySeriesCollateralMultiplierBps[series_id] = collateral_multiplier_bps;
     OptFactorySeriesExpirySlot[series_id] = expiry_slot;
     OptFactorySeriesStrikeBps[series_id] = strike_bps;
-    vault_sync_series(series_id: series_id);
-    sync_product_series(
-      series_id: series_id,
-      option_kind: option_kind,
-      expiry_slot: expiry_slot,
-      strike_bps: strike_bps,
-      collateral_multiplier_bps: collateral_multiplier_bps
-    );
   }
 
   kotoage fn configure_utilisation_guard(
@@ -734,42 +668,67 @@ seiyaku OptionsFactory {
     return buy_position(series_id: series_id, expected_kind: 2, notional: notional);
   }
 
+  kotoage fn settle_outperformance_series(
+    int series_id,
+    decimal final_mark,
+    decimal final_quote_mark,
+    int base_return_bps,
+    int quote_return_bps,
+    int oracle_slot,
+    int attestation_hash
+  ) authorize("Entry") {
+    apply_oracle_series_settlement(
+      series_id: series_id,
+      final_mark: final_mark,
+      final_quote_mark: final_quote_mark,
+      base_return_bps: base_return_bps,
+      quote_return_bps: quote_return_bps,
+      oracle_slot: oracle_slot,
+      attestation_hash: attestation_hash
+    );
+  }
+
+  kotoage fn publish_shout_mark(
+    int position_id,
+    int mark_price_bps,
+    int oracle_slot,
+    int attestation_hash
+  ) authorize("Entry") {
+    apply_oracle_shout_mark(
+      position_id: position_id,
+      mark_price_bps: mark_price_bps,
+      oracle_slot: oracle_slot,
+      attestation_hash: attestation_hash
+    );
+  }
+
+  kotoage fn exercise_shout_position(int position_id) -> quantity authorize("AssetOps") {
+    assert_position_owner(position_id: position_id);
+    require(OptFactoryPositionKind.get(position_id).unwrap_or(0) == 1, OptionsFactoryError::PositionKindMismatch);
+    require(OptFactoryPositionStatus.get(position_id).unwrap_or(0) == 1, OptionsFactoryError::PositionInactive);
+    require(
+      OptFactoryPositionLastAttestationHash.get(position_id).unwrap_or(0) > 0,
+      OptionsFactoryError::MissingAttestation
+    );
+    let mark_price_bps = OptFactoryPositionLastOracleMarkBps.get(position_id).unwrap_or(0);
+    assert_oracle_fresh(
+      oracle_slot: OptFactoryPositionLastOracleSlot.get(position_id).unwrap_or(-1)
+    );
+    let desired_payout = shout_payout(
+      position_id: position_id,
+      mark_price_bps: mark_price_bps
+    );
+    return close_position(position_id: position_id, desired_payout: desired_payout);
+  }
+
   kotoage fn exercise_outperformance_position(int position_id) -> quantity authorize("AssetOps") {
     assert_position_owner(position_id: position_id);
     require(OptFactoryPositionKind.get(position_id).unwrap_or(0) == 2, OptionsFactoryError::PositionKindMismatch);
     require(OptFactoryPositionStatus.get(position_id).unwrap_or(0) == 1, OptionsFactoryError::PositionInactive);
     let series_id = OptFactoryPositionSeriesId.get(position_id).unwrap_or(0);
     require(OptFactorySeriesSettlementReady.get(series_id).unwrap_or(0) == 1, OptionsFactoryError::SeriesNotExpired);
-    let quoted_payout = contract::invoke(
-      contract: OptFactoryOutperformanceContract,
-      entrypoint: "exercise_position",
-      returns: "quantity",
-      position_id: position_id
-    );
-    let paid = risk_vault_payout(
-      position_id: position_id,
-      recipient: context::authority(),
-      amount: quoted_payout
-    );
-    require(paid == quoted_payout, OptionsFactoryError::PayoutMismatch);
-    vault_settle_position(
-      position_id: position_id,
-      payout: paid,
-      premium_burn: OptFactoryPositionPremiumPaid.get(position_id).unwrap_or(zero_quantity())
-    );
-    risk_vault_release(position_id: position_id);
-    let notional = OptFactoryPositionNotional.get(position_id).unwrap_or(zero_quantity());
-    let open_notional = OptFactorySeriesOpenNotional.get(series_id).unwrap_or(zero_quantity());
-    require(open_notional >= notional, OptionsFactoryError::IndexCorrupt);
-    OptFactorySeriesOpenNotional[series_id] = open_notional - notional;
-    OptFactorySeriesUtilisationBps[series_id] = utilisation_bps(
-      series_id: series_id,
-      next_open_notional: open_notional - notional
-    );
-    OptFactoryPositionRecordedPayout[position_id] = paid;
-    OptFactoryPositionSettlementReady[position_id] = 1;
-    OptFactoryPositionStatus[position_id] = 3;
-    return paid;
+    let desired_payout = outperformance_payout(position_id: position_id);
+    return close_position(position_id: position_id, desired_payout: desired_payout);
   }
 
   kotoage fn native_lifecycle_tick() authorize("AssetOps") {
@@ -806,15 +765,46 @@ seiyaku OptionsFactory {
     OptFactoryLifecycleNextSlot = current_slot + OptFactoryLifecycleCadenceSlots;
   }
 
-  view fn factory_config() -> (AssetDefinitionId, int, int, int, int, int, int) {
+  view fn factory_config() -> (
+    AssetDefinitionId,
+    AccountId,
+    AccountId,
+    int,
+    int,
+    int,
+    int,
+    int,
+    int
+  ) {
     return (
       OptFactorySettlementAsset,
+      OptFactoryAccount,
+      OptFactoryOracleAuthority,
       OptFactoryWithdrawalOnly,
       OptFactoryNextPositionId,
       OptFactoryAutomationJobId,
       OptFactoryAutomationCadence,
       OptFactoryAutomationBacklogCap,
       OptFactoryAutomationSafeMode
+    );
+  }
+
+  view fn oracle_stale_slots() -> int {
+    return OptFactoryOracleStaleSlots;
+  }
+
+  view fn treasury_state() -> (quantity, quantity, quantity, quantity, quantity) {
+    let balance = factory_balance();
+    var surplus = zero_quantity();
+    if balance > OptFactoryReservedCollateral {
+      surplus = balance - OptFactoryReservedCollateral;
+    }
+    return (
+      balance,
+      OptFactoryReservedCollateral,
+      surplus,
+      OptFactoryPremiumAccrued,
+      OptFactorySettledPayouts
     );
   }
 
@@ -842,6 +832,14 @@ seiyaku OptionsFactory {
       OptFactorySeriesPauseThresholdBps.get(series_id).unwrap_or(0),
       OptFactorySeriesBumpPercentBps.get(series_id).unwrap_or(0),
       OptFactorySeriesLastSettlementSlot.get(series_id).unwrap_or(0)
+    );
+  }
+
+  view fn series_terms(int series_id) -> (int, int) {
+    assert_series_exists(series_id: series_id);
+    return (
+      OptFactorySeriesExpirySlot.get(series_id).unwrap_or(0),
+      OptFactorySeriesStrikeBps.get(series_id).unwrap_or(0)
     );
   }
 
@@ -878,6 +876,14 @@ seiyaku OptionsFactory {
       OptFactorySeriesOracleSlot.get(series_id).unwrap_or(-1),
       OptFactorySeriesAttestationHash.get(series_id).unwrap_or(0),
       OptFactorySeriesSettlementReady.get(series_id).unwrap_or(0)
+    );
+  }
+
+  view fn series_returns(int series_id) -> (int, int) {
+    assert_series_exists(series_id: series_id);
+    return (
+      OptFactorySeriesFinalBaseReturnBps.get(series_id).unwrap_or(0),
+      OptFactorySeriesFinalQuoteReturnBps.get(series_id).unwrap_or(0)
     );
   }
 

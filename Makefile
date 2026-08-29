@@ -1,6 +1,6 @@
 SHELL := /bin/zsh
 
-.PHONY: dev-doctor dev-build dev-check dev-test dev-schema dev-smoke lint compile render-validation-fee-payout check-validation-fee-payout compile-validation-fee-payout test-validation-fee-payout plan-validation-fee-deployment apply-validation-fee-deployment test-validation-fee-deployment plan-validation-fee-pool bootstrap-validation-fee-pool check-shell-syntax redact-generated-evidence simulate-build simulate-smoke simulate-full local-up local-down deploy-local smoke-local refresh-testnet-chain refresh-production-chain taira-preflight production-preflight deploy-testnet deploy-production maintain-public-deploy-latest maintain-testnet-deploy-latest maintain-production-deploy-latest publish-trader-api publish-production-trader-api smoke-testnet smoke-testnet-readonly smoke-testnet-trader smoke-testnet-trader-readonly smoke-production smoke-production-readonly smoke-production-trader smoke-production-trader-readonly public-nested-call-probe testnet-nested-call-probe production-nested-call-probe record-rwa-compliance record-testnet-rwa-compliance record-production-rwa-compliance taira-state-repair-plan test-public-env-helpers test-production-auth-config test-release-closeout test-production-cutover test-local test-local-isolated test-local-foundation-isolated contract-console trader-ui test-contract-console test-contract-console-ui test-contract-console-integration test-trader-ui test-contract-console-live test-contract-console-testnet test-contract-console-production soak-contract-console release-taira release-production release-checklist release-production-checklist
+.PHONY: dev-doctor dev-build dev-check dev-test dev-schema dev-smoke lint compile check-shell-syntax redact-generated-evidence simulate-build simulate-smoke simulate-full local-up local-down deploy-local smoke-local refresh-testnet-chain refresh-production-chain taira-preflight production-preflight deploy-testnet deploy-production maintain-public-deploy-latest maintain-testnet-deploy-latest maintain-production-deploy-latest publish-trader-api publish-production-trader-api smoke-testnet smoke-testnet-readonly smoke-testnet-trader smoke-testnet-trader-readonly smoke-production smoke-production-readonly smoke-production-trader smoke-production-trader-readonly public-nested-call-probe testnet-nested-call-probe production-nested-call-probe record-rwa-compliance record-testnet-rwa-compliance record-production-rwa-compliance taira-state-repair-plan test-public-env-helpers test-production-auth-config test-release-closeout test-production-cutover test-local test-local-isolated test-local-foundation-isolated contract-console trader-ui test-contract-console test-contract-console-ui test-contract-console-integration test-trader-ui test-contract-console-live test-contract-console-testnet test-contract-console-production soak-contract-console release-taira release-production release-checklist release-production-checklist
 
 dev-doctor:
 	zsh ./scripts/dev_iroha.sh doctor --manifest iroha.contracts.toml --profile $(or $(SORASWAP_PROFILE),local)
@@ -25,37 +25,6 @@ lint:
 
 compile:
 	zsh ./scripts/compile_contracts.sh
-
-render-validation-fee-payout:
-	zsh ./scripts/validation_fee_payout.sh render "$(SORASWAP_VALIDATION_FEE_PAYOUT_CONFIG)"
-
-check-validation-fee-payout:
-	zsh ./scripts/validation_fee_payout.sh check "$(SORASWAP_VALIDATION_FEE_PAYOUT_CONFIG)"
-
-compile-validation-fee-payout:
-	zsh ./scripts/validation_fee_payout.sh build "$(SORASWAP_VALIDATION_FEE_PAYOUT_CONFIG)"
-
-test-validation-fee-payout:
-	zsh ./scripts/validation_fee_payout.sh test "$(SORASWAP_VALIDATION_FEE_PAYOUT_CONFIG)"
-
-plan-validation-fee-deployment:
-	zsh ./scripts/apply_validation_fee_deployment.sh plan
-
-apply-validation-fee-deployment:
-	zsh ./scripts/apply_validation_fee_deployment.sh apply
-
-test-validation-fee-deployment:
-	python3 -m unittest tests/test_prepare_validation_fee_deployment.py
-	python3 -m unittest tests/test_publish_immutable_json.py
-	python3 -m unittest tests/test_validate_validation_fee_write_gate.py
-	zsh ./tests/validation_fee_deployment_evidence_smoke.sh
-	zsh ./tests/validation_fee_one_write_smoke.sh
-
-plan-validation-fee-pool:
-	zsh ./scripts/bootstrap_validation_fee_pool.sh plan
-
-bootstrap-validation-fee-pool:
-	zsh ./scripts/bootstrap_validation_fee_pool.sh apply
 
 check-shell-syntax:
 	zsh ./scripts/check_shell_syntax.sh
@@ -163,12 +132,14 @@ taira-state-repair-plan:
 	zsh ./scripts/taira_state_repair_plan.sh
 
 test-public-env-helpers:
+	zsh ./tests/taira_write_canary_helper_smoke.sh
 	zsh ./tests/public_env_helper_smoke.sh
 	$(MAKE) test-production-auth-config
 
 test-production-auth-config:
 	python3 -m unittest -v tests.test_secure_client_config
 	zsh ./tests/production_auth_config_smoke.sh
+	zsh ./tests/retired_testnet_identity_env_smoke.sh
 
 test-release-closeout:
 	zsh ./tests/release_closeout_smoke.sh

@@ -51,20 +51,12 @@ if [[ "$(jq -r '.status // empty' <<<"$snapshot_check_json")" != "completed" ]];
 fi
 
 n3x_hub_contract="$(deployed_contract_id_for_env "$public_env" n3x.n3x_hub)"
-n3x_hub_dataspace="$(deployed_contract_dataspace_for_env "$public_env" n3x.n3x_hub)"
 dlmm_pool_contract="$(deployed_contract_id_for_env "$public_env" dlmm.dlmm_pool)"
-dlmm_pool_dataspace="$(deployed_contract_dataspace_for_env "$public_env" dlmm.dlmm_pool)"
 dlmm_router_contract="$(deployed_contract_id_for_env "$public_env" dlmm.dlmm_router)"
-dlmm_router_dataspace="$(deployed_contract_dataspace_for_env "$public_env" dlmm.dlmm_router)"
 batch_epoch_auction_contract="$(deployed_contract_id_for_env "$public_env" batch_amm.epoch_auction)"
 launchpad_sale_factory_contract="$(deployed_contract_id_for_env "$public_env" launchpad.sale_factory)"
-risk_vault_contract="$(deployed_contract_id_for_env "$public_env" risk.risk_vault)"
 perps_engine_contract="$(deployed_contract_id_for_env "$public_env" perps.perps_engine)"
-options_manager_contract="$(deployed_contract_id_for_env "$public_env" options.manager)"
 options_factory_contract="$(deployed_contract_id_for_env "$public_env" options.factory)"
-options_vault_contract="$(deployed_contract_id_for_env "$public_env" options.vault)"
-options_shout_option_contract="$(deployed_contract_id_for_env "$public_env" options.shout_option)"
-options_outperformance_option_contract="$(deployed_contract_id_for_env "$public_env" options.outperformance_option)"
 cover_policy_manager_contract="$(deployed_contract_id_for_env "$public_env" cover.policy_manager)"
 intents_settlement_router_contract="$(deployed_contract_id_for_env "$public_env" intents.settlement_router)"
 vaults_manager_contract="$(deployed_contract_id_for_env "$public_env" vaults.manager)"
@@ -97,29 +89,18 @@ if [[ -f "$report_dir/deploy.latest.json" ]]; then
   deploy_snapshot_json="$(cat "$report_dir/deploy.latest.json")"
 fi
 
-xor_id="$SORASWAP_XOR_ASSET_DEFINITION_ID"
-if resolved_xor_id="$(asset_definition_id_for_alias "$config" "$SORASWAP_BASE_ASSET_ALIAS" 2>/dev/null)"; then
-  xor_id="$resolved_xor_id"
-else
-  echo "$public_env smoke: base asset alias $SORASWAP_BASE_ASSET_ALIAS is not query-visible; using configured fallback $SORASWAP_XOR_ASSET_DEFINITION_ID" >&2
-fi
+xor_id="$(asset_definition_id_for_alias "$config" "$SORASWAP_BASE_ASSET_ALIAS")"
 if [[ "$xor_id" != "$SORASWAP_XOR_ASSET_DEFINITION_ID" ]]; then
   echo "unexpected XOR asset definition id for $SORASWAP_BASE_ASSET_ALIAS: $xor_id" >&2
   exit 1
 fi
 
-null_view_json='{"ok":true,"result":null}'
-
-view_if_initialized() {
+required_contract_view() {
   local contract_id="$1"
   local entrypoint="$2"
   local payload_json="${3:-null}"
 
-  if submit_contract_view "$config" "$contract_id" "$entrypoint" "$SORASWAP_SMOKE_GAS_LIMIT" "$payload_json" 2>/dev/null; then
-    return 0
-  fi
-
-  printf '%s\n' "$null_view_json"
+  submit_contract_view "$config" "$contract_id" "$entrypoint" "$SORASWAP_SMOKE_GAS_LIMIT" "$payload_json"
 }
 
 typeset -a contract_keys
@@ -175,9 +156,9 @@ soraswap_launch_dlmm_hook_id="${SORASWAP_LAUNCH_DLMM_HOOK_ID:-dynamic_fee}"
 
 n3x_quote_view_json="$(submit_contract_view "$config" "$n3x_hub_contract" quote_mint "$SORASWAP_SMOKE_GAS_LIMIT" "$(
   jq -cn \
-    --argjson usdt_in 1 \
-    --argjson usdc_in 2 \
-    --argjson kusd_in 3 \
+    --arg usdt_in 1 \
+    --arg usdc_in 2 \
+    --arg kusd_in 3 \
     '{
       usdt_in: $usdt_in,
       usdc_in: $usdc_in,
@@ -187,15 +168,15 @@ n3x_quote_view_json="$(submit_contract_view "$config" "$n3x_hub_contract" quote_
 
 router_quote_view_json="$(submit_contract_view "$config" "$dlmm_router_contract" quote_bin "$SORASWAP_SMOKE_GAS_LIMIT" "$(
   jq -cn \
-    --argjson reserve_base 1000 \
-    --argjson reserve_quote 1000 \
-    --argjson amount_in "$router_bin_quote_in" \
-    --argjson fee_pips "$pool_fee_pips" \
-    --argjson bin_id 0 \
-    --argjson bin_step "$pool_bin_step" \
-    --argjson input_is_base 1 \
-    --argjson min_reserve_base "$pool_min_reserve_base" \
-    --argjson min_reserve_quote "$pool_min_reserve_quote" \
+    --arg reserve_base 1000 \
+    --arg reserve_quote 1000 \
+    --arg amount_in "$router_bin_quote_in" \
+    --arg fee_pips "$pool_fee_pips" \
+    --arg bin_id 0 \
+    --arg bin_step "$pool_bin_step" \
+    --arg input_is_base 1 \
+    --arg min_reserve_base "$pool_min_reserve_base" \
+    --arg min_reserve_quote "$pool_min_reserve_quote" \
     '{
       reserve_base: $reserve_base,
       reserve_quote: $reserve_quote,
@@ -212,8 +193,8 @@ router_quote_view_json="$(submit_contract_view "$config" "$dlmm_router_contract"
 
 router_select_view_json="$(submit_contract_view "$config" "$dlmm_router_contract" select_best_quote "$SORASWAP_SMOKE_GAS_LIMIT" "$(
   jq -cn \
-    --argjson direct_out 180 \
-    --argjson via_base_out 200 \
+    --arg direct_out 180 \
+    --arg via_base_out 200 \
     '{
       direct_out: $direct_out,
       via_base_out: $via_base_out
@@ -224,54 +205,43 @@ n3x_assert_view_json="$(submit_contract_view "$config" "$n3x_hub_contract" asser
 n3x_mirror_view_json="$(submit_contract_view "$config" "$n3x_hub_contract" mirror_state "$SORASWAP_SMOKE_GAS_LIMIT")"
 router_assert_view_json="$(submit_contract_view "$config" "$dlmm_router_contract" assert_router_config "$SORASWAP_SMOKE_GAS_LIMIT" "$(
   jq -cn \
-    --argjson default_fee_pips "$pool_fee_pips" \
+    --arg default_fee_pips "$pool_fee_pips" \
     '{ default_fee_pips: $default_fee_pips }'
 )")"
 router_mirror_view_json="$(submit_contract_view "$config" "$dlmm_router_contract" mirror_state "$SORASWAP_SMOKE_GAS_LIMIT")"
 pool_mirror_view_json="$(submit_contract_view "$config" "$dlmm_pool_contract" mirror_state "$SORASWAP_SMOKE_GAS_LIMIT")"
-risk_vault_bucket_1_view_json="$(view_if_initialized "$risk_vault_contract" bucket_state '{"bucket_id":1}')"
-risk_vault_bucket_2_view_json="$(view_if_initialized "$risk_vault_contract" bucket_state '{"bucket_id":2}')"
-risk_vault_bucket_3_view_json="$(view_if_initialized "$risk_vault_contract" bucket_state '{"bucket_id":3}')"
-risk_vault_state_view_json="$(view_if_initialized "$risk_vault_contract" risk_state)"
-perps_engine_config_view_json="$(view_if_initialized "$perps_engine_contract" engine_config)"
-perps_market_state_view_json="$(view_if_initialized "$perps_engine_contract" market_state '{"market_id":1}')"
-perps_risk_state_view_json="$(view_if_initialized "$perps_engine_contract" risk_state '{"market_id":1}')"
-perps_automation_view_json="$(view_if_initialized "$perps_engine_contract" automation_state)"
-options_manager_config_view_json="$(view_if_initialized "$options_manager_contract" manager_config)"
-options_shout_template_view_json="$(view_if_initialized "$options_manager_contract" template_state '{"template_id":1}')"
-options_outperformance_template_view_json="$(view_if_initialized "$options_manager_contract" template_state '{"template_id":2}')"
-options_shout_series_view_json="$(view_if_initialized "$options_manager_contract" series_state '{"series_id":1}')"
-options_outperformance_series_view_json="$(view_if_initialized "$options_manager_contract" series_state '{"series_id":2}')"
-options_manager_automation_view_json="$(view_if_initialized "$options_manager_contract" automation_state)"
-options_factory_config_view_json="$(view_if_initialized "$options_factory_contract" factory_config)"
-options_factory_shout_series_view_json="$(view_if_initialized "$options_factory_contract" series_state '{"series_id":1}')"
-options_factory_outperformance_series_view_json="$(view_if_initialized "$options_factory_contract" series_state '{"series_id":2}')"
-options_factory_automation_view_json="$(view_if_initialized "$options_factory_contract" automation_state)"
-options_vault_shout_view_json="$(view_if_initialized "$options_vault_contract" vault_state '{"series_id":1}')"
-options_vault_outperformance_view_json="$(view_if_initialized "$options_vault_contract" vault_state '{"series_id":2}')"
-options_shout_product_view_json="$(view_if_initialized "$options_shout_option_contract" series_state '{"series_id":1}')"
-options_outperformance_product_view_json="$(view_if_initialized "$options_outperformance_option_contract" series_state '{"series_id":2}')"
-cover_manager_config_view_json="$(view_if_initialized "$cover_policy_manager_contract" manager_config)"
-cover_automation_view_json="$(view_if_initialized "$cover_policy_manager_contract" automation_state)"
-launch_vault_state_view_json="$(view_if_initialized "$vaults_manager_contract" vault_state "$(jq -cn --arg vault_id "$soraswap_launch_vault_id" '{vault_id:$vault_id}')")"
-launch_operator_state_view_json="$(view_if_initialized "$operators_registry_contract" operator_state "$(jq -cn --arg service "$soraswap_launch_operator_service" '{service:$service}')")"
-launch_margin_market_view_json="$(view_if_initialized "$margin_portfolio_margin_contract" market_state "$(jq -cn --arg market_id "$soraswap_launch_margin_market_id" '{market_id:$market_id}')")"
-launch_margin_account_view_json="$(view_if_initialized "$margin_portfolio_margin_contract" account_health "$(jq -cn --arg account_key "$soraswap_launch_margin_account_key" '{account_key:$account_key}')")"
-launch_rwa_market_view_json="$(view_if_initialized "$rwa_market_contract" rwa_market_state "$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" '{market_id:$market_id}')")"
-launch_dlmm_hook_policy_view_json="$(view_if_initialized "$dlmm_hooks_manager_contract" hook_policy "$(jq -cn --arg hook_id "$soraswap_launch_dlmm_hook_id" '{hook_id:$hook_id}')")"
+perps_engine_config_view_json="$(required_contract_view "$perps_engine_contract" engine_config)"
+perps_collateral_pool_view_json="$(required_contract_view "$perps_engine_contract" collateral_pool_state)"
+perps_market_oracle_view_json="$(required_contract_view "$perps_engine_contract" market_oracle_state '{"market_id":"1"}')"
+perps_market_state_view_json="$(required_contract_view "$perps_engine_contract" market_state '{"market_id":"1"}')"
+perps_risk_state_view_json="$(required_contract_view "$perps_engine_contract" risk_state '{"market_id":"1"}')"
+perps_automation_view_json="$(required_contract_view "$perps_engine_contract" automation_state)"
+options_factory_config_view_json="$(required_contract_view "$options_factory_contract" factory_config)"
+options_factory_treasury_view_json="$(required_contract_view "$options_factory_contract" treasury_state)"
+options_factory_shout_series_view_json="$(required_contract_view "$options_factory_contract" series_state '{"series_id":"1"}')"
+options_factory_outperformance_series_view_json="$(required_contract_view "$options_factory_contract" series_state '{"series_id":"2"}')"
+options_factory_automation_view_json="$(required_contract_view "$options_factory_contract" automation_state)"
+cover_manager_config_view_json="$(required_contract_view "$cover_policy_manager_contract" manager_config)"
+cover_reserve_view_json="$(required_contract_view "$cover_policy_manager_contract" reserve_state)"
+cover_automation_view_json="$(required_contract_view "$cover_policy_manager_contract" automation_state)"
+launch_vault_state_view_json="$(required_contract_view "$vaults_manager_contract" vault_state "$(jq -cn --arg vault_id "$soraswap_launch_vault_id" '{vault_id:$vault_id}')")"
+launch_operator_state_view_json="$(required_contract_view "$operators_registry_contract" operator_state "$(jq -cn --arg service "$soraswap_launch_operator_service" '{service:$service}')")"
+launch_margin_market_view_json="$(required_contract_view "$margin_portfolio_margin_contract" market_state "$(jq -cn --arg market_id "$soraswap_launch_margin_market_id" '{market_id:$market_id}')")"
+launch_margin_account_view_json="$(required_contract_view "$margin_portfolio_margin_contract" account_health "$(jq -cn --arg account_key "$soraswap_launch_margin_account_key" '{account_key:$account_key}')")"
+launch_rwa_market_view_json="$(required_contract_view "$rwa_market_contract" rwa_market_state "$(jq -cn --arg market_id "$soraswap_launch_rwa_market_id" '{market_id:$market_id}')")"
+launch_dlmm_hook_policy_view_json="$(required_contract_view "$dlmm_hooks_manager_contract" hook_policy "$(jq -cn --arg hook_id "$soraswap_launch_dlmm_hook_id" '{hook_id:$hook_id}')")"
 trigger_registration_evidence_json="$(soraswap_collect_trigger_registration_evidence "$config")"
 soraswap_assert_expected_triggers_registered "$trigger_registration_evidence_json"
 trigger_completion_probe_json="$(soraswap_collect_trigger_completions "$config" "" "${SORASWAP_TRIGGER_COMPLETION_PROBE_MS:-1000}" "${SORASWAP_TRIGGER_COMPLETION_PROBE_LIMIT:-5}")"
-epoch_auction_state_view_json="$(view_if_initialized "$batch_epoch_auction_contract" epoch_state)"
-dlmm_range_governor_view_json="$(view_if_initialized "$dlmm_pool_contract" range_governor_state)"
-twamm_trigger_state_view_json="$(view_if_initialized "$dlmm_hooks_manager_contract" twamm_trigger_state)"
-options_manager_lifecycle_view_json="$(view_if_initialized "$options_manager_contract" trigger_lifecycle_state)"
-options_factory_lifecycle_view_json="$(view_if_initialized "$options_factory_contract" trigger_lifecycle_state)"
-cover_lifecycle_view_json="$(view_if_initialized "$cover_policy_manager_contract" trigger_lifecycle_state)"
-launchpad_lifecycle_view_json="$(view_if_initialized "$launchpad_sale_factory_contract" trigger_lifecycle_state)"
-vault_lifecycle_view_json="$(view_if_initialized "$vaults_manager_contract" trigger_lifecycle_state)"
-perps_lifecycle_view_json="$(view_if_initialized "$perps_engine_contract" trigger_lifecycle_state)"
-conditional_escrow_state_view_json="$(view_if_initialized "$escrow_conditional_escrow_contract" escrow_state "$(jq -cn --arg escrow_id "readonly_probe" '{escrow_id:$escrow_id}')")"
+epoch_auction_state_view_json="$(required_contract_view "$batch_epoch_auction_contract" epoch_state)"
+dlmm_range_governor_view_json="$(required_contract_view "$dlmm_pool_contract" range_governor_state)"
+twamm_trigger_state_view_json="$(required_contract_view "$dlmm_hooks_manager_contract" twamm_trigger_state)"
+options_factory_lifecycle_view_json="$(required_contract_view "$options_factory_contract" trigger_lifecycle_state)"
+cover_lifecycle_view_json="$(required_contract_view "$cover_policy_manager_contract" trigger_lifecycle_state)"
+launchpad_lifecycle_view_json="$(required_contract_view "$launchpad_sale_factory_contract" trigger_lifecycle_state)"
+vault_lifecycle_view_json="$(required_contract_view "$vaults_manager_contract" trigger_lifecycle_state)"
+perps_lifecycle_view_json="$(required_contract_view "$perps_engine_contract" trigger_lifecycle_state)"
+conditional_escrow_state_view_json="$(required_contract_view "$escrow_conditional_escrow_contract" escrow_state "$(jq -cn --arg escrow_id "readonly_probe" '{escrow_id:$escrow_id}')")"
 
 decoded_state_ints='{}'
 decoded_state_ints="$(jq -c '. + $add' \
@@ -392,29 +362,19 @@ report_json="$(jq -n \
   --argjson n3x_mirror_result "$(contract_view_result_json "$n3x_mirror_view_json")" \
   --argjson router_mirror_result "$(contract_view_result_json "$router_mirror_view_json")" \
   --argjson pool_mirror_result "$(contract_view_result_json "$pool_mirror_view_json")" \
-  --argjson risk_vault_bucket_1_result "$(contract_view_result_json "$risk_vault_bucket_1_view_json")" \
-  --argjson risk_vault_bucket_2_result "$(contract_view_result_json "$risk_vault_bucket_2_view_json")" \
-  --argjson risk_vault_bucket_3_result "$(contract_view_result_json "$risk_vault_bucket_3_view_json")" \
-  --argjson risk_vault_state_result "$(contract_view_result_json "$risk_vault_state_view_json")" \
   --argjson perps_engine_config_result "$(contract_view_result_json "$perps_engine_config_view_json")" \
+  --argjson perps_collateral_pool_result "$(contract_view_result_json "$perps_collateral_pool_view_json")" \
+  --argjson perps_market_oracle_result "$(contract_view_result_json "$perps_market_oracle_view_json")" \
   --argjson perps_market_state_result "$(contract_view_result_json "$perps_market_state_view_json")" \
   --argjson perps_risk_state_result "$(contract_view_result_json "$perps_risk_state_view_json")" \
   --argjson perps_automation_result "$(contract_view_result_json "$perps_automation_view_json")" \
-  --argjson options_manager_config_result "$(contract_view_result_json "$options_manager_config_view_json")" \
-  --argjson options_shout_template_result "$(contract_view_result_json "$options_shout_template_view_json")" \
-  --argjson options_outperformance_template_result "$(contract_view_result_json "$options_outperformance_template_view_json")" \
-  --argjson options_shout_series_result "$(contract_view_result_json "$options_shout_series_view_json")" \
-  --argjson options_outperformance_series_result "$(contract_view_result_json "$options_outperformance_series_view_json")" \
-  --argjson options_manager_automation_result "$(contract_view_result_json "$options_manager_automation_view_json")" \
   --argjson options_factory_config_result "$(contract_view_result_json "$options_factory_config_view_json")" \
+  --argjson options_factory_treasury_result "$(contract_view_result_json "$options_factory_treasury_view_json")" \
   --argjson options_factory_shout_series_result "$(contract_view_result_json "$options_factory_shout_series_view_json")" \
   --argjson options_factory_outperformance_series_result "$(contract_view_result_json "$options_factory_outperformance_series_view_json")" \
   --argjson options_factory_automation_result "$(contract_view_result_json "$options_factory_automation_view_json")" \
-  --argjson options_vault_shout_result "$(contract_view_result_json "$options_vault_shout_view_json")" \
-  --argjson options_vault_outperformance_result "$(contract_view_result_json "$options_vault_outperformance_view_json")" \
-  --argjson options_shout_product_result "$(contract_view_result_json "$options_shout_product_view_json")" \
-  --argjson options_outperformance_product_result "$(contract_view_result_json "$options_outperformance_product_view_json")" \
   --argjson cover_manager_config_result "$(contract_view_result_json "$cover_manager_config_view_json")" \
+  --argjson cover_reserve_result "$(contract_view_result_json "$cover_reserve_view_json")" \
   --argjson cover_automation_result "$(contract_view_result_json "$cover_automation_view_json")" \
   --argjson launch_vault_state_result "$(contract_view_result_json "$launch_vault_state_view_json")" \
   --argjson launch_operator_state_result "$(contract_view_result_json "$launch_operator_state_view_json")" \
@@ -426,7 +386,6 @@ report_json="$(jq -n \
   --argjson epoch_auction_state_result "$(contract_view_result_json "$epoch_auction_state_view_json")" \
   --argjson dlmm_range_governor_result "$(contract_view_result_json "$dlmm_range_governor_view_json")" \
   --argjson twamm_trigger_state_result "$(contract_view_result_json "$twamm_trigger_state_view_json")" \
-  --argjson options_manager_lifecycle_result "$(contract_view_result_json "$options_manager_lifecycle_view_json")" \
   --argjson options_factory_lifecycle_result "$(contract_view_result_json "$options_factory_lifecycle_view_json")" \
   --argjson cover_lifecycle_result "$(contract_view_result_json "$cover_lifecycle_view_json")" \
   --argjson launchpad_lifecycle_result "$(contract_view_result_json "$launchpad_lifecycle_view_json")" \
@@ -477,29 +436,19 @@ report_json="$(jq -n \
       dlmm_router_assert_config: $router_assert_result,
       dlmm_router_mirror_state: $router_mirror_result,
       dlmm_pool_mirror_state: $pool_mirror_result,
-      risk_vault_bucket_1: $risk_vault_bucket_1_result,
-      risk_vault_bucket_2: $risk_vault_bucket_2_result,
-      risk_vault_bucket_3: $risk_vault_bucket_3_result,
-      risk_vault_state: $risk_vault_state_result,
       perps_engine_config: $perps_engine_config_result,
+      perps_collateral_pool: $perps_collateral_pool_result,
+      perps_market_oracle: $perps_market_oracle_result,
       perps_market_state: $perps_market_state_result,
       perps_risk_state: $perps_risk_state_result,
       perps_automation_state: $perps_automation_result,
-      options_manager_config: $options_manager_config_result,
-      options_shout_template: $options_shout_template_result,
-      options_outperformance_template: $options_outperformance_template_result,
-      options_shout_series: $options_shout_series_result,
-      options_outperformance_series: $options_outperformance_series_result,
-      options_manager_automation: $options_manager_automation_result,
       options_factory_config: $options_factory_config_result,
+      options_factory_treasury: $options_factory_treasury_result,
       options_factory_shout_series: $options_factory_shout_series_result,
       options_factory_outperformance_series: $options_factory_outperformance_series_result,
       options_factory_automation: $options_factory_automation_result,
-      options_vault_shout: $options_vault_shout_result,
-      options_vault_outperformance: $options_vault_outperformance_result,
-      options_shout_product: $options_shout_product_result,
-      options_outperformance_product: $options_outperformance_product_result,
       cover_manager_config: $cover_manager_config_result,
+      cover_reserve: $cover_reserve_result,
       cover_automation_state: $cover_automation_result,
       launch_vault_state: $launch_vault_state_result,
       launch_operator_state: $launch_operator_state_result,
@@ -510,7 +459,6 @@ report_json="$(jq -n \
       epoch_auction_state: $epoch_auction_state_result,
       dlmm_range_governor: $dlmm_range_governor_result,
       twamm_trigger_state: $twamm_trigger_state_result,
-      options_manager_lifecycle: $options_manager_lifecycle_result,
       options_factory_lifecycle: $options_factory_lifecycle_result,
       cover_lifecycle: $cover_lifecycle_result,
       launchpad_lifecycle: $launchpad_lifecycle_result,

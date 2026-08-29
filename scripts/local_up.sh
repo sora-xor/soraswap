@@ -12,6 +12,7 @@ local_client="$localnet_dir/client.toml"
 base_api_port="${SORASWAP_LOCALNET_BASE_API_PORT:-8080}"
 base_p2p_port="${SORASWAP_LOCALNET_BASE_P2P_PORT:-1337}"
 consensus_mode="${SORASWAP_LOCALNET_CONSENSUS_MODE:-npos}"
+localnet_peers="${SORASWAP_LOCALNET_PEERS:-4}"
 localnet_guest_stack_bytes="${SORASWAP_LOCALNET_GUEST_STACK_BYTES:-8388608}"
 localnet_gas_to_stack_multiplier="${SORASWAP_LOCALNET_GAS_TO_STACK_MULTIPLIER:-8}"
 localnet_memory_budget_profile="${SORASWAP_LOCALNET_MEMORY_BUDGET_PROFILE:-soraswap-dlmm}"
@@ -19,6 +20,7 @@ localnet_max_stack_bytes="${SORASWAP_LOCALNET_MAX_STACK_BYTES:-$localnet_guest_s
 localnet_commit_inflight_timeout_ms="${SORASWAP_LOCALNET_COMMIT_INFLIGHT_TIMEOUT_MS:-120000}"
 localnet_block_time_ms="${SORASWAP_LOCALNET_BLOCK_TIME_MS:-}"
 localnet_commit_time_ms="${SORASWAP_LOCALNET_COMMIT_TIME_MS:-}"
+localnet_toolchain_target_dir="${localnet_dir}.toolchain"
 
 soraswap_require_positive_integer_at_most_setting "SORASWAP_LOCALNET_BASE_API_PORT" "$base_api_port" 65535 || exit 1
 soraswap_require_positive_integer_at_most_setting "SORASWAP_LOCALNET_BASE_P2P_PORT" "$base_p2p_port" 65535 || exit 1
@@ -26,11 +28,19 @@ soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_GUEST_STACK_BYTES" 
 soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_GAS_TO_STACK_MULTIPLIER" "$localnet_gas_to_stack_multiplier" || exit 1
 soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_MAX_STACK_BYTES" "$localnet_max_stack_bytes" || exit 1
 soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_COMMIT_INFLIGHT_TIMEOUT_MS" "$localnet_commit_inflight_timeout_ms" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_PEERS" "$localnet_peers" || exit 1
 [[ -z "$localnet_block_time_ms" ]] || soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_BLOCK_TIME_MS" "$localnet_block_time_ms" || exit 1
 [[ -z "$localnet_commit_time_ms" ]] || soraswap_require_positive_integer_setting "SORASWAP_LOCALNET_COMMIT_TIME_MS" "$localnet_commit_time_ms" || exit 1
 
 mkdir -p "$SORASWAP_ROOT/tmp"
 ensure_localnet_tool_bins
+mkdir -p "$localnet_toolchain_target_dir/debug"
+command ln -sfn "$SORASWAP_ACTIVE_IROHA3D_BIN" \
+  "$localnet_toolchain_target_dir/debug/iroha3d"
+command ln -sfn "$SORASWAP_ACTIVE_LOCALNET_IROHA_BIN" \
+  "$localnet_toolchain_target_dir/debug/iroha"
+command ln -sfn "$SORASWAP_ACTIVE_LOCALNET_KAGAMI_BIN" \
+  "$localnet_toolchain_target_dir/debug/kagami"
 
 if [[ -f "$peer_pid_file" ]]; then
   pid="$(cat "$peer_pid_file")"
@@ -43,15 +53,15 @@ fi
 localnet_args=(
   --iroha-dir "$SORASWAP_IROHA_ROOT"
   --out-dir "$localnet_dir"
-  --peers 1
-  --build-line iroha3
+  --peers "$localnet_peers"
   --consensus-mode "$consensus_mode"
   --base-api-port "$base_api_port"
   --base-p2p-port "$base_p2p_port"
   --bind-host 127.0.0.1
   --public-host 127.0.0.1
-  --skip-asset-register
   --timeout 60
+  --target-dir "$localnet_toolchain_target_dir"
+  --no-build
   --force
 )
 

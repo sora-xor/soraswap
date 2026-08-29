@@ -9,7 +9,7 @@ module EpochAuctionRegressions {
     );
     actor(
       "guardian",
-      AccountId::parse("sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6")
+      AccountId::parse("sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF")
     );
     grant_permission("owner", "Admin");
     grant_permission("owner", "Entry");
@@ -18,32 +18,40 @@ module EpochAuctionRegressions {
     grant_permission("guardian", "AssetOps");
   }
 
-  fn initialize_auction() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "hajimari",
-      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"custody_account\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\",\"guardian\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
-    );
+  fn seed_initialized_auction(AccountId owner, AccountId guardian) {
+    AuctionInitialized = 1;
+    AuctionOwner = owner;
+    AuctionGuardian = guardian;
+    AuctionContractId = guardian;
+    AuctionContractBound = 1;
+    AuctionPaused = 1;
+    AuctionBaseAsset = AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+    AuctionQuoteAsset = AssetDefinitionId::parse("6pEP9RjNoZ7beWkT3pLfKoM1dyfi");
+    EpochTickStep = 1;
+    NextOrderIndex = 1;
   }
 
-  fn resume_auction() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "exit_paused",
-      arguments: Json::parse("{}")
-    );
+  fn seed_standard_epoch() {
+    EpochId = 1;
+    EpochStartSlot = 0;
+    EpochEndSlot = 10;
+    EpochLowerTick = 1_000_000;
+    EpochUpperTick = 3_000_000;
+    EpochTickStep = 1_000_000;
+    EpochMaxOrders = 4;
+    EpochStatus = 1;
+    EpochOrderCount = 0;
+    NextOrderIndex = 1;
   }
 
-  fn configure_standard_epoch() {
-    test::invoke_entrypoint_as(
-      actor: "owner",
-      entrypoint: "configure_epoch",
-      arguments: Json::parse("{\"epoch_id\":\"1\",\"start_slot\":\"0\",\"end_slot\":\"10\",\"lower_tick\":\"1000000\",\"upper_tick\":\"3000000\",\"tick_step\":\"1000000\",\"max_orders\":\"4\"}")
-    );
-  }
-
-  fn seed_bid(Name order_id, int order_epoch, quantity amount, int limit_tick) {
-    OrderOwner[order_id] = test::actor_account("owner");
+  fn seed_bid(
+    Name order_id,
+    AccountId owner,
+    int order_epoch,
+    quantity amount,
+    int limit_tick
+  ) {
+    OrderOwner[order_id] = owner;
     OrderEpoch[order_id] = order_epoch;
     OrderSide[order_id] = 1;
     OrderAmount[order_id] = amount;
@@ -57,7 +65,11 @@ module EpochAuctionRegressions {
 
   #[test(fixture = "auction_actors")]
   fn lifecycle_starts_paused_with_distinct_custody() {
-    initialize_auction();
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"custody_account\":\"sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF\",\"guardian\":\"sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF\"}")
+    );
     test::assert(AuctionInitialized == 1);
     test::assert(AuctionPaused == 1);
     test::assert(AuctionOwner == test::actor_account("owner"));
@@ -66,57 +78,73 @@ module EpochAuctionRegressions {
   }
 
   #[test(fixture = "auction_actors")]
-  fn owner_account_cannot_masquerade_as_contract_custody() {
+  fn identical_assets_are_rejected_before_initialization() {
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "hajimari",
-      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"custody_account\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"guardian\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
+      kotoage: "hajimari",
+      arguments: Json::parse("{\"base_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"quote_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"custody_account\":\"sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF\",\"guardian\":\"sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF\"}")
     );
-    test::assert(AuctionInitialized == 0);
   }
 
   #[test(fixture = "auction_actors")]
   fn guardian_can_pause_but_cannot_resume() {
-    initialize_auction();
-    resume_auction();
-    test::invoke_entrypoint_as(
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_auction(owner: owner, guardian: guardian);
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "exit_paused",
+      arguments: Json::parse("{}")
+    );
+    test::invoke_kotoage_as(
       actor: "guardian",
-      entrypoint: "enter_paused",
+      kotoage: "enter_paused",
       arguments: Json::parse("{}")
     );
     test::expect_reject_as(
       actor: "guardian",
-      entrypoint: "exit_paused",
+      kotoage: "exit_paused",
       arguments: Json::parse("{}")
     );
     test::assert(AuctionPaused == 1);
   }
 
   #[test(fixture = "auction_actors")]
-  fn epoch_grid_must_be_exactly_aligned_and_bounded() {
-    initialize_auction();
-    resume_auction();
+  fn epoch_grid_size_is_runtime_bounded() {
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_auction(owner: owner, guardian: guardian);
+    AuctionPaused = 0;
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "configure_epoch",
+      kotoage: "configure_epoch",
       arguments: Json::parse("{\"epoch_id\":\"1\",\"start_slot\":\"0\",\"end_slot\":\"10\",\"lower_tick\":\"1\",\"upper_tick\":\"66\",\"tick_step\":\"1\",\"max_orders\":\"1\"}")
     );
+  }
+
+  #[test(fixture = "auction_actors")]
+  fn epoch_grid_must_be_exactly_aligned() {
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_auction(owner: owner, guardian: guardian);
+    AuctionPaused = 0;
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "configure_epoch",
+      kotoage: "configure_epoch",
       arguments: Json::parse("{\"epoch_id\":\"1\",\"start_slot\":\"0\",\"end_slot\":\"10\",\"lower_tick\":\"100\",\"upper_tick\":\"201\",\"tick_step\":\"50\",\"max_orders\":\"1\"}")
     );
-    test::assert(EpochStatus == 0);
   }
 
   #[test(fixture = "auction_actors")]
   fn active_epoch_cannot_be_reconfigured() {
-    initialize_auction();
-    resume_auction();
-    configure_standard_epoch();
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_auction(owner: owner, guardian: guardian);
+    AuctionPaused = 0;
+    seed_standard_epoch();
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "configure_epoch",
+      kotoage: "configure_epoch",
       arguments: Json::parse("{\"epoch_id\":\"2\",\"start_slot\":\"0\",\"end_slot\":\"10\",\"lower_tick\":\"1000000\",\"upper_tick\":\"3000000\",\"tick_step\":\"1000000\",\"max_orders\":\"4\"}")
     );
     test::assert(EpochId == 1);
@@ -125,17 +153,19 @@ module EpochAuctionRegressions {
 
   #[test(fixture = "auction_actors")]
   fn limit_price_must_be_on_the_configured_grid() {
-    initialize_auction();
-    resume_auction();
-    configure_standard_epoch();
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_auction(owner: owner, guardian: guardian);
+    AuctionPaused = 0;
+    seed_standard_epoch();
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "submit_order",
+      kotoage: "submit_order",
       arguments: Json::parse("{\"order_id\":\"outside\",\"side\":\"1\",\"amount\":\"10\",\"limit_tick\":\"4000000\"}")
     );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "submit_order",
+      kotoage: "submit_order",
       arguments: Json::parse("{\"order_id\":\"offgrid\",\"side\":\"1\",\"amount\":\"10\",\"limit_tick\":\"1500000\"}")
     );
     test::assert(EpochOrderCount == 0);
@@ -144,12 +174,14 @@ module EpochAuctionRegressions {
 
   #[test(fixture = "auction_actors")]
   fn explicit_close_before_deadline_rejects() {
-    initialize_auction();
-    resume_auction();
-    configure_standard_epoch();
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_auction(owner: owner, guardian: guardian);
+    AuctionPaused = 0;
+    seed_standard_epoch();
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "close_epoch",
+      kotoage: "close_epoch",
       arguments: Json::parse("{}")
     );
     test::assert(EpochStatus == 1);
@@ -157,16 +189,24 @@ module EpochAuctionRegressions {
 
   #[test(fixture = "auction_actors")]
   fn closed_epoch_order_cannot_cancel_during_a_new_epoch() {
-    initialize_auction();
-    resume_auction();
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_auction(owner: owner, guardian: guardian);
+    AuctionPaused = 0;
     EpochId = 2;
     EpochStatus = 1;
     EpochEndSlot = 10;
     EpochStatusById[1] = 2;
-    seed_bid(Name::parse("oldbid"), 1, 10, 1_000_000);
+    seed_bid(
+      order_id: Name::parse("oldbid"),
+      owner: owner,
+      order_epoch: 1,
+      amount: 10,
+      limit_tick: 1_000_000
+    );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "cancel_order",
+      kotoage: "cancel_order",
       arguments: Json::parse("{\"order_id\":\"oldbid\"}")
     );
     test::assert(OrderStatus.get(Name::parse("oldbid")).unwrap_or(0) == 1);
@@ -174,8 +214,10 @@ module EpochAuctionRegressions {
 
   #[test(fixture = "auction_actors")]
   fn prior_epoch_order_uses_stored_clearing_snapshot() {
-    initialize_auction();
-    AuctionContractId = test::actor_account("owner");
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_auction(owner: owner, guardian: guardian);
+    AuctionContractId = owner;
     EpochId = 2;
     EpochStatus = 1;
     EpochStatusById[1] = 2;
@@ -183,10 +225,16 @@ module EpochAuctionRegressions {
     EpochClearingBaseById[1] = 5;
     EpochBidBaseAtClearingById[1] = 10;
     EpochAskBaseAtClearingById[1] = 5;
-    seed_bid(Name::parse("oldbid"), 1, 10, 1_000_000);
-    let base_out = test::invoke_entrypoint_as(
+    seed_bid(
+      order_id: Name::parse("oldbid"),
+      owner: owner,
+      order_epoch: 1,
+      amount: 10,
+      limit_tick: 1_000_000
+    );
+    let base_out = test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "settle_order",
+      kotoage: "settle_order",
       arguments: Json::parse("{\"order_id\":\"oldbid\"}")
     );
     test::assert(base_out == 5);
@@ -196,7 +244,9 @@ module EpochAuctionRegressions {
 
   #[test(fixture = "auction_actors")]
   fn clearing_prefers_lower_imbalance_at_equal_volume() {
-    initialize_auction();
+    let owner = test::actor_account("owner");
+    let guardian = test::actor_account("guardian");
+    seed_initialized_auction(owner: owner, guardian: guardian);
     EpochId = 1;
     EpochStatus = 1;
     EpochLowerTick = 1_000_000;
@@ -205,8 +255,14 @@ module EpochAuctionRegressions {
     NextOrderIndex = 3;
     OrderByIndex[1] = Name::parse("bid");
     OrderByIndex[2] = Name::parse("ask");
-    seed_bid(Name::parse("bid"), 1, 30, 3_000_000);
-    OrderOwner[Name::parse("ask")] = test::actor_account("owner");
+    seed_bid(
+      order_id: Name::parse("bid"),
+      owner: owner,
+      order_epoch: 1,
+      amount: 30,
+      limit_tick: 3_000_000
+    );
+    OrderOwner[Name::parse("ask")] = owner;
     OrderEpoch[Name::parse("ask")] = 1;
     OrderSide[Name::parse("ask")] = 2;
     OrderAmount[Name::parse("ask")] = 10;

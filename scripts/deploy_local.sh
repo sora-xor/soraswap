@@ -7,16 +7,13 @@ config="$(client_config_or_default local)"
 ensure_client "$config"
 ensure_authority "$config"
 deploy_scope="${SORASWAP_DEPLOY_SCOPE:-full}"
-deploy_manifest="$(contract_app_manifest_path)"
-tmp_deploy_manifest=""
+typeset -A deploy_contract_key_set
+deploy_contract_count=0
 prepare_env_chain_state local "$config"
 deploy_report_init local "$config"
 
 deploy_failed=1
 cleanup_deploy_local() {
-  if [[ -n "${tmp_deploy_manifest:-}" ]]; then
-    rm -f "$tmp_deploy_manifest"
-  fi
   if [[ ${deploy_failed:-1} -ne 0 ]]; then
     deploy_report_finish local failed || true
   fi
@@ -26,17 +23,14 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-if [[ "$deploy_scope" == "foundation" ]]; then
-  foundation_contract_keys=("${(@f)$(expected_contract_ids_for_deploy_scope foundation)}")
-  mkdir -p "$SORASWAP_ROOT/tmp"
-  tmp_deploy_manifest="$(mktemp "$SORASWAP_ROOT/tmp/soraswap-foundation-manifest.XXXXXX")"
-  write_contract_app_manifest_subset "$deploy_manifest" "$tmp_deploy_manifest" \
-    "${foundation_contract_keys[@]}"
-  deploy_manifest="$tmp_deploy_manifest"
-elif [[ "$deploy_scope" != "full" ]]; then
+if [[ "$deploy_scope" != "foundation" && "$deploy_scope" != "full" ]]; then
   echo "unsupported SORASWAP_DEPLOY_SCOPE: $deploy_scope" >&2
   exit 2
 fi
+while IFS= read -r contract_key; do
+  [[ -n "$contract_key" ]] || continue
+  deploy_contract_key_set[$contract_key]=1
+done < <(expected_contract_ids_for_deploy_scope "$deploy_scope")
 
 deploy_report_set_phase local preflight running "$(jq -cn \
   --arg authority "$SORASWAP_AUTHORITY" \
@@ -55,39 +49,41 @@ zsh "$SORASWAP_ROOT/scripts/bootstrap_assets.sh" local
 deploy_report_set_phase local bootstrap_assets completed null
 
 deploy_report_set_phase local compile running null
-zsh "$SORASWAP_ROOT/scripts/compile_contracts.sh"
-deploy_report_set_phase local compile completed null
+if [[ "$deploy_scope" == "full" ]]; then
+  zsh "$SORASWAP_ROOT/scripts/compile_contracts.sh"
+else
+  soraswap_require_contract_source_hygiene "$SORASWAP_ROOT" "foundation compile failed" || exit 1
+  while IFS= read -r contract; do
+    contract_key="$(contract_id_for "$contract")"
+    [[ -n "${deploy_contract_key_set[$contract_key]:-}" ]] || continue
+    compile_one "$contract"
+  done < <(list_contracts)
+fi
+deploy_report_set_phase local compile completed "$(jq -cn --arg deploy_scope "$deploy_scope" '{deploy_scope: $deploy_scope}')"
 
 while IFS= read -r contract; do
   contract_key="$(contract_id_for "$contract")"
+  [[ -n "${deploy_contract_key_set[$contract_key]:-}" ]] || continue
   rm -f \
     "$(deployment_record_path_for_env local "$contract_key")" \
     "$SORASWAP_ROOT/deployments/local/${contract_key}.manifest.json"
 done < <(list_contracts)
-rm -f "$(contract_bundle_receipt_path_for_env local)"
 
 deploy_report_set_phase local deploy running null
-bundle_receipt_json="$(submit_contract_app_manifest_for_env local "$config" "$deploy_manifest")"
+while IFS= read -r contract; do
+  contract_key="$(contract_id_for "$contract")"
+  [[ -n "${deploy_contract_key_set[$contract_key]:-}" ]] || continue
+  deploy_one "$config" "$contract" local
+  deploy_contract_count=$(( deploy_contract_count + 1 ))
+done < <(list_contracts)
 deploy_report_set_phase local deploy completed "$(jq -cn \
-  --arg bundle_digest "$(jq -r '.bundle_digest' <<<"$bundle_receipt_json")" \
-  --arg total "$(jq -r '.contracts | length' <<<"$bundle_receipt_json")" \
+  --argjson total "$deploy_contract_count" \
   --arg deploy_scope "$deploy_scope" \
-  --argjson chunked "$(jq -r '(.chunked // false)' <<<"$bundle_receipt_json")" \
-  --argjson chunks "$(jq -c '(.chunks // [])' <<<"$bundle_receipt_json")" \
   '{
-    bundle_digest: $bundle_digest,
-    contract_count: ($total|tonumber),
+    strategy: "ivm_contract_deploy_per_contract",
+    contract_count: $total,
     deploy_scope: $deploy_scope
-  } + (if $chunked then {
-    chunked: true,
-    chunk_count: ($chunks | length),
-    chunks: ($chunks | map({
-      index,
-      bundle_digest,
-      contract_count,
-      contracts
-    }))
-  } else {} end)')"
+  }')"
 
 deploy_report_set_phase local bootstrap_contract_state running null
 zsh "$SORASWAP_ROOT/scripts/bootstrap_contract_state.sh" local
@@ -104,10 +100,6 @@ snapshot_json="$(deployment_records_snapshot_json_for_env local "$timestamp")"
 soraswap_write_json_report_pair "$snapshot_json" "$contracts_latest_path" "$contracts_timestamped_path"
 deploy_report_set_phase local deployment_records_snapshot completed "$(jq -cn --arg path "$(soraswap_display_path "$contracts_timestamped_path")" '{snapshot: $path}')"
 deploy_report_finish local completed
-if [[ -n "${tmp_deploy_manifest:-}" ]]; then
-  rm -f "$tmp_deploy_manifest"
-  tmp_deploy_manifest=""
-fi
 deploy_failed=0
 trap - EXIT
 trap - HUP INT TERM

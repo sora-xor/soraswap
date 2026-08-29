@@ -13,7 +13,7 @@ seiyaku PreludeSmoke {
     );
     actor(
       "attacker",
-      AccountId::parse("sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6")
+      AccountId::parse("sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF")
     );
     grant_permission("owner", "Entry");
     grant_permission("attacker", "Entry");
@@ -76,7 +76,7 @@ seiyaku PreludeSmoke {
   fn first_release_quantity_underflow_rejects() {
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "checked_sub_probe",
+      kotoage: "checked_sub_probe",
       arguments: Json::parse("{\"left\":\"1\",\"right\":\"2\"}")
     );
   }
@@ -85,40 +85,40 @@ seiyaku PreludeSmoke {
   fn first_release_basis_points_are_bounded() {
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "basis_point_fee_probe",
+      kotoage: "basis_point_fee_probe",
       arguments: Json::parse("{\"amount\":\"100\",\"basis_points\":\"-1\"}")
     );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "basis_point_fee_probe",
+      kotoage: "basis_point_fee_probe",
       arguments: Json::parse("{\"amount\":\"100\",\"basis_points\":\"10001\"}")
     );
   }
 
   #[test(fixture = "actors")]
   fn first_release_authority_checks_use_actor_context() {
-    test::invoke_entrypoint_as(
+    test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "require_authority_payload",
+      kotoage: "require_authority_payload",
       arguments: Json::parse("{\"expected\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\"}")
     );
     test::expect_reject_as(
       actor: "attacker",
-      entrypoint: "require_authority_payload",
+      kotoage: "require_authority_payload",
       arguments: Json::parse("{\"expected\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\"}")
     );
     test::expect_reject_as(
       actor: "owner",
-      entrypoint: "require_authority_payload",
-      arguments: Json::parse("{\"expected\":\"sorauﾛ1NcMBm2dﾌBokヱDﾑﾅekAbｶﾍﾜﾇﾐMFｽヱﾋZﾘ2u4WGUMMS63EY6\"}")
+      kotoage: "require_authority_payload",
+      arguments: Json::parse("{\"expected\":\"sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF\"}")
     );
   }
 
   #[test(fixture = "actors")]
   fn first_release_context_view_uses_test_runtime() {
-    let height = test::invoke_entrypoint_as(
+    let height = test::invoke_kotoage_as(
       actor: "owner",
-      entrypoint: "current_block_height",
+      kotoage: "current_block_height",
       arguments: Json::parse("{}")
     );
     test::assert(height == 0);

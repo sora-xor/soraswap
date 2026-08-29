@@ -234,69 +234,20 @@ if (( reuse_contracts == 1 )); then
       contracts_snapshot: $reuse_check.contracts_snapshot
     }')"
 else
-  bundle_status=0
-  bundle_receipt_json="$(
-    while IFS= read -r contract; do
-      contract_key="$(contract_id_for "$contract")"
-      rm -f \
-        "$(deployment_record_path_for_env "$public_env" "$contract_key")" \
-        "$SORASWAP_ROOT/deployments/${public_env}/${contract_key}.manifest.json"
-    done < <(list_contracts)
-    rm -f "$(contract_bundle_receipt_path_for_env "$public_env")"
-    submit_contract_app_manifest_for_env "$public_env" "$config"
-  )" || bundle_status="$?"
-  if (( bundle_status == 0 )); then
-    deploy_report_set_phase "$public_env" deploy completed "$(jq -cn \
-      --arg bundle_digest "$(jq -r '.bundle_digest' <<<"$bundle_receipt_json")" \
-      --arg total "$(jq -r '.contracts | length' <<<"$bundle_receipt_json")" \
-      --argjson chunked "$(jq -r '(.chunked // false)' <<<"$bundle_receipt_json")" \
-      --argjson chunks "$(jq -c '(.chunks // [])' <<<"$bundle_receipt_json")" \
-      '{
-        strategy: "bundle",
-        bundle_digest: $bundle_digest,
-        contract_count: ($total|tonumber)
-      } + (if $chunked then {
-        chunked: true,
-        chunk_count: ($chunks | length),
-        chunks: ($chunks | map({
-          index,
-          bundle_digest,
-          contract_count,
-          contracts
-        }))
-      } else {} end)')"
-  elif (( bundle_status == 75 )); then
-    deploy_report_set_phase "$public_env" deploy failed "$(deploy_report_phase_failure_detail_json \
-      "$config" \
-      "$bundle_status" \
-      "submit_contract_app_manifest_for_env $public_env $(soraswap_display_path "$config")")" || true
-    echo "$public_env deploy blocked: contract app bundle deployment stopped because public write health is degraded" >&2
-    exit "$bundle_status"
-  else
-    bundle_health_status=0
-    soraswap_require_public_write_health_ready \
-      "$public_env" \
-      "$config" \
-      "$public_env deploy direct fallback after contract app bundle failure" || bundle_health_status=$?
-    if (( bundle_health_status != 0 )); then
-      deploy_report_set_phase "$public_env" deploy failed "$(deploy_report_phase_failure_detail_json \
-        "$config" \
-        "$bundle_health_status" \
-        "submit_contract_app_manifest_for_env $public_env $(soraswap_display_path "$config")")" || true
-      echo "$public_env deploy blocked: contract app bundle deployment stopped because public write health is degraded" >&2
-      exit "$bundle_health_status"
-    fi
-    echo "$public_env deploy warning: contract app bundle deployment failed; falling back to direct per-contract deployment" >&2
-    deploy_report_run_phase_command "$public_env" "$config" deploy \
-      deploy_public_direct_per_contract || exit $?
-    deploy_report_set_phase "$public_env" deploy completed "$(jq -cn \
-      --arg strategy "direct_per_contract" \
-      --arg total "$(list_contracts | wc -l | tr -d ' ')" \
-      '{
-        strategy: $strategy,
-        contract_count: ($total|tonumber)
-      }')"
-  fi
+  while IFS= read -r contract; do
+    contract_key="$(contract_id_for "$contract")"
+    rm -f \
+      "$(deployment_record_path_for_env "$public_env" "$contract_key")" \
+      "$SORASWAP_ROOT/deployments/${public_env}/${contract_key}.manifest.json"
+  done < <(list_contracts)
+  deploy_report_run_phase_command "$public_env" "$config" deploy \
+    deploy_public_direct_per_contract || exit $?
+  deploy_report_set_phase "$public_env" deploy completed "$(jq -cn \
+    --arg total "$(list_contracts | wc -l | tr -d ' ')" \
+    '{
+      strategy: "ivm_contract_deploy_per_contract",
+      contract_count: ($total|tonumber)
+    }')"
 fi
 
 if [[ "$init_contract_state" == "1" ]]; then

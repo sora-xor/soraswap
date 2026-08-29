@@ -180,8 +180,9 @@ def main() -> None:
             or observation["observed_duration_seconds"] < observer.DURATION_SECONDS:
         fail("observation duration is shorter than thirty minutes")
     expected_summary = {
-        "validator_qc_finality_agreement": True,
-        "queues_drained": True,
+        "sumeragi_v2_finality_agreement": True,
+        "transaction_queues_drained": True,
+        "sumeragi_v2_liveness_healthy": True,
         "api_failures": 0,
         "oracle_fresh": True,
         "minimum_fee_preserved": True,
@@ -257,7 +258,8 @@ def main() -> None:
         fail("observation sample cadence is invalid")
     if (sample_times[-1] - sample_times[0]).total_seconds() < observer.DURATION_SECONDS:
         fail("observation sample timestamps span less than thirty minutes")
-    if samples[-1]["commit_qc_height"] <= samples[0]["commit_qc_height"]:
+    if samples[-1]["sumeragi"]["last_committed_height"] \
+            <= samples[0]["sumeragi"]["last_committed_height"]:
         fail("production finality did not advance during observation")
     if observation.get("started_at") != samples[0].get("sampled_at") \
             or observation.get("completed_at") != samples[-1].get("sampled_at"):

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
+source "$SORASWAP_ROOT/scripts/sorafs_publish_summary_validation.sh"
 
 public_env="${SORASWAP_PUBLIC_ENV:-testnet}"
 case "$public_env" in
@@ -20,25 +21,26 @@ cid_probe_interval_secs="${SORASWAP_TRADER_API_PROBE_INTERVAL_SECS:-1}"
 cid_probe_body_max_chars="${SORASWAP_TRADER_API_PROBE_BODY_MAX_CHARS:-8192}"
 registry_visibility_attempt_count="${SORASWAP_TRADER_API_REGISTRY_VISIBILITY_ATTEMPTS:-30}"
 registry_visibility_retry_delay_secs="${SORASWAP_TRADER_API_REGISTRY_VISIBILITY_RETRY_DELAY_SECS:-2}"
-storage_pin_propagation_attempt_count="${SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_ATTEMPTS:-8}"
-storage_pin_propagation_retry_delay_secs="${SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_RETRY_DELAY_SECS:-2}"
+gateway_propagation_attempt_count="${SORASWAP_TRADER_API_GATEWAY_PROPAGATION_ATTEMPTS:-8}"
+gateway_propagation_retry_delay_secs="${SORASWAP_TRADER_API_GATEWAY_PROPAGATION_RETRY_DELAY_SECS:-2}"
 binding_publish="${SORASWAP_PUBLISH_TRADER_API_BINDING:-0}"
 soraswap_require_positive_integer_setting "SORASWAP_TRADER_API_PROBE_ATTEMPTS" "$cid_probe_attempt_count" || exit 1
 soraswap_require_nonnegative_number_setting "SORASWAP_TRADER_API_PROBE_INTERVAL_SECS" "$cid_probe_interval_secs" || exit 1
 soraswap_require_positive_integer_setting "SORASWAP_TRADER_API_PROBE_BODY_MAX_CHARS" "$cid_probe_body_max_chars" || exit 1
 soraswap_require_positive_integer_setting "SORASWAP_TRADER_API_REGISTRY_VISIBILITY_ATTEMPTS" "$registry_visibility_attempt_count" || exit 1
 soraswap_require_nonnegative_number_setting "SORASWAP_TRADER_API_REGISTRY_VISIBILITY_RETRY_DELAY_SECS" "$registry_visibility_retry_delay_secs" || exit 1
-soraswap_require_positive_integer_setting "SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_ATTEMPTS" "$storage_pin_propagation_attempt_count" || exit 1
-soraswap_require_nonnegative_number_setting "SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_RETRY_DELAY_SECS" "$storage_pin_propagation_retry_delay_secs" || exit 1
+soraswap_require_positive_integer_setting "SORASWAP_TRADER_API_GATEWAY_PROPAGATION_ATTEMPTS" "$gateway_propagation_attempt_count" || exit 1
+soraswap_require_nonnegative_number_setting "SORASWAP_TRADER_API_GATEWAY_PROPAGATION_RETRY_DELAY_SECS" "$gateway_propagation_retry_delay_secs" || exit 1
 soraswap_require_binary_integer_setting "SORASWAP_PUBLISH_TRADER_API_BINDING" "$binding_publish" || exit 1
 soraswap_require_binary_integer_setting "SORASWAP_SKIP_IROHA_CLI_BUILD" "${SORASWAP_SKIP_IROHA_CLI_BUILD:-0}" || exit 1
 
 config="$(client_config_or_default "$public_env")"
-candidate_client_config="${config:A}"
 ensure_client "$config"
 ensure_authority "$config"
 prepare_env_chain_state "$public_env" "$config"
 chain_fingerprint_json="$(chain_fingerprint_json_or_null)"
+manifest_network_id="$(network_id_from_config "$config")" || exit 1
+manifest_network_prefix="$(chain_discriminant_for_env_config "$public_env" "$config")" || exit 1
 ensure_public_signer_ready "$config" "$SORASWAP_AUTHORITY" verify-only || exit 1
 if [[ "$public_env" == "production" ]]; then
   require_production_operator_permissions "$config" "$SORASWAP_AUTHORITY" || exit 1
@@ -131,6 +133,8 @@ mkdir -p "$report_dir" "$artifact_dir"
 trader_api_report_tmp_dir=""
 publisher_private_key_file=""
 api_token_file=""
+api_token_value=""
+config_set_stderr_file=""
 
 cleanup_trader_api_report_tmp_dir() {
   local cleanup_status=0
@@ -143,6 +147,11 @@ cleanup_trader_api_report_tmp_dir() {
     && ! soraswap_secure_unlink_owned_file "$api_token_file"; then
     cleanup_status=1
   fi
+  if [[ -n "${config_set_stderr_file:-}" ]] \
+    && ! soraswap_secure_unlink_owned_file "$config_set_stderr_file"; then
+    cleanup_status=1
+  fi
+  api_token_value=""
   return "$cleanup_status"
 }
 
@@ -199,10 +208,21 @@ sorafs_cli() {
   "$SORASWAP_ACTIVE_SORAFS_CLI_BIN" "$@"
 }
 
-run_sorafs_cli_redacted() {
+run_sorafs_cli_checked() {
+  local stdout_mode="$1"
+  shift
   local output="" exit_code=1 stderr_file="" stderr_output="" redacted_output redacted_stderr_output arg file_path
   local cleanup_status=0
   local -a secret_file_paths
+
+  case "$stdout_mode" in
+    raw|redacted)
+      ;;
+    *)
+      echo "internal error: invalid sorafs_cli stdout mode: $stdout_mode" >&2
+      return 1
+      ;;
+  esac
 
   secret_file_paths=()
 
@@ -212,17 +232,13 @@ run_sorafs_cli_redacted() {
         echo "refusing inline secret option for sorafs_cli: ${arg%%=*}" >&2
         return 1
         ;;
-      --client-config=*|--private-key-file=*|--api-token-file=*)
+      --private-key-file=*)
         file_path="${arg#*=}"
         if [[ -z "$file_path" || "$file_path" != /* || "${file_path:A}" != "$file_path" ]]; then
           echo "refusing a non-canonical file-backed secret/config path for sorafs_cli: ${arg%%=*}" >&2
           return 1
         fi
-        case "$arg" in
-          --private-key-file=*|--api-token-file=*)
-            secret_file_paths+=("$file_path")
-            ;;
-        esac
+        secret_file_paths+=("$file_path")
         ;;
     esac
   done
@@ -254,9 +270,7 @@ run_sorafs_cli_redacted() {
     printf '%s\n' "$redacted_stderr_output" >&2
   fi
   if (( exit_code != 0 )); then
-    if [[ "$stderr_output$output" == *"--client-config"* && "$stderr_output$output" == *("unrecognised option"|"unexpected argument"|"unknown option")* ]]; then
-      echo "sorafs_cli lacks required --client-config support; refusing unauthenticated fallback" >&2
-    elif [[ "$stderr_output$output" == *"--private-key-file"* && "$stderr_output$output" == *("unrecognised option"|"unexpected argument"|"unknown option")* ]]; then
+    if [[ "$stderr_output$output" == *"--private-key-file"* && "$stderr_output$output" == *("unrecognised option"|"unexpected argument"|"unknown option")* ]]; then
       echo "sorafs_cli lacks required --private-key-file support; refusing inline private key fallback" >&2
     fi
     if [[ -n "$redacted_output" ]]; then
@@ -264,10 +278,22 @@ run_sorafs_cli_redacted() {
     fi
     return "$exit_code"
   fi
-  if [[ -n "$redacted_output" ]]; then
-    printf '%s\n' "$redacted_output"
+  if [[ -n "$output" ]]; then
+    if [[ "$stdout_mode" == "raw" ]]; then
+      printf '%s\n' "$output"
+    else
+      printf '%s\n' "$redacted_output"
+    fi
   fi
   return 0
+}
+
+run_sorafs_cli_redacted() {
+  run_sorafs_cli_checked redacted "$@"
+}
+
+run_sorafs_cli_raw_stdout() {
+  run_sorafs_cli_checked raw "$@"
 }
 
 trader_api_redact_artifact_file_in_place() {
@@ -340,33 +366,6 @@ wait_for_trader_api_paid_pin_record() {
 
   echo "paid SoraFS registry record for manifest $manifest_digest_hex was not visible after $registry_visibility_attempt_count attempts" >&2
   return 1
-}
-
-json_file_or_null() {
-  local path="$1"
-  local raw
-
-  raw="$(cat "$path" 2>/dev/null || true)"
-  if [[ -n "${raw//[$'\r\n\t ']}" ]] && jq -e . >/dev/null 2>&1 <<<"$raw"; then
-    jq -c . <<<"$raw"
-  else
-    echo 'null'
-  fi
-}
-
-pin_trader_api_storage() {
-  local summary_path="$1"
-  local response_path="$2"
-
-  run_sorafs_cli_redacted storage pin \
-    --manifest="$manifest_path" \
-    --payload="$payload_dir" \
-    --client-config="$candidate_client_config" \
-    --torii-url="$torii_base" \
-    --summary-out="$summary_path" \
-    --response-out="$response_path" >/dev/null
-  trader_api_redact_artifact_file_in_place "$summary_path"
-  trader_api_redact_artifact_file_in_place "$response_path"
 }
 
 routes_json="$(
@@ -545,6 +544,9 @@ jq -n \
     app_id: $app_id,
     routes: $routes
   }' > "$api_manifest_path"
+expected_payload_file_count=1
+api_manifest_size="$(LC_ALL=C wc -c <"$api_manifest_path" | tr -d '[:space:]')"
+soraswap_require_positive_integer_setting "trader API manifest byte size" "$api_manifest_size" || exit 1
 
 car_path="$artifact_dir/app-api.car"
 plan_path="$artifact_dir/app-api.plan.json"
@@ -552,8 +554,9 @@ car_summary_path="$artifact_dir/app-api.car.summary.json"
 manifest_path="$artifact_dir/app-api.manifest.to"
 manifest_json_path="$artifact_dir/app-api.manifest.json"
 manifest_build_summary_path="$artifact_dir/app-api.manifest.summary.json"
-pin_summary_path="$artifact_dir/app-api.pin.summary.json"
-pin_response_path="$artifact_dir/app-api.pin.response.json"
+provider_payload_path="$artifact_dir/app-api.provider.payload.bin"
+provider_files_path="$artifact_dir/app-api.provider.files.json"
+provider_prepare_summary_path="$artifact_dir/app-api.provider.prepare.summary.json"
 registry_submit_summary_path="$artifact_dir/app-api.registry.submit.summary.json"
 registry_submit_response_path="$artifact_dir/app-api.registry.submit.response.json"
 registry_visibility_path="$artifact_dir/app-api.registry.visibility.json"
@@ -564,27 +567,106 @@ registry_visibility_error_path="$artifact_dir/app-api.registry.visibility.error"
 run_sorafs_cli_redacted car pack \
   --input="$payload_dir" \
   --car-out="$car_path" \
+  --chunker-handle=sorafs.sf1@1.0.0 \
   --plan-out="$plan_path" \
   --summary-out="$car_summary_path" >/dev/null
-
-manifest_build_summary_json="$(run_sorafs_cli_redacted manifest build \
-  --summary="$car_summary_path" \
-  --manifest-out="$manifest_path" \
-  --manifest-json-out="$manifest_json_path")"
-printf '%s\n' "$manifest_build_summary_json" > "$manifest_build_summary_path"
-manifest_digest_hex="$(jq -r '.manifest_digest_hex // empty' <<<"$manifest_build_summary_json")"
-if [[ -z "$manifest_digest_hex" || ! "$manifest_digest_hex" =~ '^[0-9a-fA-F]{64}$' ]]; then
-  echo "failed to derive manifest digest from SoraFS manifest build output" >&2
+if [[ ! -s "$car_path" || ! -s "$plan_path" || ! -s "$car_summary_path" ]]; then
+  echo "current SoraFS car pack did not create every required output artifact" >&2
   exit 1
 fi
+car_size_bytes="$(LC_ALL=C wc -c <"$car_path" | tr -d '[:space:]')"
+soraswap_require_positive_integer_setting "SoraFS CAR byte size" "$car_size_bytes" || exit 1
+if ! car_summary_json="$(soraswap_validate_sorafs_car_directory_summary \
+  "$car_summary_path" \
+  "$payload_dir" \
+  "$car_path" \
+  "$expected_payload_file_count" \
+  "$car_size_bytes" \
+  "$api_manifest_size" 2>/dev/null)"; then
+  echo "current SoraFS car pack summary is missing, invalid, or mismatched" >&2
+  exit 1
+fi
+car_chunk_count="$(jq -r '.chunk_count' <<<"$car_summary_json")"
+car_digest_hex="$(jq -r '.car_digest_hex' <<<"$car_summary_json")"
+car_chunk_digest_sha3_hex="$(jq -r '.chunk_digest_sha3_256_hex' <<<"$car_summary_json")"
+
+manifest_build_summary_raw="$(run_sorafs_cli_raw_stdout manifest build \
+  --summary="$car_summary_path" \
+  --manifest-out="$manifest_path" \
+  --manifest-json-out="$manifest_json_path" \
+  --pin-min-replicas=1 \
+  --pin-storage-class=hot \
+  --pin-retention-epoch=86400)"
+if [[ ! -s "$manifest_path" || ! -s "$manifest_json_path" ]]; then
+  echo "current SoraFS manifest build did not create every required output artifact" >&2
+  exit 1
+fi
+if ! manifest_build_summary_json="$(soraswap_validate_sorafs_manifest_build_summary \
+  <(printf '%s\n' "$manifest_build_summary_raw") \
+  "$manifest_path" \
+  "$manifest_json_path" \
+  "$car_summary_json" 2>/dev/null)"; then
+  echo "current SoraFS manifest build summary is missing, invalid, or mismatched" >&2
+  exit 1
+fi
+printf '%s\n' "$(soraswap_redact_sensitive_text "$manifest_build_summary_json")" > "$manifest_build_summary_path"
+manifest_digest_hex="$(jq -r '.manifest_digest_hex' <<<"$manifest_build_summary_json")"
+
+provider_prepare_raw="$(run_sorafs_cli_raw_stdout storage prepare \
+  --manifest="$manifest_path" \
+  --payload="$payload_dir" \
+  --payload-out="$provider_payload_path" \
+  --files-out="$provider_files_path" \
+  --summary-out="$provider_prepare_summary_path")"
+if [[ ! -s "$provider_payload_path" || ! -s "$provider_files_path" || ! -s "$provider_prepare_summary_path" ]]; then
+  echo "current SoraFS storage prepare did not create every required output artifact" >&2
+  exit 1
+fi
+if ! provider_prepare_file_json="$(jq -ce . "$provider_prepare_summary_path" 2>/dev/null)" \
+  || ! provider_prepare_stdout_json="$(jq -ce . <<<"$provider_prepare_raw" 2>/dev/null)" \
+  || [[ "$provider_prepare_file_json" != "$provider_prepare_stdout_json" ]]; then
+  echo "current SoraFS storage prepare stdout does not match its summary artifact" >&2
+  exit 1
+fi
+provider_payload_size="$(LC_ALL=C wc -c <"$provider_payload_path" | tr -d '[:space:]')"
+soraswap_require_positive_integer_setting "SoraFS provider payload byte size" "$provider_payload_size" || exit 1
+if ! provider_prepare_json="$(soraswap_validate_sorafs_storage_prepare_summary \
+  "$provider_prepare_summary_path" \
+  "$manifest_path" \
+  "$payload_dir" \
+  "$provider_payload_path" \
+  "$provider_files_path" \
+  "$manifest_build_summary_json" \
+  "$car_summary_json" \
+  "$provider_payload_size" 2>/dev/null)"; then
+  echo "current SoraFS storage prepare summary is missing, invalid, or mismatched" >&2
+  exit 1
+fi
+if ! soraswap_validate_sorafs_storage_directory_files \
+  "$provider_files_path" \
+  "${api_manifest_path:t}" \
+  "$api_manifest_size" >/dev/null 2>&1; then
+  echo "current SoraFS storage prepare file index is missing, invalid, or mismatched" >&2
+  exit 1
+fi
+if ! cmp -s "$provider_payload_path" "$api_manifest_path"; then
+  echo "current SoraFS storage prepare payload does not match the published API manifest" >&2
+  exit 1
+fi
+printf '%s\n' "$provider_prepare_json" > "$provider_prepare_summary_path"
+manifest_id_hex="$(jq -r '.manifest_id_hex' <<<"$provider_prepare_json")"
+provider_chunker_handle="$(jq -r '.chunker_handle' <<<"$provider_prepare_json")"
+provider_prepare_json="$(soraswap_redact_sensitive_text "$provider_prepare_json")"
+trader_api_redact_artifact_file_in_place "$car_summary_path"
+trader_api_redact_artifact_file_in_place "$provider_prepare_summary_path"
 
 publisher_private_key_file="$(soraswap_config_private_key_temp_file "$config" trader-api-publisher-key)" || exit 1
 publisher_submit_status=0
 if ! run_sorafs_cli_redacted manifest submit \
   --manifest="$manifest_path" \
-  --client-config="$candidate_client_config" \
   --torii-url="$torii_base" \
-  --resolve-submitted-epoch=true \
+  --network-id="$manifest_network_id" \
+  --network-prefix="$manifest_network_prefix" \
   --chunk-plan="$plan_path" \
   --authority="$SORASWAP_AUTHORITY" \
   --private-key-file="$publisher_private_key_file" \
@@ -597,112 +679,113 @@ if ! soraswap_secure_unlink_owned_file "$publisher_private_key_file"; then
 fi
 publisher_private_key_file=""
 (( publisher_submit_status == 0 )) || exit 1
-trader_api_redact_artifact_file_in_place "$registry_submit_summary_path"
-trader_api_redact_artifact_file_in_place "$registry_submit_response_path"
 wait_for_trader_api_paid_pin_record \
   "$manifest_digest_hex" \
   "$registry_visibility_path" \
   "$registry_visibility_attempts_path" \
   "$registry_visibility_body_path" \
   "$registry_visibility_error_path"
-
-pin_trader_api_storage "$pin_summary_path" "$pin_response_path"
-
-pin_summary_json="$(cat "$pin_summary_path" 2>/dev/null || true)"
-pin_response_json="$(json_file_or_null "$pin_response_path")"
-if [[ -z "${pin_summary_json//[$'\r\n\t ']}" ]] || ! jq -e . >/dev/null 2>&1 <<<"$pin_summary_json"; then
-  car_summary_json="$(jq -c . "$car_summary_path" 2>/dev/null || echo 'null')"
-  manifest_id_hex="$(jq -r '.root_cids_hex[0] // empty' "$car_summary_path" 2>/dev/null || true)"
-  if [[ -z "$manifest_id_hex" ]]; then
-    manifest_id_hex="$(/usr/bin/python3 - "$manifest_json_path" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as handle:
-    manifest = json.load(handle)
-root_cid = manifest.get("root_cid") or []
-try:
-    print(bytes(int(item) for item in root_cid).hex())
-except (TypeError, ValueError):
-    print("")
-PY
-)"
-  fi
-  if [[ -z "$manifest_id_hex" ]]; then
-    echo "failed to derive manifest id from SoraFS CAR summary" >&2
-    exit 1
-  fi
-  pin_summary_json="$(jq -cn \
-    --arg torii_url "$torii_base" \
-    --arg torii_endpoint "$torii_base/v1/sorafs/storage/pin" \
-    --arg manifest_path "$(soraswap_display_path "$manifest_path")" \
-    --arg payload_path "$(soraswap_display_path "$payload_dir")" \
-    --arg manifest_digest_hex "$manifest_digest_hex" \
-    --arg manifest_id_hex "$manifest_id_hex" \
-    --argjson car_summary "$car_summary_json" \
-    --argjson response "$pin_response_json" \
-    '{
-      status: 200,
-      already_stored: false,
-      torii_url: $torii_url,
-      torii_endpoint: $torii_endpoint,
-      manifest_path: $manifest_path,
-      payload_path: $payload_path,
-      payload_kind: ($car_summary.input_kind // "directory"),
-      payload_bytes: ($car_summary.payload_bytes // null),
-      payload_file_count: ($car_summary.file_count // null),
-      chunker_handle: ($car_summary.chunker_handle // null),
-      manifest_digest_hex: $manifest_digest_hex,
-      manifest_id_hex: $manifest_id_hex,
-      torii_response: $response
-    }')"
-  printf '%s\n' "$pin_summary_json" > "$pin_summary_path"
-fi
-registry_submit_json="$(cat "$registry_submit_summary_path" 2>/dev/null || true)"
-manifest_id_hex="$(jq -r '.manifest_id_hex' <<<"$pin_summary_json")"
-pin_manifest_digest_hex="$(jq -r '.manifest_digest_hex' <<<"$pin_summary_json")"
-if [[ "$pin_manifest_digest_hex" != "$manifest_digest_hex" ]]; then
-  echo "storage pin manifest digest $pin_manifest_digest_hex does not match built manifest $manifest_digest_hex" >&2
+if ! registry_visibility_json="$(jq -ce --arg digest "$manifest_digest_hex" '
+    select(
+      type == "object"
+      and .manifest.digest_hex == $digest
+      and .manifest.status.state == "approved"
+    )
+  ' "$registry_visibility_path" 2>/dev/null)"; then
+  echo "current SoraFS manifest visibility response is missing, invalid, or mismatched" >&2
   exit 1
 fi
-registry_visibility_json="$(json_file_or_null "$registry_visibility_path")"
-registry_submit_response_json="$(json_file_or_null "$registry_submit_response_path")"
-if [[ -z "${registry_submit_json//[$'\r\n\t ']}" ]] || ! jq -e . >/dev/null 2>&1 <<<"$registry_submit_json"; then
-  registry_submit_json="$(jq -cn \
-    --arg manifest_digest_hex "$manifest_digest_hex" \
-    --arg summary_path "$(soraswap_display_path "$registry_submit_summary_path")" \
-    --arg response_path "$(soraswap_display_path "$registry_submit_response_path")" \
-    --arg visibility_attempts_path "$(soraswap_display_path "$registry_visibility_attempts_path")" \
-    --argjson visibility "$registry_visibility_json" \
-    --argjson response "$registry_submit_response_json" \
-    '{
-      status: 200,
-      success: true,
-      submission_mode: "pin_register_http",
-      manifest_digest_hex: $manifest_digest_hex,
-      summary_path: $summary_path,
-      response_path: $response_path,
-      torii_response: $response,
-      visibility_probe: {
-        status: "completed",
-        attempts_path: $visibility_attempts_path,
-        record: $visibility
-      }
-    }')"
-  printf '%s\n' "$registry_submit_json" > "$registry_submit_summary_path"
-else
-  registry_submit_json="$(jq -c \
-    --arg visibility_attempts_path "$(soraswap_display_path "$registry_visibility_attempts_path")" \
-    --argjson visibility "$registry_visibility_json" \
-    '. + {
-      visibility_probe: {
-        status: "completed",
-        attempts_path: $visibility_attempts_path,
-        record: $visibility
-      }
-    }' <<<"$registry_submit_json")"
-  printf '%s\n' "$registry_submit_json" > "$registry_submit_summary_path"
+if ! registry_submit_response_json="$(jq -ce --arg digest "$manifest_digest_hex" '
+    select(
+      type == "object"
+      and keys == ["manifest_digest_hex", "status", "tx_hash_hex"]
+      and .status == "submitted"
+      and .manifest_digest_hex == $digest
+      and ((.tx_hash_hex | type) == "string")
+      and (.tx_hash_hex | test("^[0-9a-f]{64}$"))
+    )
+  ' "$registry_submit_response_path" 2>/dev/null)"; then
+  echo "current SoraFS manifest submit response is missing, invalid, or mismatched" >&2
+  exit 1
 fi
+registry_submit_expected_endpoint="${torii_base%/}/v1/sorafs/pin/register"
+if ! registry_submit_json="$(jq -ce \
+    --arg torii_url "$torii_base" \
+    --arg endpoint "$registry_submit_expected_endpoint" \
+    --arg authority "$SORASWAP_AUTHORITY" \
+    --arg manifest_digest_hex "$manifest_digest_hex" \
+    --arg manifest_path "$manifest_path" \
+    --arg chunk_plan "$plan_path" \
+    --arg manifest_car_digest_hex "$car_digest_hex" \
+    --arg chunk_digest_sha3_hex "$car_chunk_digest_sha3_hex" \
+    --arg chunker_handle "$provider_chunker_handle" \
+    --argjson chunk_plan_chunk_count "$car_chunk_count" \
+    --argjson response "$registry_submit_response_json" '
+    select(
+      type == "object"
+      and keys == [
+        "authority",
+        "chunk_digest_sha3_hex",
+        "chunk_plan",
+        "chunk_plan_chunk_count",
+        "chunker_handle",
+        "manifest_car_digest_hex",
+        "manifest_digest_hex",
+        "manifest_path",
+        "pin_policy",
+        "status",
+        "submission_mode",
+        "torii_endpoint",
+        "torii_endpoint_requested",
+        "torii_response",
+        "torii_url"
+      ]
+      and .status == 202
+      and .torii_url == $torii_url
+      and .torii_endpoint == $endpoint
+      and .torii_endpoint_requested == $endpoint
+      and .authority == $authority
+      and .submission_mode == "pin_register_http"
+      and .manifest_digest_hex == $manifest_digest_hex
+      and .manifest_path == $manifest_path
+      and .manifest_car_digest_hex == $manifest_car_digest_hex
+      and .chunk_digest_sha3_hex == $chunk_digest_sha3_hex
+      and .chunker_handle == $chunker_handle
+      and .chunk_plan == $chunk_plan
+      and .chunk_plan_chunk_count == $chunk_plan_chunk_count
+      and (.pin_policy | keys) == ["min_replicas", "retention_epoch", "storage_class"]
+      and .pin_policy.min_replicas == 1
+      and .pin_policy.storage_class == "hot"
+      and .pin_policy.retention_epoch == 86400
+      and .torii_response == $response
+    )
+  ' "$registry_submit_summary_path" 2>/dev/null)"; then
+  echo "current SoraFS manifest submit summary is missing, invalid, or mismatched" >&2
+  exit 1
+fi
+registry_submit_json="$(soraswap_redact_sensitive_text "$registry_submit_json")"
+trader_api_redact_artifact_file_in_place "$registry_submit_summary_path"
+trader_api_redact_artifact_file_in_place "$registry_submit_response_path"
+registry_submit_json="$(jq -ce \
+  --arg visibility_attempts_path "$(soraswap_display_path "$registry_visibility_attempts_path")" \
+  --argjson visibility "$registry_visibility_json" '
+  . + {
+    visibility_probe: {
+      status: "completed",
+      attempts_path: $visibility_attempts_path,
+      record: $visibility
+    }
+  }
+' <<<"$registry_submit_json")"
+printf '%s\n' "$registry_submit_json" > "$registry_submit_summary_path"
+provider_ingest_json="$(jq -cn \
+  --argjson prepare "$provider_prepare_json" \
+  '{
+    state: "awaiting_finalized_provider_assignment",
+    queued: false,
+    direct_http_ingest: false,
+    prepare: $prepare
+  }')"
 content_cid="$(content_cid_from_hex "$manifest_id_hex")"
 
 binding_path="$artifact_dir/app-api.binding.json"
@@ -727,25 +810,49 @@ if [[ "$binding_publish" == "1" ]]; then
     echo "SORASWAP_PUBLISH_TRADER_API_BINDING=1 requires SORASWAP_TRADER_API_SERVICE_NAME" >&2
     exit 1
   fi
+  config_set_xtrace_enabled=0
+  if [[ -o xtrace ]]; then
+    config_set_xtrace_enabled=1
+    set +x
+  fi
   api_token_args=()
   api_token_file=""
-  if [[ -n "${SORASWAP_TORII_API_TOKEN:-}" ]]; then
-    api_token_file="$(printf '%s\n' "$SORASWAP_TORII_API_TOKEN" \
+  api_token_value="${SORASWAP_TORII_API_TOKEN:-}"
+  if [[ -n "$api_token_value" ]]; then
+    api_token_file="$(printf '%s\n' "$api_token_value" \
       | soraswap_secret_temp_from_stdin trader-api-token)" || exit 1
-    api_token_args=(--api-token-file "$api_token_file")
+    api_token_args=(--api-token "$api_token_value")
   fi
+  config_set_stderr_file="$(soraswap_secure_temp_file soracloud-config-set-stderr)" || exit 1
+  config_set_stderr_raw=""
+  config_set_cleanup_status=0
   config_set_command_status=0
-  config_set_output_raw="$(SORASWAP_TORII_API_TOKEN= iroha_cli_json \
-    --config "$config" \
-    soracloud service config-set \
-    --service-name "$service_name" \
-    --config-name torii/app_api_binding \
-    --value-file "$binding_path" \
-    --torii-url "$torii_base" \
-    "${api_token_args[@]}" 2>&1)" || config_set_command_status=$?
-  if ! printf '%s' "$config_set_output_raw" \
+  set +e
+  {
+    config_set_output_raw="$(SORASWAP_TORII_API_TOKEN= iroha_cli_json \
+      --config "$config" \
+      soracloud service config-set \
+      --service-name "$service_name" \
+      --config-name torii/app_api_binding \
+      --value-file "$binding_path" \
+      --torii-url "$torii_base" \
+      "${api_token_args[@]}" 2>"$config_set_stderr_file")"
+    config_set_command_status=$?
+    config_set_stderr_raw="$(cat "$config_set_stderr_file" 2>/dev/null || true)"
+  } always {
+    set -e
+    if ! soraswap_secure_unlink_owned_file "$config_set_stderr_file"; then
+      config_set_cleanup_status=1
+    fi
+    config_set_stderr_file=""
+  }
+  if (( config_set_cleanup_status != 0 )); then
+    config_set_command_status=1
+  fi
+  if ! printf '%s\n%s' "$config_set_output_raw" "$config_set_stderr_raw" \
     | soraswap_assert_client_output_clean "$config" "$api_token_file"; then
     config_set_output_raw=""
+    config_set_stderr_raw=""
     config_set_command_status=1
     echo "SoraCloud config-set credential echo was suppressed" >&2
   fi
@@ -753,18 +860,42 @@ if [[ "$binding_publish" == "1" ]]; then
     config_set_command_status=1
   fi
   api_token_file=""
+  api_token_args=()
+  api_token_value=""
+  config_set_output="$(soraswap_redact_sensitive_text "$config_set_output_raw")"
+  config_set_stderr="$(soraswap_redact_sensitive_text "$config_set_stderr_raw")"
   if (( config_set_command_status != 0 )); then
-    if [[ "$config_set_output_raw" == *"--api-token-file"* && "$config_set_output_raw" == *("unexpected argument"|"unknown option"|"unrecognised option")* ]]; then
-      echo "Iroha CLI lacks required --api-token-file support; refusing inline token fallback" >&2
-    fi
-      config_set_output="$(soraswap_redact_sensitive_text "$config_set_output_raw")"
-      config_set_json="$(jq -cn --arg status failed --arg output "$config_set_output" '{status: $status, output: $output}')"
-      config_set_status="failed"
+    config_set_json="$(jq -cn \
+      --arg status failed \
+      --arg output "$config_set_output" \
+      --arg stderr "$config_set_stderr" \
+      '{
+        status: $status,
+        output: $output,
+        stderr: $stderr
+      }')"
+    config_set_status="failed"
   fi
   if [[ "$config_set_status" != "failed" ]]; then
-    config_set_output="$(soraswap_redact_sensitive_text "$config_set_output_raw")"
-    config_set_json="$(extract_last_json_object <<<"$config_set_output" || jq -cn --arg output "$config_set_output" '{output: $output}')"
-    config_set_status="completed"
+    if config_set_json="$(jq -ce 'select(type == "object")' <<<"$config_set_output" 2>/dev/null)"; then
+      config_set_status="completed"
+    else
+      config_set_json="$(jq -cn \
+        --arg status failed \
+        --arg output "$config_set_output" \
+        --arg stderr "$config_set_stderr" \
+        '{
+          status: $status,
+          error: "current Iroha CLI returned a non-object config-set response",
+          output: $output,
+          stderr: $stderr
+        }')"
+      config_set_status="failed"
+      echo "current SoraCloud config-set response is missing or invalid" >&2
+    fi
+  fi
+  if (( config_set_xtrace_enabled )); then
+    set -x
   fi
 fi
 
@@ -780,7 +911,7 @@ cid_probe_propagation_attempt=0
 cid_probe_attempts_json='[]'
 cid_probe_body=""
 cid_probe_parsed='null'
-for ((cid_probe_round = 1; cid_probe_round <= storage_pin_propagation_attempt_count; cid_probe_round++)); do
+for ((cid_probe_round = 1; cid_probe_round <= gateway_propagation_attempt_count; cid_probe_round++)); do
   cid_probe_attempts_path="$artifact_dir/app-api.cid_probe.attempts.${cid_probe_round}.jsonl"
   cid_probe_success_count=0
   cid_probe_manifest_match_count=0
@@ -862,11 +993,8 @@ for ((cid_probe_round = 1; cid_probe_round <= storage_pin_propagation_attempt_co
     break
   fi
 
-  if [[ "$cid_probe_round" -lt "$storage_pin_propagation_attempt_count" ]]; then
-    pin_trader_api_storage \
-      "$artifact_dir/app-api.pin.propagation.${cid_probe_round}.summary.json" \
-      "$artifact_dir/app-api.pin.propagation.${cid_probe_round}.response.json"
-    sleep "$storage_pin_propagation_retry_delay_secs"
+  if [[ "$cid_probe_round" -lt "$gateway_propagation_attempt_count" ]]; then
+    sleep "$gateway_propagation_retry_delay_secs"
   fi
 done
 cid_probe_json="$(jq -cn \
@@ -879,7 +1007,7 @@ cid_probe_json="$(jq -cn \
   --argjson manifest_match_count "$cid_probe_manifest_match_count" \
   --argjson attempt_count "$cid_probe_attempt_count" \
   --argjson propagation_attempt "$cid_probe_propagation_attempt" \
-  --argjson propagation_attempt_count "$storage_pin_propagation_attempt_count" \
+  --argjson propagation_attempt_count "$gateway_propagation_attempt_count" \
   --argjson attempts "$cid_probe_attempts_json" \
   '{
     status: $status,
@@ -929,7 +1057,7 @@ report_json="$(jq -n \
   --arg config_set_status "$config_set_status" \
   --arg service_name "$service_name" \
   --argjson chain_fingerprint "$chain_fingerprint_json" \
-  --argjson pin_summary "$pin_summary_json" \
+  --argjson provider_ingest "$provider_ingest_json" \
   --argjson registry_submit "$registry_submit_json" \
   --argjson routes "$routes_json" \
   --slurpfile contracts_snapshot_file "$contracts_snapshot_json_path" \
@@ -973,7 +1101,7 @@ report_json="$(jq -n \
       status: ($deploy_snapshot.status // null)
     },
     routes: $routes,
-    pin_summary: $pin_summary,
+    provider_ingest: $provider_ingest,
     registry_submit: $registry_submit,
     cid_probe: $cid_probe,
     binding: {

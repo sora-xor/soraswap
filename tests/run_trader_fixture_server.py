@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -37,7 +39,6 @@ FIXTURE_N3X_ADDRESS = "tairac1fixturen3x000000000000000000000000000000000000"
 FIXTURE_PERPS_ADDRESS = "tairac1fixtureperps000000000000000000000000000000000"
 FIXTURE_FARMS_ADDRESS = "tairac1fixturefarms000000000000000000000000000000000"
 FIXTURE_LAUNCHPAD_ADDRESS = "tairac1fixturelaunchpad00000000000000000000000000000"
-FIXTURE_OPTIONS_MANAGER_ADDRESS = "tairac1fixtureoptmgr000000000000000000000000000000"
 FIXTURE_OPTIONS_FACTORY_ADDRESS = "tairac1fixtureoptfactory000000000000000000000000000"
 FIXTURE_COVER_ADDRESS = "tairac1fixturecover000000000000000000000000000000000"
 FIXTURE_INTENTS_ADDRESS = "tairac1fixtureintents000000000000000000000000000000"
@@ -50,12 +51,19 @@ FIXTURE_DLMM_HOOKS_ADDRESS = "tairac1fixturehooks000000000000000000000000000000"
 
 FIXTURE_AUTHORITY = "i105fixturetrader@universal"
 OTHER_AUTHORITY = "i105othertrader@universal"
+FIXTURE_NETWORK_ID = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
+FIXTURE_PRIVATE_KEY = "8026209d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
+FIXTURE_PUBLIC_KEY = "ed0120d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
 
 BASE_ASSET_ID = "xor#universal"
 QUOTE_ASSET_ID = "usdt#soraswap.universal"
 USDC_ASSET_ID = "usdc#soraswap.universal"
 KUSD_ASSET_ID = "kusd#soraswap.universal"
 N3X_ASSET_ID = "n3x#soraswap.universal"
+ASSET_SCALES = {
+    BASE_ASSET_ID: 9,
+    QUOTE_ASSET_ID: 6,
+}
 
 CONTRACTS = [
     {
@@ -93,12 +101,6 @@ CONTRACTS = [
         "contract_source": "contracts/launchpad/sale_factory.ko",
         "contract_address": FIXTURE_LAUNCHPAD_ADDRESS,
         "deploy_nonce": 8,
-    },
-    {
-        "contract_key": "options.manager",
-        "contract_source": "contracts/options/manager.ko",
-        "contract_address": FIXTURE_OPTIONS_MANAGER_ADDRESS,
-        "deploy_nonce": 9,
     },
     {
         "contract_key": "options.factory",
@@ -212,6 +214,27 @@ MODULE_ORDER = [
 ]
 
 
+def load_current_manifest_entrypoints() -> dict[str, dict[str, dict[str, Any]]]:
+    loaded: dict[str, dict[str, dict[str, Any]]] = {}
+    for contract in CONTRACTS:
+        source = Path(contract["contract_source"])
+        manifest_path = (
+            REPO_ROOT
+            / "artifacts"
+            / "compiled"
+            / source.relative_to("contracts").with_suffix(".manifest.json")
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        loaded[contract["contract_key"]] = {
+            entrypoint["name"]: entrypoint
+            for entrypoint in manifest.get("entrypoints") or []
+        }
+    return loaded
+
+
+CURRENT_MANIFEST_ENTRYPOINTS = load_current_manifest_entrypoints()
+
+
 def fixture_hash(seed: int, offset: int) -> str:
     return f"{seed + offset:064x}"
 
@@ -224,30 +247,167 @@ def fixture_abi_hash(contract: dict[str, Any]) -> str:
     return fixture_hash(int(contract["deploy_nonce"]), 0x2000)
 
 
+def canonical_hash_literal(raw_hash: str) -> str:
+    body = raw_hash.upper()
+    crc = trader_ui.contract_console.iroha_literal_crc16("hash", body)
+    return f"hash:{body}#{crc:04X}"
+
+
+def fixture_contract_alias(contract: dict[str, Any]) -> str:
+    contract_namespace, contract_name = str(contract["contract_key"]).rsplit(".", 1)
+    return f"{contract_name}::{contract_namespace}.universal"
+
+
+def current_deploy_response(contract: dict[str, Any], torii_url: str) -> dict[str, Any]:
+    deploy_nonce = int(contract["deploy_nonce"])
+    commit_hash_hex = fixture_hash(deploy_nonce, 0x3000)
+    commit_hash = canonical_hash_literal(commit_hash_hex)
+    authority = "0x02000120" + "b" * 64
+    contract_alias = fixture_contract_alias(contract)
+    deployment_state: dict[str, Any] = {
+        "authority": authority,
+        "contract_alias": contract_alias,
+        "deploy_nonce": str(deploy_nonce),
+        "dataspace_alias": "universal",
+        "dataspace_id": "0",
+        "previous_contract_address": None,
+        "observed_block_height": "1",
+        "observed_block_hash": fixture_hash(deploy_nonce, 0x7000),
+        "ledger_time_ms": "1000",
+        "chain_discriminant": "0",
+    }
+    fee_quotes: list[Any] = []
+    operation_receipt = {
+        "operation_kind": "contract_deploy",
+        "status": "committed",
+        "transport": "ivm-contract-deploy-helper",
+        "torii_url": torii_url,
+        "chain_id": "fixture-chain",
+        "authority": authority,
+        "chain_discriminant": 0,
+        "dataspace": "0",
+        "contract_alias": contract_alias,
+        "contract_address": contract["contract_address"],
+        "contract_subject_account": contract["contract_address"],
+        "code_hash_hex": fixture_code_hash(contract),
+        "abi_hash_hex": None,
+        "tx_hash_hex": commit_hash_hex,
+        "entrypoint": None,
+        "entrypoint_hash_hex": None,
+        "gas_limit": None,
+        "gas_used": None,
+        "fee_payment": {},
+        "fee_quotes": fee_quotes,
+        "payload_digest_hex": fixture_hash(deploy_nonce, 0x6000),
+        "deployment_state": deployment_state,
+    }
+    return {
+        "authority": authority,
+        "chain_discriminant": 0,
+        "chain_id": "fixture-chain",
+        "code_hash_hex": fixture_code_hash(contract),
+        "commit_deployment_tx_hash": commit_hash,
+        "contract_address": contract["contract_address"],
+        "contract_alias": contract_alias,
+        "contract_subject_account": contract["contract_address"],
+        "dataspace": "0",
+        "deploy_nonce": deploy_nonce,
+        "deployment_state": deployment_state,
+        "expected_previous_contract_address": None,
+        "fee_quotes": fee_quotes,
+        "final": {"kind": "Committed", "hash": commit_hash},
+        "next_deploy_nonce": deploy_nonce + 1,
+        "ok": True,
+        "operation_receipt": operation_receipt,
+        "register_bytes_chunk_count": 1,
+        "register_bytes_chunk_size": 65_536,
+        "register_bytes_stage_tx_hashes": [],
+        "register_bytes_tx_hash": fixture_hash(deploy_nonce, 0x4000),
+        "register_bytes_tx_strategy": "native_chunks",
+        "register_manifest_tx_hash": canonical_hash_literal(fixture_hash(deploy_nonce, 0x5000)),
+        "submitted": True,
+        "terminal_kind": "Committed",
+        "torii_url": torii_url,
+    }
+
+
 def fixture_entrypoints(contract_key: str) -> list[dict[str, Any]]:
-    entrypoint_names: list[str] = []
-    if contract_key == "dlmm.dlmm_router":
-        entrypoint_names.extend([
-            "mirror_swap_history",
-            "route_swap",
-            "router_assets",
-            "swap_history_head",
-        ])
+    current_entrypoints = CURRENT_MANIFEST_ENTRYPOINTS[contract_key]
     return [
         {
             "name": name,
-            "kind": {
-                "kind": (
-                    "View"
-                    if name in {"mirror_swap_history", "router_assets", "swap_history_head"}
-                    else "Public"
-                )
-            },
-            "params": [],
-            "return_type": "tuple",
+            "kind": current_entrypoints[name]["kind"],
+            "params": current_entrypoints[name].get("params") or [],
+            "return_type": current_entrypoints[name].get("return_type"),
+            "permission": current_entrypoints[name].get("permission"),
         }
-        for name in sorted(set(entrypoint_names))
+        for name in sorted(current_entrypoints)
     ]
+
+
+def current_contract_call_response(
+    request: dict[str, Any],
+    *,
+    submitted: bool,
+    tx_hash_hex: str | None = None,
+) -> dict[str, Any]:
+    contract_address = str(request.get("contract_address") or "")
+    contract_key = ADDRESS_TO_ALIAS[contract_address]
+    contract = next(item for item in CONTRACTS if item["contract_key"] == contract_key)
+    entrypoint = str(request.get("entrypoint") or "")
+    fee_payment = request["fee_payment"]
+    canonical_call = json.dumps(
+        {
+            "authority": request.get("authority"),
+            "contract_address": contract_address,
+            "entrypoint": entrypoint,
+            "fee_payment": fee_payment,
+            "payload": request.get("payload"),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    payload_digest_hex = hashlib.blake2b(canonical_call, digest_size=32).hexdigest()
+    entrypoint_hash_hex = hashlib.blake2b(entrypoint.encode("utf-8"), digest_size=32).hexdigest()
+    creation_time_ms = int(request.get("creation_time_ms") or 1_750_000_000_003)
+    transaction_payload = b"fixture-current-contract-call:" + canonical_call
+    receipt: dict[str, Any] = {
+        "operation_kind": "contract_call",
+        "status": "submitted" if submitted else "pending_signature",
+        "transport": "torii",
+        "dataspace": "0",
+        "contract_address": contract_address,
+        "code_hash_hex": fixture_code_hash(contract),
+        "abi_hash_hex": fixture_abi_hash(contract),
+        "entrypoint": entrypoint,
+        "gas_limit": fee_payment["value"]["gas_limit"],
+        "fee_payment": fee_payment,
+        "payload_digest_hex": payload_digest_hex,
+    }
+    if submitted:
+        receipt["tx_hash_hex"] = tx_hash_hex
+        receipt["entrypoint_hash_hex"] = entrypoint_hash_hex
+    return {
+        "ok": True,
+        "submitted": submitted,
+        "dataspace": "0",
+        "contract_address": contract_address,
+        "code_hash_hex": fixture_code_hash(contract),
+        "abi_hash_hex": fixture_abi_hash(contract),
+        "creation_time_ms": creation_time_ms,
+        "tx_hash_hex": tx_hash_hex if submitted else None,
+        "entrypoint_hash_hex": entrypoint_hash_hex if submitted else None,
+        "transaction_payload_b64": None
+        if submitted
+        else base64.b64encode(transaction_payload).decode("ascii"),
+        "signing_message_b64": None
+        if submitted
+        else base64.b64encode(
+            trader_ui.contract_console.iroha_transaction_signing_message(transaction_payload)
+        ).decode("ascii"),
+        "entrypoint": entrypoint,
+        "operation_receipt": receipt,
+    }
 
 
 ALIAS_TO_MODULE = {
@@ -257,7 +417,6 @@ ALIAS_TO_MODULE = {
     "perps.perps_engine": "perps",
     "farms.farm": "farms",
     "launchpad.sale_factory": "launchpad",
-    "options.manager": "options",
     "options.factory": "options",
     "cover.policy_manager": "cover",
     "intents.settlement_router": "intents",
@@ -289,13 +448,12 @@ ENTRYPOINT_TO_EVENT_KIND = {
     "claim_allocation": "launchpad_claimed",
     "refund_allocation": "launchpad_refunded",
     "finalize_sale_activation": "launchpad_activation_finalized",
-    "create_series": "options_series_created",
     "buy_shout": "options_position_bought",
     "buy_outperformance": "options_position_bought",
-    "record_shout": "options_shout_recorded",
+    "publish_shout_mark": "options_shout_mark_published",
     "exercise_shout_position": "options_position_exercised",
     "exercise_outperformance_position": "options_position_exercised",
-    "settle_series": "options_series_settled",
+    "settle_outperformance_series": "options_series_settled",
     "register_policy": "cover_policy_opened",
     "record_observation": "cover_observation_recorded",
     "route_claim": "cover_claim_routed",
@@ -321,13 +479,12 @@ ENTRYPOINT_TO_EVENT_KIND = {
     "lock_exposure": "margin_exposure_locked",
     "liquidate_account": "margin_account_liquidated",
     "issue_lot": "rwa_lot_issued",
-    "bind_share_asset": "rwa_share_asset_bound",
     "report_nav": "rwa_nav_reported",
     "request_redemption": "rwa_redemption_requested",
     "settle_redemption": "rwa_redemption_settled",
     "configure_hook_policy": "dlmm_hook_configured",
     "place_limit_order": "dlmm_hook_limit_order_placed",
-    "schedule_twamm_v2": "dlmm_hook_twamm_scheduled",
+    "schedule_twamm": "dlmm_hook_twamm_scheduled",
     "cancel_twamm": "dlmm_hook_twamm_cancelled",
     "claim_twamm": "dlmm_hook_twamm_claimed",
     "record_execution": "dlmm_hook_execution_recorded",
@@ -377,14 +534,15 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
     (root / "config" / "fixture.client.toml").write_text(
         "\n".join(
             [
-                '[chain]',
-                'id = "fixture-chain"',
-                "",
-                "[torii]",
-                f'url = "{torii_url}"',
+                'chain = "fixture-chain"',
+                f'network_id = "{FIXTURE_NETWORK_ID}"',
+                f'torii_url = "{torii_url}"',
                 "",
                 "[account]",
-                f'authority = "{FIXTURE_AUTHORITY}"',
+                'domain = "universal"',
+                f'public_key = "{FIXTURE_PUBLIC_KEY}"',
+                f'private_key = "{FIXTURE_PRIVATE_KEY}"',
+                "chain_discriminant = 369",
                 "",
             ]
         ),
@@ -393,16 +551,40 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
 
     environment_root = root / "deployments" / "fixture"
     chain_fingerprint = {
-        "generated_at": FIXTURE_GENERATED_AT,
-        "environment": "fixture",
         "torii_url": torii_url,
         "chain": "fixture-chain",
         "block_1_hash": "fixture-block-1",
     }
+    chain_latest = {
+        "generated_at": FIXTURE_GENERATED_AT,
+        "environment": "fixture",
+        **chain_fingerprint,
+    }
     write_json(
         environment_root / "chain.latest.json",
-        chain_fingerprint,
+        chain_latest,
     )
+    deployment_records = [
+        {
+            **contract,
+            "generated_at": FIXTURE_GENERATED_AT,
+            "environment": "fixture",
+            "contract_alias": fixture_contract_alias(contract),
+            "dataspace_alias": "universal",
+            "dataspace_id": "0",
+            "code_hash_hex": fixture_code_hash(contract),
+            "abi_hash_hex": fixture_abi_hash(contract),
+            "deploy_strategy": "ivm_contract_deploy",
+            "chain_fingerprint": chain_fingerprint,
+            "response": current_deploy_response(contract, torii_url),
+        }
+        for contract in CONTRACTS
+    ]
+    for deployment_record in deployment_records:
+        write_json(
+            environment_root / f"{deployment_record['contract_key']}.deploy.json",
+            deployment_record,
+        )
     write_json(
         environment_root / "contracts.latest.json",
         {
@@ -410,24 +592,7 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
             "status": "completed",
             "environment": "fixture",
             "chain_fingerprint": chain_fingerprint,
-            "contracts": [
-                {
-                    **contract,
-                    "environment": "fixture",
-                    "dataspace": "universal",
-                    "code_hash_hex": fixture_code_hash(contract),
-                    "abi_hash_hex": fixture_abi_hash(contract),
-                    "instance": {
-                        "verification": "transaction_and_manifest",
-                        "tx_hash_hex": f"{contract['deploy_nonce']:064x}",
-                        "contract_address": contract["contract_address"],
-                        "deploy_nonce": contract["deploy_nonce"],
-                        "code_hash_hex": fixture_code_hash(contract),
-                        "abi_hash_hex": fixture_abi_hash(contract),
-                    },
-                }
-                for contract in CONTRACTS
-            ],
+            "contracts": deployment_records,
         },
     )
     for contract in CONTRACTS:
@@ -437,8 +602,8 @@ def build_fixture_repo(root: Path, torii_url: str) -> None:
                 "generated_at": FIXTURE_GENERATED_AT,
                 "environment": "fixture",
                 "contract_key": contract["contract_key"],
-                "code_hash": "hash:" + fixture_code_hash(contract),
-                "abi_hash": "hash:" + fixture_abi_hash(contract),
+                "code_hash": canonical_hash_literal(fixture_code_hash(contract)),
+                "abi_hash": canonical_hash_literal(fixture_abi_hash(contract)),
                 "entrypoints": fixture_entrypoints(contract["contract_key"]),
             },
         )
@@ -519,9 +684,9 @@ class MockToriiState:
         })
         self.append_event("perps.perps_engine", "open_position", FIXTURE_AUTHORITY, {
             "market_id": 1,
-            "position_id": 7,
             "size": 480,
             "margin": 110,
+            "requested_leverage_bps": 40000,
         })
         self.append_event("farms.farm", "stake", FIXTURE_AUTHORITY, {
             "position": "yield-alpha",
@@ -535,16 +700,15 @@ class MockToriiState:
         })
         self.append_event("options.factory", "buy_shout", FIXTURE_AUTHORITY, {
             "series_id": 12,
-            "position_id": 77,
             "notional": 260,
-            "premium_paid": 18,
-            "collateral_locked": 104,
         })
         self.append_event("cover.policy_manager", "register_policy", FIXTURE_AUTHORITY, {
-            "policy_id": 5,
-            "covered_notional": 900,
-            "notional": 900,
+            "lower_bound": 9000,
+            "upper_bound": 11000,
             "payout_amount": 240,
+            "monitoring_window_slots": 3,
+            "required_observations": 2,
+            "covered_notional": 900,
             "premium_paid": 30,
         })
         self.append_event("escrow.conditional_escrow", "open_escrow", FIXTURE_AUTHORITY, {
@@ -555,7 +719,7 @@ class MockToriiState:
             "expiry_slot": 1000000,
             "condition_code": 7,
         })
-        self.append_event("dlmm_hooks.hook_manager", "schedule_twamm_v2", FIXTURE_AUTHORITY, {
+        self.append_event("dlmm_hooks.hook_manager", "schedule_twamm", FIXTURE_AUTHORITY, {
             "order_id": "twamm-alpha",
             "input_is_base": 1,
             "total_in": 1000,
@@ -741,6 +905,31 @@ class MockToriiState:
                 return self.next_record_id
             if entrypoint == "mirror_swap_history":
                 return self.mirror_swap_history(int(payload.get("record_id") or 0))
+        if contract_address == FIXTURE_PERPS_ADDRESS:
+            if entrypoint == "engine_config":
+                return [
+                    "usdt#soraswap.universal",
+                    "perps-custody@universal",
+                    "perps-oracle@universal",
+                    0,
+                    2,
+                    8,
+                    201,
+                    202,
+                    64,
+                ]
+            if entrypoint == "collateral_pool_state":
+                return ["perps-custody@universal", 1000, 110, 890]
+            if entrypoint == "automation_state":
+                return [1, 201, 202, 4, 64, 0, 0]
+            if entrypoint == "market_state" and int(payload.get("market_id") or 0) == 1:
+                return [1, 1, 480, 80000, 50000, 500, 1000, 100, 4, 120, 0, 0, 64]
+            if entrypoint == "market_oracle_state" and int(payload.get("market_id") or 0) == 1:
+                return [10000, 10000, 25, 100, 174]
+            if entrypoint == "risk_state" and int(payload.get("market_id") or 0) == 1:
+                return [480, 80000, 0, 60, 0, 0, 0, 0]
+            if entrypoint == "position_state" and int(payload.get("position_id") or 0) == 7:
+                return [1, 1, 1, 480, 110, 0, 0, 10000, 10000, 10000, 0]
         return None
 
     def view_batch(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -1027,12 +1216,10 @@ class MockToriiState:
             series_id = payload.get("series_id")
             position_id = payload.get("position_id")
             notional = payload.get("notional")
-            premium = payload.get("premium_paid")
             exposure = " · ".join(
                 part
                 for part in [
                     f"{format_amount(float(notional), 0)} notional" if isinstance(notional, (int, float)) else "",
-                    f"{format_amount(float(premium), 0)} premium" if isinstance(premium, (int, float)) else "",
                 ]
                 if part
             ) or "Option action"
@@ -1097,7 +1284,7 @@ class MockToriiState:
             context = f"Escrow {escrow_id}" if isinstance(escrow_id, str) and escrow_id else "Conditional escrow"
         elif module == "operators":
             service = payload.get("service")
-            amount = payload.get("amount", payload.get("min_bond", payload.get("fees_accrued")))
+            amount = payload.get("amount", payload.get("min_bond"))
             health = payload.get("health_bps")
             exposure = " · ".join(
                 part
@@ -1366,20 +1553,27 @@ class MockToriiState:
             normalized.setdefault("usdt_in", 150)
             normalized.setdefault("usdc_in", 35)
             normalized.setdefault("kusd_in", 20)
-            normalized.setdefault("amount", normalized["usdt_in"] + normalized["usdc_in"] + normalized["kusd_in"])
+            normalized.setdefault(
+                "amount",
+                str(
+                    int(normalized["usdt_in"])
+                    + int(normalized["usdc_in"])
+                    + int(normalized["kusd_in"])
+                ),
+            )
         elif entrypoint == "burn_and_redeem":
             normalized.setdefault("n3x_amount", 180)
             normalized.setdefault("amount", normalized["n3x_amount"])
         elif entrypoint == "open_position":
             normalized.setdefault("market_id", 1)
-            normalized.setdefault("position_id", 8)
             normalized.setdefault("size", 520)
             normalized.setdefault("margin", 120)
+            normalized.setdefault("requested_leverage_bps", 40000)
         elif entrypoint == "modify_position":
-            normalized.setdefault("market_id", 1)
             normalized.setdefault("position_id", 7)
             normalized.setdefault("size_delta", 40)
             normalized.setdefault("margin_delta", 10)
+            normalized.setdefault("requested_leverage_bps", 40000)
         elif entrypoint in {"add_margin", "remove_margin"}:
             normalized.setdefault("position_id", 7)
             normalized.setdefault("amount", 24)
@@ -1397,37 +1591,25 @@ class MockToriiState:
             normalized.setdefault("payment_amount", 260)
             normalized.setdefault("amount", normalized["payment_amount"])
         elif entrypoint in {"claim_allocation", "refund_allocation"}:
-            normalized.setdefault("sale", "seed-alpha")
             normalized.setdefault("allocation", "alloc-alpha")
         elif entrypoint == "buy_shout":
             normalized.setdefault("series_id", 12)
-            normalized.setdefault("position_id", 79)
             normalized.setdefault("notional", 220)
-            normalized.setdefault("premium_paid", 16)
-            normalized.setdefault("collateral_locked", 94)
         elif entrypoint == "buy_outperformance":
             normalized.setdefault("series_id", 12)
-            normalized.setdefault("position_id", 80)
             normalized.setdefault("notional", 240)
-            normalized.setdefault("premium_paid", 19)
-            normalized.setdefault("collateral_locked", 102)
-        elif entrypoint == "record_shout":
-            normalized.setdefault("position_id", 77)
-            normalized.setdefault("series_id", 12)
-            normalized.setdefault("shout_price", 11350)
         elif entrypoint in {"exercise_shout_position", "exercise_outperformance_position"}:
             normalized.setdefault("position_id", 77)
-            normalized.setdefault("series_id", 12)
-            normalized.setdefault("payout_amount", 31)
         elif entrypoint == "register_policy":
-            normalized.setdefault("policy_id", 6)
-            normalized.setdefault("covered_notional", 1100)
-            normalized.setdefault("notional", normalized["covered_notional"])
+            normalized.setdefault("lower_bound", 9000)
+            normalized.setdefault("upper_bound", 11000)
             normalized.setdefault("payout_amount", 260)
+            normalized.setdefault("monitoring_window_slots", 3)
+            normalized.setdefault("required_observations", 2)
+            normalized.setdefault("covered_notional", 1100)
             normalized.setdefault("premium_paid", 32)
         elif entrypoint == "route_claim":
             normalized.setdefault("policy_id", 5)
-            normalized.setdefault("payout_amount", 180)
         elif entrypoint == "open_intent":
             normalized.setdefault("intent_id", "intent-1")
             normalized.setdefault("amount_in", 100)
@@ -1473,11 +1655,10 @@ class MockToriiState:
         elif entrypoint == "heartbeat":
             normalized.setdefault("service", "solver")
             normalized.setdefault("health_bps", 9700)
-            normalized.setdefault("fees_accrued", 0)
         elif entrypoint == "claim_fees":
             normalized.setdefault("service", "solver")
-            normalized.setdefault("fees_accrued", 12)
         elif entrypoint == "deposit_collateral":
+            normalized.setdefault("market_id", "perps-btc")
             normalized.setdefault("account_key", "alice")
             normalized.setdefault("amount", 500)
         elif entrypoint == "withdraw_collateral":
@@ -1513,7 +1694,7 @@ class MockToriiState:
             normalized.setdefault("hook_id", "limit")
             normalized.setdefault("amount_in", 100)
             normalized.setdefault("min_out", 99)
-        elif entrypoint == "schedule_twamm_v2":
+        elif entrypoint == "schedule_twamm":
             normalized.setdefault("order_id", "twamm-1")
             normalized.setdefault("input_is_base", 1)
             normalized.setdefault("total_in", 1000)
@@ -1529,7 +1710,7 @@ class MockToriiState:
             normalized.setdefault("amount_out", 101)
         return normalized
 
-    def submit_call(self, request: dict[str, Any]) -> dict[str, Any]:
+    def submit_call(self, request: dict[str, Any], *, mutate: bool = True) -> dict[str, Any]:
         authority = str(request.get("authority") or FIXTURE_AUTHORITY)
         entrypoint = str(request.get("entrypoint") or "")
         contract_address = str(request.get("contract_address") or "")
@@ -1538,6 +1719,30 @@ class MockToriiState:
             return {"error": "unsupported_entrypoint"}
 
         payload = request.get("payload") if isinstance(request.get("payload"), dict) else {}
+        manifest_entrypoint = CURRENT_MANIFEST_ENTRYPOINTS.get(contract_alias, {}).get(entrypoint)
+        if not manifest_entrypoint:
+            return {"error": "invalid_payload_schema"}
+        params = manifest_entrypoint.get("params") or []
+        if frozenset(payload) != frozenset(param["name"] for param in params):
+            return {"error": "invalid_payload_schema"}
+        try:
+            trader_ui.contract_console.validate_manifest_numeric_arguments(
+                {
+                    "contracts": [
+                        {
+                            "contract_address": contract_address,
+                            "entrypoints": [manifest_entrypoint],
+                        }
+                    ]
+                },
+                contract_address=contract_address,
+                entrypoint_name=entrypoint,
+                payload=payload,
+            )
+        except ValueError:
+            return {"error": "invalid_payload_schema"}
+        if not mutate:
+            return {"validated": True}
         normalized_payload = self.normalize_call_payload(entrypoint, payload)
         tx_hash_hex = self.next_hash_hex()
         if entrypoint == "route_swap":
@@ -1570,11 +1775,69 @@ class MockToriiHandler(BaseHTTPRequestHandler):
     def parse_json_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length > 0 else b"{}"
+        self.raw_request_body = raw
         return json.loads(raw.decode("utf-8") or "{}")
+
+    def has_valid_canonical_account_auth(self) -> bool:
+        values: dict[str, str] = {}
+        for header in trader_ui.contract_console.CANONICAL_ACCOUNT_AUTH_HEADERS:
+            entries = self.headers.get_all(header) or []
+            if len(entries) != 1:
+                return False
+            values[header] = entries[0]
+        if values["X-Iroha-Account"] != trader_ui.contract_console.canonical_ed25519_account_header(
+            FIXTURE_PUBLIC_KEY
+        ):
+            return False
+        timestamp_raw = values["X-Iroha-Timestamp-Ms"]
+        try:
+            timestamp_ms = int(timestamp_raw)
+        except ValueError:
+            return False
+        if str(timestamp_ms) != timestamp_raw:
+            return False
+        try:
+            message = trader_ui.contract_console.canonical_account_request_message(
+                FIXTURE_NETWORK_ID,
+                self.command,
+                f"http://fixture{self.path}",
+                self.raw_request_body,
+                timestamp_ms,
+                values["X-Iroha-Nonce"],
+            )
+            return trader_ui.contract_console.verify_ed25519_signature_b64(
+                FIXTURE_PUBLIC_KEY,
+                message,
+                values["X-Iroha-Signature"],
+            )
+        except ValueError:
+            return False
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         query = urllib.parse.parse_qs(parsed.query, keep_blank_values=False)
+
+        if parsed.path.startswith("/v1/assets/definitions/"):
+            selector = urllib.parse.unquote(parsed.path.removeprefix("/v1/assets/definitions/"))
+            scale = ASSET_SCALES.get(selector)
+            if scale is None:
+                json_response(self, HTTPStatus.NOT_FOUND, {"code": "not_found"})
+                return
+            json_response(
+                self,
+                HTTPStatus.OK,
+                {
+                    "id": f"fixture-{asset_ticker(selector).lower()}-asset-definition",
+                    "alias": selector,
+                    "spec": {"scale": scale},
+                    "alias_binding": {
+                        "alias": selector,
+                        "status": "permanent",
+                        "bound_at_ms": 1,
+                    },
+                },
+            )
+            return
 
         if parsed.path in {"/v1/events/sse", "/v1/contracts/events/sse"}:
             self.send_response(HTTPStatus.OK)
@@ -1641,10 +1904,16 @@ class MockToriiHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/v1/pipeline/transactions/status":
                 tx_hash_hex = parse_str(query, "hash")
+                scope = parse_str(query, "scope") or "global"
+                payload = dict(
+                    self.state.status_by_hash.get(tx_hash_hex, {"status": {"kind": "Committed"}})
+                )
+                resolved_from = "queue" if payload["status"]["kind"] == "Queued" else "state"
+                payload.update({"hash": tx_hash_hex, "scope": scope, "resolved_from": resolved_from})
                 json_response(
                     self,
                     HTTPStatus.OK,
-                    self.state.status_by_hash.get(tx_hash_hex, {"status": {"kind": "Committed"}}),
+                    payload,
                 )
                 return
 
@@ -1653,6 +1922,12 @@ class MockToriiHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         request = self.parse_json_body()
+        if (
+            parsed.path in trader_ui.contract_console.CANONICAL_ACCOUNT_AUTH_PATHS
+            and not self.has_valid_canonical_account_auth()
+        ):
+            json_response(self, HTTPStatus.UNAUTHORIZED, {"code": "canonical_authentication_required"})
+            return
 
         with self.state.lock:
             if parsed.path == "/v1/contracts/view":
@@ -1671,11 +1946,20 @@ class MockToriiHandler(BaseHTTPRequestHandler):
                 return
 
             if parsed.path == "/v1/contracts/call":
-                response = self.state.submit_call(request)
+                submitted = "signature_b64" in request or "public_key_hex" in request
+                response = self.state.submit_call(request, mutate=submitted)
                 if "error" in response:
                     json_response(self, HTTPStatus.BAD_REQUEST, {"code": response["error"]})
                     return
-                json_response(self, HTTPStatus.OK, response)
+                json_response(
+                    self,
+                    HTTPStatus.OK,
+                    current_contract_call_response(
+                        request,
+                        submitted=submitted,
+                        tx_hash_hex=str(response.get("tx_hash_hex") or "") if submitted else None,
+                    ),
+                )
                 return
 
         json_response(self, HTTPStatus.NOT_FOUND, {"code": "not_found"})
@@ -1704,9 +1988,10 @@ def main() -> int:
         environment="fixture",
         config_path=fixture_root / "config" / "fixture.client.toml",
         authority=FIXTURE_AUTHORITY,
-        torii_url="http://ignored-by-deployment.invalid",
-        private_key="802620fixture",
-        public_key="ed0120fixture",
+        torii_url=upstream_url,
+        network_id=FIXTURE_NETWORK_ID,
+        private_key=FIXTURE_PRIVATE_KEY,
+        public_key=FIXTURE_PUBLIC_KEY,
         basic_auth=None,
         warnings=[],
         source="explicit",

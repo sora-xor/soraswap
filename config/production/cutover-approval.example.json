@@ -28,12 +28,12 @@
     "bundle_name": "REPLACE_WITH_CANONICAL_BUNDLE_NAME",
     "checksums_sha256": "REPLACE_WITH_SHA256",
     "manifest_sha256": "REPLACE_WITH_SHA256",
-    "irohad_sha256": "REPLACE_WITH_SHA256",
+    "iroha3d_sha256": "REPLACE_WITH_SHA256",
     "iroha_sha256": "REPLACE_WITH_SHA256",
     "kagami_sha256": "REPLACE_WITH_SHA256",
     "archive_sha256": "REPLACE_WITH_SHA256",
     "archive_sidecar_sha256": "REPLACE_WITH_SHA256",
-    "irohad_features": ["embedded-soracloud-runtime", "sccp-test-fixtures"]
+    "iroha3d_features": ["embedded-soracloud-runtime", "sccp-test-fixtures"]
   },
   "authorities": {
     "signer": "REPLACE_WITH_PRODUCTION_SIGNER_AUTHORITY",
@@ -57,7 +57,6 @@
     "maximum_monitoring_sample_age_seconds": 30,
     "validator_count": 4,
     "validator_set_sha256": "REPLACE_WITH_VALIDATOR_SET_SHA256",
-    "maximum_canonical_lead": 1,
     "maximum_finality_age_ms": 30000,
     "maximum_oracle_age_seconds": 60,
     "oracle_watch_sha256": "REPLACE_WITH_ORACLE_WATCH_SHA256",

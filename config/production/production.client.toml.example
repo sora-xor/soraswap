@@ -1,4 +1,5 @@
 chain = "change-me-production-chain-id"
+network_id = "change-me-canonical-network-id"
 torii_url = "https://change-me-production-torii/"
 
 # Copy this file to `config/production/production.client.toml` or point
@@ -8,7 +9,7 @@ torii_url = "https://change-me-production-torii/"
 # Unlike public Taira, the production wrappers do not attempt faucet funding.
 # Fund the signer with the production fee asset before running deploy or smoke.
 [account]
-domain = "change-me.universal"
+domain = "universal"
 public_key = "ed0120CHANGE_ME"
 private_key = "802620CHANGE_ME"
 # Required. Replace this example value with the production account-address

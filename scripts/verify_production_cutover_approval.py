@@ -64,15 +64,15 @@ APPROVAL_KEYS = {
 BINDING_KEYS = {
     "chain_fingerprint", "soraswap_git_sha", "soraswap_tree_sha",
     "soraswap_source_sha256", "iroha_git_sha", "bundle_name",
-    "checksums_sha256", "manifest_sha256", "irohad_sha256", "iroha_sha256",
+    "checksums_sha256", "manifest_sha256", "iroha3d_sha256", "iroha_sha256",
     "kagami_sha256", "archive_sha256", "archive_sidecar_sha256",
-    "irohad_features",
+    "iroha3d_features",
 }
 AUTHORITY_KEYS = {"signer", "oracle", "admin", "treasury", "bridge"}
 OBSERVATION_KEYS = {
     "monitoring_snapshot_url", "maximum_monitoring_sample_age_seconds",
-    "validator_count", "validator_set_sha256", "maximum_canonical_lead",
-    "maximum_finality_age_ms", "maximum_oracle_age_seconds",
+    "validator_count", "validator_set_sha256", "maximum_finality_age_ms",
+    "maximum_oracle_age_seconds",
     "oracle_watch_sha256", "minimum_fee_balance", "balance_watch_sha256",
     "readonly_route_set_sha256", "trader_api_probe_url",
     "trader_api_content_cid", "trader_api_app_id", "trader_api_routes_sha256",
@@ -84,7 +84,7 @@ SOURCE_STATE_KEYS = {
 }
 IROHA_STATE_KEYS = {
     "iroha_root", "bundle_dir", "iroha_git_sha", "bundle_name",
-    "checksums_sha256", "manifest_sha256", "irohad_sha256", "iroha_sha256",
+    "checksums_sha256", "manifest_sha256", "iroha3d_sha256", "iroha_sha256",
     "kagami_sha256", "archive_sha256", "archive_sidecar_sha256",
 }
 
@@ -474,7 +474,6 @@ def validate_policy(policy: dict) -> tuple[dict[str, dict], set[str], list[str],
         "minimum_samples": 61,
         "maximum_monitoring_sample_age_seconds": 30,
         "minimum_validator_count": 4,
-        "maximum_canonical_lead": 1,
         "maximum_finality_age_ms": 30000,
         "derivatives_pause_mode": "external_fail_closed",
     }
@@ -756,12 +755,12 @@ def main() -> None:
         "bundle_name": iroha_state.get("bundle_name"),
         "checksums_sha256": iroha_state.get("checksums_sha256"),
         "manifest_sha256": iroha_state.get("manifest_sha256"),
-        "irohad_sha256": iroha_state.get("irohad_sha256"),
+        "iroha3d_sha256": iroha_state.get("iroha3d_sha256"),
         "iroha_sha256": iroha_state.get("iroha_sha256"),
         "kagami_sha256": iroha_state.get("kagami_sha256"),
         "archive_sha256": iroha_state.get("archive_sha256"),
         "archive_sidecar_sha256": iroha_state.get("archive_sidecar_sha256"),
-        "irohad_features": FEATURES,
+        "iroha3d_features": FEATURES,
     }
     if not HEX40.fullmatch(str(expected_bindings["soraswap_tree_sha"] or "")):
         fail("SoraSwap RC tree SHA is invalid")
@@ -771,7 +770,7 @@ def main() -> None:
             or re.fullmatch(r"taira-rollout-[A-Za-z0-9._-]+-release", expected_bindings["bundle_name"]) is None:
         fail("Iroha candidate bundle name is invalid")
     for key in (
-        "checksums_sha256", "manifest_sha256", "irohad_sha256", "iroha_sha256",
+        "checksums_sha256", "manifest_sha256", "iroha3d_sha256", "iroha_sha256",
         "kagami_sha256", "archive_sha256", "archive_sidecar_sha256",
     ):
         if not HEX64.fullmatch(str(expected_bindings[key] or "")):
@@ -825,8 +824,6 @@ def main() -> None:
     if not isinstance(validator_count, int) or isinstance(validator_count, bool) \
             or validator_count < policy_observation["minimum_validator_count"]:
         fail("approval validator count is below the RC trust policy minimum")
-    if observation.get("maximum_canonical_lead") != policy_observation["maximum_canonical_lead"]:
-        fail("approval canonical lead bound differs from the RC trust policy")
     if observation.get("maximum_finality_age_ms") != policy_observation["maximum_finality_age_ms"]:
         fail("approval finality-age bound differs from the RC trust policy")
     if observation.get("derivatives_pause_mode") != policy_observation["derivatives_pause_mode"]:

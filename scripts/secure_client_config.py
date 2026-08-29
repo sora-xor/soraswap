@@ -28,6 +28,7 @@ MAX_CONFIG_BYTES = 1_048_576
 MAX_SECRET_BYTES = 1_048_576
 MAX_DIAGNOSTIC_BYTES = 10_485_760
 OWNED_SUFFIX_RE = re.compile(r"\.d([0-9]+)\.i([0-9]+)$")
+NETWORK_ID_RE = re.compile(r"hash:[0-9A-F]{64}#[0-9A-F]{4}")
 
 
 class ConfigError(RuntimeError):
@@ -169,6 +170,15 @@ def _canonical_decimal_override(raw: str, label: str) -> int:
     return value
 
 
+def _canonical_network_id(value: Any, label: str) -> str:
+    network_id = _nonempty_string(value, label)
+    if NETWORK_ID_RE.fullmatch(network_id) is None:
+        raise ConfigError(
+            f"{label} must be canonical hash:<64 uppercase hex>#<4 uppercase hex>"
+        )
+    return network_id
+
+
 def _validate_auth(data: dict[str, Any], *, scheme: str) -> dict[str, str] | None:
     auth = data.get("basic_auth")
     if auth is None:
@@ -189,16 +199,20 @@ def _validate_auth(data: dict[str, Any], *, scheme: str) -> dict[str, str] | Non
 def _validate_production_identity(
     *,
     chain: str,
+    network_id: str,
     parsed: urllib.parse.SplitResult,
     account: dict[str, Any],
     discriminant: int,
     taira_chain_id: str,
+    taira_network_id: str,
     taira_discriminant: int,
 ) -> None:
     host = (parsed.hostname or "").lower().rstrip(".")
     profile = str(account.get("profile") or "").strip().lower()
     if chain == taira_chain_id:
         raise ConfigError("production client config must not select the canonical Taira chain")
+    if network_id == taira_network_id:
+        raise ConfigError("production client config must not select the canonical Taira network")
     if host == "taira.sora.org" or host.endswith(".taira.sora.org"):
         raise ConfigError("production client config must not use a Taira Torii origin")
     if profile == "taira":
@@ -213,6 +227,7 @@ def load_config(
     production: bool,
     repo_root: str,
     taira_chain_id: str,
+    taira_network_id: str,
     taira_discriminant: int,
 ) -> tuple[dict[str, Any], os.stat_result, dict[str, Any]]:
     fd, opened = _open_regular_nofollow(path, repo_root=repo_root if production else None)
@@ -245,11 +260,10 @@ def load_config(
     torii_url, parsed, origin = _parse_http_url(data.get("torii_url"), "client config torii_url")
     auth = _validate_auth(data, scheme=parsed.scheme.lower())
     chain = _nonempty_string(data.get("chain"), "client config chain")
+    network_id = _canonical_network_id(data.get("network_id"), "client config network_id")
     account = data.get("account")
     if not isinstance(account, dict):
-        if production:
-            raise ConfigError("client config account must be a table")
-        account = data
+        raise ConfigError("client config account must be a table")
     discriminant = account.get("chain_discriminant")
     if discriminant is not None and (
         isinstance(discriminant, bool)
@@ -269,10 +283,12 @@ def load_config(
             _nonempty_string(account.get(key), f"production client config account.{key}")
         _validate_production_identity(
             chain=chain,
+            network_id=network_id,
             parsed=parsed,
             account=account,
             discriminant=discriminant,
             taira_chain_id=taira_chain_id,
+            taira_network_id=taira_network_id,
             taira_discriminant=taira_discriminant,
         )
 
@@ -280,6 +296,7 @@ def load_config(
         "torii_url": torii_url,
         "torii_origin": origin,
         "chain": chain,
+        "network_id": network_id,
         "chain_discriminant": discriminant,
         "account_domain": account.get("domain"),
         "account_public_key": account.get("public_key"),
@@ -311,13 +328,16 @@ def _render_config(
     *,
     public_env: str,
     taira_chain_id: str,
+    taira_network_id: str,
     taira_discriminant: int,
     public_key_override: str | None,
     private_key_override: str | None,
 ) -> bytes:
-    nested_account = data.get("account")
-    account = nested_account if isinstance(nested_account, dict) else data
+    account = data.get("account")
+    if not isinstance(account, dict):
+        raise ConfigError("client config account must be a table")
     chain = metadata["chain"]
+    network_id = metadata["network_id"]
     torii_url = metadata["torii_url"]
     configured_origin = metadata["torii_origin"]
     auth = data.get("basic_auth")
@@ -335,14 +355,30 @@ def _render_config(
 
     configured_discriminant = metadata["chain_discriminant"]
     if public_env == "testnet":
-        chain = os.environ.get("SORASWAP_TESTNET_CHAIN_ID") or chain
-        raw_discriminant = os.environ.get("SORASWAP_TESTNET_CHAIN_DISCRIMINANT", "")
-        if raw_discriminant:
-            discriminant = _canonical_decimal_override(raw_discriminant, "SORASWAP_TESTNET_CHAIN_DISCRIMINANT")
-        elif configured_discriminant is not None:
-            discriminant = configured_discriminant
-        else:
+        retired_overrides = [
+            name
+            for name in ("SORASWAP_TESTNET_CHAIN_ID", "SORASWAP_TESTNET_CHAIN_DISCRIMINANT")
+            if name in os.environ
+        ]
+        if retired_overrides:
+            raise ConfigError(
+                f"unsupported Taira identity override(s): {', '.join(retired_overrides)}; use the canonical current Taira profile"
+            )
+        profile = str(account.get("profile") or "").strip().lower()
+        if chain != taira_chain_id:
+            raise ConfigError("testnet client config must select the canonical Taira chain")
+        if network_id != taira_network_id:
+            raise ConfigError("testnet client config must select the canonical Taira network")
+        if configured_discriminant is None:
+            if profile != "taira":
+                raise ConfigError(
+                    "testnet client config must use account.profile = \"taira\" or the canonical Taira chain discriminant"
+                )
             discriminant = taira_discriminant
+        elif configured_discriminant != taira_discriminant:
+            raise ConfigError("testnet account chain discriminant must match canonical Taira")
+        else:
+            discriminant = configured_discriminant
     elif public_env == "production":
         chain = os.environ.get("SORASWAP_PRODUCTION_CHAIN_ID") or chain
         raw_discriminant = os.environ.get("SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT", "")
@@ -368,8 +404,6 @@ def _render_config(
         raise ConfigError("account chain discriminant must fit u16")
     chain = _nonempty_string(chain, "rendered client config chain")
     domain = _nonempty_string(account.get("domain"), "client config account.domain")
-    if "." not in domain:
-        domain += ".universal"
     public_key = public_key_override or account.get("public_key")
     private_key = private_key_override or account.get("private_key")
     public_key = _nonempty_string(public_key, "client config account.public_key")
@@ -403,7 +437,11 @@ def _render_config(
     ):
         raise ConfigError("torii_request_timeout_ms must be a non-negative TOML integer")
 
-    lines = [f"chain = {_toml_string(chain)}", f"torii_url = {_toml_string(torii_url)}"]
+    lines = [
+        f"chain = {_toml_string(chain)}",
+        f"network_id = {_toml_string(network_id)}",
+        f"torii_url = {_toml_string(torii_url)}",
+    ]
     if request_timeout_ms is not None:
         lines.append(f"torii_request_timeout_ms = {request_timeout_ms}")
     lines += [
@@ -769,7 +807,7 @@ def assert_output_has_no_credentials(
     tokens: set[str] = set()
     account = data.get("account")
     if not isinstance(account, dict):
-        account = data
+        raise ConfigError("client config account must be a table")
     private_key = account.get("private_key")
     if isinstance(private_key, str) and private_key:
         tokens.add(private_key)
@@ -799,6 +837,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--public-env", default="")
     parser.add_argument("--taira-chain-id", required=True)
+    parser.add_argument("--taira-network-id", required=True)
     parser.add_argument("--taira-discriminant", type=int, required=True)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -857,6 +896,7 @@ def main() -> int:
         production=args.production,
         repo_root=args.repo_root,
         taira_chain_id=args.taira_chain_id,
+        taira_network_id=args.taira_network_id,
         taira_discriminant=args.taira_discriminant,
     )
     if args.command == "assert-output-clean":
@@ -891,7 +931,7 @@ def main() -> int:
     if args.command == "private-key-file":
         account = data.get("account")
         if not isinstance(account, dict):
-            account = data
+            raise ConfigError("client config account must be a table")
         private_key = account.get("private_key")
         private_key = _nonempty_string(private_key, "client config account.private_key")
         print(create_owned_file((private_key + "\n").encode("utf-8"), family=args.family))
@@ -903,6 +943,7 @@ def main() -> int:
             metadata,
             public_env=args.public_env,
             taira_chain_id=args.taira_chain_id,
+            taira_network_id=args.taira_network_id,
             taira_discriminant=args.taira_discriminant,
             public_key_override=public_key_override,
             private_key_override=private_key_override,

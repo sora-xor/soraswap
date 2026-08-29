@@ -111,7 +111,6 @@ class CutoverFixture:
                 "minimum_samples": 61,
                 "maximum_monitoring_sample_age_seconds": 30,
                 "minimum_validator_count": 4,
-                "maximum_canonical_lead": 1,
                 "maximum_finality_age_ms": 30000,
                 "derivatives_pause_mode": "external_fail_closed",
             },
@@ -145,7 +144,7 @@ class CutoverFixture:
             "bundle_name": "taira-rollout-fixture-release",
             "checksums_sha256": "5" * 64,
             "manifest_sha256": "6" * 64,
-            "irohad_sha256": "7" * 64,
+            "iroha3d_sha256": "7" * 64,
             "iroha_sha256": "8" * 64,
             "kagami_sha256": "9" * 64,
             "archive_sha256": "a" * 64,
@@ -157,7 +156,12 @@ class CutoverFixture:
         ]
         self.routes_hash = digest(canonical(self.routes))
         self.cid = "b" + "a" * 52
-        self.validator_ids = [f"ed0120{index:064x}" for index in range(1, 5)]
+        self.validator_ids = sorted([
+            "hash:0000000000000000000000000000000000000000000000000000000000000003#E54C",
+            "hash:54CEC92F5423C892A91BB051E7A914B04FDE8BA1525E6CEBDDC7790D319C9385#6D08",
+            "hash:6161616161616161616161616161616161616161616161616161616161616161#9C14",
+            "hash:6363636363636363636363636363636363636363636363636363636363636363#4692",
+        ])
         self.validator_hash = digest(canonical(self.validator_ids))
         self.oracle_ids = ["oracle.options", "oracle.perps"]
         self.oracle_hash = digest(canonical([{"id": value} for value in self.oracle_ids]))
@@ -223,12 +227,12 @@ class CutoverFixture:
                 "bundle_name": self.iroha_state["bundle_name"],
                 "checksums_sha256": self.iroha_state["checksums_sha256"],
                 "manifest_sha256": self.iroha_state["manifest_sha256"],
-                "irohad_sha256": self.iroha_state["irohad_sha256"],
+                "iroha3d_sha256": self.iroha_state["iroha3d_sha256"],
                 "iroha_sha256": self.iroha_state["iroha_sha256"],
                 "kagami_sha256": self.iroha_state["kagami_sha256"],
                 "archive_sha256": self.iroha_state["archive_sha256"],
                 "archive_sidecar_sha256": self.iroha_state["archive_sidecar_sha256"],
-                "irohad_features": ["embedded-soracloud-runtime", "sccp-test-fixtures"],
+                "iroha3d_features": ["embedded-soracloud-runtime", "sccp-test-fixtures"],
             },
             "authorities": dict(self.authorities),
             "minimum_fee_balance": "10",
@@ -246,7 +250,6 @@ class CutoverFixture:
                 "maximum_monitoring_sample_age_seconds": 30,
                 "validator_count": 4,
                 "validator_set_sha256": self.validator_hash,
-                "maximum_canonical_lead": 1,
                 "maximum_finality_age_ms": 30000,
                 "maximum_oracle_age_seconds": 60,
                 "oracle_watch_sha256": self.oracle_hash,
@@ -332,6 +335,65 @@ class CutoverFixture:
         write_json(self.root / "deployments/production/trader_api_bundle.latest.json", trader)
         return config, trader
 
+    def sumeragi_status(self, node_fingerprint: str, committed_height: int, generation: int) -> dict:
+        tagged = lambda tag, value: {tag: value, "details": None}
+        queues = [
+            {
+                "queue": tagged("queue", queue),
+                "depth": 0,
+                "capacity": 64,
+                "service_debt": 0,
+            }
+            for queue in (
+                "ingress", "deferred_normal", "deferred_progress", "deferred_completion",
+                "runtime_normal", "runtime_progress", "runtime_completion",
+                "effect_completion", "network_ingress", "effect_dispatch",
+            )
+        ]
+        idle = tagged("stage", "idle")
+        return {
+            "protocol_version": 4,
+            "node_fingerprint": node_fingerprint,
+            "build_fingerprint": "hash:8F3BF00C1044E5A52CC20C0B914403FA7A8DCA29636504BA565FE3C1B646EACB#DD4A",
+            "config_fingerprint": "hash:AC23881CE29F6466B8710D9683F4F28D49E8335C63E913FACB109303298ED833#0628",
+            "restart_required": False,
+            "height_context_id": [
+                "hash:33F884E54077B6570826E5DB30B64CEA24B8B559C057F152848E4D1DE7FE8041#6EF8"
+            ],
+            "height": committed_height + 1,
+            "view": 0,
+            "phase": tagged("phase", "awaiting_proposal"),
+            "leader": generation % 4,
+            "body_state": tagged("state", "missing"),
+            "last_committed_height": committed_height,
+            "height_context": {
+                "epoch": 7,
+                "epoch_end_height": 10_000,
+                "mode": tagged("mode", "permissioned"),
+                "epoch_seed": "A" * 64,
+                "validator_count": 4,
+                "quorum": {"min_signers": 3, "total_power": 4},
+            },
+            "liveness": {
+                "generation": generation,
+                "prepare_quorums": [],
+                "commit_quorums": [],
+                "timeout_quorums": [],
+                "outbound_intents": [],
+                "work": {
+                    "candidate": dict(idle),
+                    "body_recovery": dict(idle),
+                    "body_store": dict(idle),
+                    "validation": dict(idle),
+                    "application": dict(idle),
+                    "successor_height": dict(idle),
+                },
+                "queues": queues,
+                "no_progress_age_ms": 1_000,
+                "ignore_counts": [],
+            },
+        }
+
     def samples(self, trader: dict) -> list[dict]:
         manifest = {
             "schema_version": 1, "app_id": trader["app_id"], "content_cid": trader["content_cid"],
@@ -350,12 +412,11 @@ class CutoverFixture:
             for validator_id in self.validator_ids:
                 validators.append({
                     "id": validator_id, "status_block_height": height,
-                    "canonical_height": height + 1, "commit_qc_height": height,
-                    "highest_qc_height": height, "finality_age_ms": 1000,
+                    "finality_age_ms": 1000,
                     "status_queue_size": 0, "status_queue_queued": 0,
-                    "status_queue_inflight": 0, "proposal_queue_depth": 0,
-                    "tx_queue_depth": 0, "oldest_queue_age_ms": 0,
-                    "lane_backlog": 0, "api_failures": 0,
+                    "status_queue_inflight": 0,
+                    "sumeragi": self.sumeragi_status(validator_id, height, index + 1),
+                    "api_failures": 0,
                 })
             result.append({
                 "sampled_at": sampled.isoformat().replace("+00:00", "Z"),
@@ -364,10 +425,8 @@ class CutoverFixture:
                 "status_block_height": height, "status_queue_size": 0,
                 "status_queue_queued": 0, "status_queue_inflight": 0,
                 "status_time_since_last_block_ms": 1000,
-                "canonical_height": height + 1, "canonical_phase": "prepare",
-                "commit_qc_height": height, "highest_qc_height": height,
-                "proposal_queue_depth": 0, "tx_queue_depth": 0,
-                "oldest_queue_age_ms": 0, "validators": validators,
+                "sumeragi": copy.deepcopy(validators[0]["sumeragi"]),
+                "validators": validators,
                 "validator_set_sha256": self.validator_hash, "api_failures": 0,
                 "oracles": {
                     "watch_sha256": self.oracle_hash,
@@ -532,14 +591,68 @@ class ProductionCutoverTest(unittest.TestCase):
         rejected = run(*evidence_args, check=False)
         self.assert_failed(rejected, "not completed non-test production evidence")
 
+        report["test_only"] = False
+        write_json(
+            self.fixture.root / "deployments/production/observation.latest.json",
+            report,
+            0o600,
+        )
+        verified = run(*evidence_args, check=False)
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        self.assertEqual(
+            json.loads(verified.stdout),
+            {
+                "approval_id": state["approval_id"],
+                "observation_generated_at": report["generated_at"],
+                "sample_count": 61,
+                "status": "verified",
+            },
+        )
+
     def test_observer_rejects_health_finality_and_pause_attacks(self) -> None:
         state = self.valid_state()
         _, trader = self.fixture.make_observation_inputs(state)
         baseline = self.fixture.samples(trader)
         mutations = [
-            (lambda values: values[10].__setitem__("tx_queue_depth", 1), "queue or lane backlog"),
-            (lambda values: values[10]["validators"][0].__setitem__("commit_qc_height", 999), "validators disagree"),
-            (lambda values: values[10].__setitem__("status_block_height", 999), "committed block height is incoherent"),
+            (lambda values: values[10].__setitem__("status_queue_size", 1), "transaction queue did not drain"),
+            (
+                lambda values: values[10]["validators"][0]["sumeragi"].__setitem__(
+                    "last_committed_height", 999
+                ),
+                "validators disagree on Sumeragi v2 last_committed_height",
+            ),
+            (
+                lambda values: values[10].__setitem__("status_block_height", 999),
+                "committed block height is incoherent with Sumeragi v2 finality",
+            ),
+            (
+                lambda values: values[10]["sumeragi"].__setitem__("phase", "prepare"),
+                "phase is not the exact current tagged-enum shape",
+            ),
+            (
+                lambda values: values[10]["sumeragi"].__setitem__("canonical", {"height": 1010}),
+                "fields do not match SumeragiV2Status",
+            ),
+            (
+                lambda values: values[10]["sumeragi"]["liveness"]["prepare_quorums"].append({}),
+                "fields do not match the current Iroha API",
+            ),
+            (
+                lambda values: values[10]["sumeragi"].__setitem__("restart_required", True),
+                "requires a Sumeragi restart",
+            ),
+            (
+                lambda values: values[10]["sumeragi"]["liveness"].__setitem__(
+                    "blocker", {"blocker": "missing_proposal", "details": None}
+                ),
+                "reports a Sumeragi v2 liveness blocker",
+            ),
+            (
+                lambda values: values[10]["sumeragi"]["liveness"]["queues"][0].update(
+                    {"depth": 64, "oldest_age_ms": 1_000}
+                ),
+                "Sumeragi v2 queue reached capacity",
+            ),
             (lambda values: values[10].__setitem__("validator_set_sha256", "0" * 64), "validator set does not match"),
             (lambda values: values[10].__setitem__("api_failures", 1), "recorded API failures"),
             (lambda values: values[10]["oracles"]["feeds"][0].__setitem__("age_seconds", 61), "oracle freshness exceeded"),
@@ -584,11 +697,7 @@ class ProductionCutoverTest(unittest.TestCase):
                 "time_since_last_block_ms": 1000,
             },
             "/v1/sumeragi/status": {
-                "canonical": {"height": sample_template["canonical_height"], "phase": "prepare"},
-                "commit_qc": {"height": sample_template["commit_qc_height"]},
-                "highest_qc": {"height": sample_template["highest_qc_height"]},
-                "proposal_gate": {"queue_len": 0},
-                "tx_queue": {"depth": 0, "oldest_queued_age_ms": 0},
+                **copy.deepcopy(sample_template["sumeragi"]),
             },
             "/cutover-snapshot": {
                 "schema": "soraswap-production-monitoring-snapshot/v1",
@@ -622,7 +731,7 @@ class ProductionCutoverTest(unittest.TestCase):
             )
         finally:
             OBSERVER_MODULE.fetch_json_value = original
-        self.assertEqual(sample["status_block_height"], sample["commit_qc_height"])
+        self.assertEqual(sample["status_block_height"], sample["sumeragi"]["last_committed_height"])
         torii_calls = [item for item in calls if item[0] == "torii.production.sora.org"]
         self.assertTrue(torii_calls)
         self.assertTrue(all(item[2] == "Basic fixture-secret" and item[3] for item in torii_calls))

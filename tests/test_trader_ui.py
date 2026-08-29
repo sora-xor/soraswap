@@ -1,3 +1,4 @@
+import base64
 import importlib.util
 import io
 import json
@@ -31,6 +32,140 @@ trader_ui = importlib.util.module_from_spec(trader_spec)
 sys.modules[TRADER_MODULE_NAME] = trader_ui
 assert trader_spec.loader is not None
 trader_spec.loader.exec_module(trader_ui)
+
+TRADER_FIXTURE_SERVER_MODULE_PATH = REPO_ROOT / "tests" / "run_trader_fixture_server.py"
+TRADER_FIXTURE_SERVER_MODULE_NAME = "soraswap_trader_fixture_test_support"
+trader_fixture_server_spec = importlib.util.spec_from_file_location(
+    TRADER_FIXTURE_SERVER_MODULE_NAME,
+    TRADER_FIXTURE_SERVER_MODULE_PATH,
+)
+trader_fixture_server = importlib.util.module_from_spec(trader_fixture_server_spec)
+sys.modules[TRADER_FIXTURE_SERVER_MODULE_NAME] = trader_fixture_server
+assert trader_fixture_server_spec.loader is not None
+trader_fixture_server_spec.loader.exec_module(trader_fixture_server)
+
+TAIRA_NETWORK_ID = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
+
+
+def canonical_hash_literal(raw_hash: str) -> str:
+    body = raw_hash.upper()
+    return f"hash:{body}#{contract_console.iroha_literal_crc16('hash', body):04X}"
+
+
+def current_deploy_response(
+    *,
+    contract_address: str,
+    contract_alias: str,
+    dataspace_id: str,
+    deploy_nonce: int,
+    code_hash_hex: str,
+    chain_id: str,
+    torii_url: str,
+) -> dict[str, object]:
+    commit_hash_hex = "a" * 64
+    commit_hash = canonical_hash_literal(commit_hash_hex)
+    authority = "0x02000120" + "b" * 64
+    deployment_state: dict[str, object] = {
+        "authority": authority,
+        "contract_alias": contract_alias,
+        "deploy_nonce": str(deploy_nonce),
+        "dataspace_alias": "universal",
+        "dataspace_id": dataspace_id,
+        "previous_contract_address": None,
+        "observed_block_height": "1",
+        "observed_block_hash": "f" * 64,
+        "ledger_time_ms": "1000",
+        "chain_discriminant": "0",
+    }
+    fee_quotes: list[object] = []
+    operation_receipt = {
+        "operation_kind": "contract_deploy",
+        "status": "committed",
+        "transport": "ivm-contract-deploy-helper",
+        "torii_url": torii_url,
+        "chain_id": chain_id,
+        "authority": authority,
+        "chain_discriminant": 0,
+        "dataspace": dataspace_id,
+        "contract_alias": contract_alias,
+        "contract_address": contract_address,
+        "contract_subject_account": contract_address,
+        "code_hash_hex": code_hash_hex,
+        "abi_hash_hex": None,
+        "tx_hash_hex": commit_hash_hex,
+        "entrypoint": None,
+        "entrypoint_hash_hex": None,
+        "gas_limit": None,
+        "gas_used": None,
+        "fee_payment": {},
+        "fee_quotes": fee_quotes,
+        "payload_digest_hex": "e" * 64,
+        "deployment_state": deployment_state,
+    }
+    return {
+        "authority": authority,
+        "chain_discriminant": 0,
+        "chain_id": chain_id,
+        "code_hash_hex": code_hash_hex,
+        "commit_deployment_tx_hash": commit_hash,
+        "contract_address": contract_address,
+        "contract_alias": contract_alias,
+        "contract_subject_account": contract_address,
+        "dataspace": dataspace_id,
+        "deploy_nonce": deploy_nonce,
+        "deployment_state": deployment_state,
+        "expected_previous_contract_address": None,
+        "fee_quotes": fee_quotes,
+        "final": {"kind": "Committed", "hash": commit_hash},
+        "next_deploy_nonce": deploy_nonce + 1,
+        "ok": True,
+        "operation_receipt": operation_receipt,
+        "register_bytes_chunk_count": 1,
+        "register_bytes_chunk_size": 65_536,
+        "register_bytes_stage_tx_hashes": [],
+        "register_bytes_tx_hash": "c" * 64,
+        "register_bytes_tx_strategy": "native_chunks",
+        "register_manifest_tx_hash": canonical_hash_literal("d" * 64),
+        "submitted": True,
+        "terminal_kind": "Committed",
+        "torii_url": torii_url,
+    }
+
+
+def current_deployment_record(
+    *,
+    chain_fingerprint: dict[str, object],
+    contract_address: str = "tairac1routerfixture",
+    deploy_nonce: int = 12,
+) -> dict[str, object]:
+    contract_alias = "dlmm_router::dlmm.universal"
+    dataspace_alias = "universal"
+    dataspace_id = "0"
+    code_hash_hex = "3" * 64
+    return {
+        "contract_key": "dlmm.dlmm_router",
+        "generated_at": "20260406T000000Z",
+        "environment": "testnet",
+        "contract_source": "contracts/dlmm/dlmm_router.ko",
+        "contract_alias": contract_alias,
+        "dataspace_alias": dataspace_alias,
+        "dataspace_id": dataspace_id,
+        "contract_address": contract_address,
+        "deploy_nonce": deploy_nonce,
+        "code_hash_hex": code_hash_hex,
+        "abi_hash_hex": "4" * 64,
+        "deploy_strategy": "ivm_contract_deploy",
+        "chain_fingerprint": chain_fingerprint,
+        "response": current_deploy_response(
+            contract_address=contract_address,
+            contract_alias=contract_alias,
+            dataspace_id=dataspace_id,
+            deploy_nonce=deploy_nonce,
+            code_hash_hex=code_hash_hex,
+            chain_id=str(chain_fingerprint["chain"]),
+            torii_url=str(chain_fingerprint["torii_url"]),
+        ),
+    }
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -81,11 +216,11 @@ def write_public_readiness_evidence(root: Path, environment_name: str, chain: di
             "warnings": [],
             "environment": {
                 "mutations_allowed": True,
-                "oracle_public_key_present": True,
-                "oracle_private_key_present": True,
-                "oracle_keypair_verified": True,
-                "oracle_public_key_source": "fixture",
-                "oracle_private_key_source": "fixture",
+                "oracle_client_config_present": True,
+                "oracle_client_config_valid": True,
+                "oracle_account_derivable": True,
+                "oracle_account_distinct": True,
+                "oracle_client_config_source": "fixture",
             },
             "endpoint": {
                 "mcp_http_status": "200",
@@ -152,6 +287,11 @@ class TraderUiFixture:
             "block_1_hash": "block-1",
             "environment": "testnet",
         }
+        self.chain_fingerprint = {
+            "torii_url": self.chain["torii_url"],
+            "chain": self.chain["chain"],
+            "block_1_hash": self.chain["block_1_hash"],
+        }
         write_json(environment / "chain.latest.json", self.chain)
         write_public_readiness_evidence(self.root, "testnet", self.chain)
         write_json(
@@ -160,25 +300,8 @@ class TraderUiFixture:
                 "generated_at": "20260406T000000Z",
                 "status": "completed",
                 "environment": "testnet",
-                "chain_fingerprint": self.chain,
-                "contracts": [
-                    {
-                        "contract_key": "dlmm.dlmm_router",
-                        "environment": "testnet",
-                        "contract_source": "contracts/dlmm/dlmm_router.ko",
-                        "dataspace": "universal",
-                        "contract_address": "tairac1routerfixture",
-                        "deploy_nonce": 12,
-                        "code_hash_hex": "3" * 64,
-                        "abi_hash_hex": "4" * 64,
-                        "instance": {
-                            "verification": "transaction_and_manifest",
-                            "tx_hash_hex": "deadbeef",
-                            "code_hash_hex": "3" * 64,
-                            "abi_hash_hex": "4" * 64,
-                        },
-                    }
-                ],
+                "chain_fingerprint": self.chain_fingerprint,
+                "contracts": [current_deployment_record(chain_fingerprint=self.chain_fingerprint)],
             },
         )
         write_json(
@@ -187,11 +310,20 @@ class TraderUiFixture:
                 "generated_at": "20260406T000200Z",
                 "environment": "testnet",
                 "contract_key": "dlmm.dlmm_router",
-                "code_hash": "hash:" + "3" * 64,
-                "abi_hash": "hash:" + "4" * 64,
+                "code_hash": canonical_hash_literal("3" * 64),
+                "abi_hash": canonical_hash_literal("4" * 64),
                 "entrypoints": [
                     {"name": "router_config", "kind": {"kind": "View"}, "params": [], "return_type": "tuple"},
-                    {"name": "route_swap", "kind": {"kind": "Public"}, "params": [], "return_type": "int"},
+                    {
+                        "name": "route_swap",
+                        "kind": {"kind": "Kotoage"},
+                        "params": [
+                            {"name": "amount_in", "type_name": "quantity"},
+                            {"name": "input_is_base", "type_name": "int"},
+                            {"name": "min_out", "type_name": "quantity"},
+                        ],
+                        "return_type": "quantity",
+                    },
                 ]
             },
         )
@@ -204,7 +336,7 @@ class TraderUiFixture:
                 "generated_at": "20260406T000100Z",
                 "status": "completed",
                 "environment": "testnet",
-                "chain_fingerprint": self.chain,
+                "chain_fingerprint": self.chain_fingerprint,
                 "phases": {
                     "preflight": {
                         "status": "completed",
@@ -227,87 +359,8 @@ class TraderUiFixture:
         write_json(
             environment / "dlmm.dlmm_router.deploy.json",
             {
+                **current_deployment_record(chain_fingerprint=self.chain_fingerprint),
                 "generated_at": "20260406T000200Z",
-                "contract_key": "dlmm.dlmm_router",
-                "environment": "testnet",
-                "contract_source": "contracts/dlmm/dlmm_router.ko",
-                "dataspace": "universal",
-                "contract_address": "tairac1routerfixture",
-                "deploy_nonce": 12,
-                "code_hash_hex": "3" * 64,
-                "abi_hash_hex": "4" * 64,
-                "chain_fingerprint": self.chain,
-                "deploy_strategy": "bundle",
-                "bundle_receipt": {
-                    "name": "dlmm.dlmm_router",
-                    "status": "deployed",
-                    "contract_address": "tairac1routerfixture",
-                    "deploy_nonce": 12,
-                    "code_hash_hex": "3" * 64,
-                    "abi_hash_hex": "4" * 64,
-                },
-                "response": {
-                    "ok": True,
-                    "contract_address": "tairac1routerfixture",
-                    "deploy_nonce": 12,
-                    "code_hash_hex": "3" * 64,
-                    "abi_hash_hex": "4" * 64,
-                },
-                "instance": {
-                    "contract_id": "tairac1routerfixture",
-                    "contract_address": "tairac1routerfixture",
-                    "deploy_nonce": 12,
-                    "code_hash_hex": "3" * 64,
-                    "abi_hash_hex": "4" * 64,
-                    "verification": "transaction_and_manifest",
-                    "tx_hash_hex": "deadbeef",
-                },
-            },
-        )
-
-    def write_aggregate_bundle_receipt(self, *, deploy_nonce: int = 12) -> None:
-        environment = self.root / "deployments" / "testnet"
-        write_json(
-            environment / "soraswap.bundle.deploy.json",
-            {
-                "ok": True,
-                "generated_at": "20260406T000200Z",
-                "environment": "testnet",
-                "chain_fingerprint": self.chain,
-                "bundle_digest": "fixture-bundle-digest",
-                "contracts": [
-                    {
-                        "name": "dlmm.dlmm_router",
-                        "status": "deployed",
-                        "contract_address": "tairac1routerfixture",
-                        "deploy_nonce": deploy_nonce,
-                        "code_hash_hex": "3" * 64,
-                        "abi_hash_hex": "4" * 64,
-                    }
-                ],
-            },
-        )
-
-    def write_contract_shaped_foundation_bundle_receipt(self) -> None:
-        environment = self.root / "deployments" / "testnet"
-        write_json(
-            environment / "soraswap.foundation.bundle.deploy.json",
-            {
-                "bundle_name": "soraswap-foundation",
-                "generated_at": "20260406T000300Z",
-                "contract_key": "dlmm.dlmm_router",
-                "environment": "testnet",
-                "contract_address": "tairac1foundationaggregate",
-                "deploy_nonce": 99,
-                "code_hash_hex": "3" * 64,
-                "abi_hash_hex": "4" * 64,
-                "chain_fingerprint": self.chain,
-                "contracts": [
-                    {
-                        "name": "dlmm.dlmm_router",
-                        "contract_address": "tairac1foundationaggregate",
-                    }
-                ],
             },
         )
 
@@ -315,24 +368,70 @@ class TraderUiFixture:
         self.tempdir.cleanup()
 
 
+DETACHED_TEST_PRIVATE_KEY = "8026209d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"
+DETACHED_TEST_PUBLIC_KEY = "ed0120d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+DETACHED_TEST_TRANSACTION = b"canonical-trader-prepared-transaction"
+DETACHED_TEST_TRANSACTION_B64 = base64.b64encode(DETACHED_TEST_TRANSACTION).decode("ascii")
+DETACHED_TEST_SIGNING_MESSAGE_B64 = base64.b64encode(
+    contract_console.iroha_transaction_signing_message(DETACHED_TEST_TRANSACTION)
+).decode("ascii")
+
+
 def make_signer(
     *,
     environment: str = "testnet",
     authority: str = "i105fixture",
     torii_url: str = "https://taira.sora.org",
-    private_key: str | None = "802620fixture",
+    private_key: str | None = DETACHED_TEST_PRIVATE_KEY,
+    public_key: str | None = DETACHED_TEST_PUBLIC_KEY,
 ) -> contract_console.SignerBinding:
     return contract_console.SignerBinding(
         environment=environment,
         config_path=Path("/tmp/test-trader-signer.toml"),
         authority=authority,
         torii_url=torii_url,
+        network_id=TAIRA_NETWORK_ID,
         private_key=private_key,
-        public_key="ed0120fixture",
+        public_key=public_key,
         basic_auth=("user", "pass"),
         warnings=[],
         source="explicit",
     )
+
+
+def contract_call_response(*, submitted: bool, gas_limit: int) -> dict[str, object]:
+    fee_payment = contract_console.authority_fee_payment_intent(gas_limit)
+    receipt = {
+        "operation_kind": "contract_call",
+        "status": "submitted" if submitted else "pending_signature",
+        "transport": "torii",
+        "dataspace": "apps",
+        "contract_address": "tairac1routerfixture",
+        "code_hash_hex": "45" * 32,
+        "abi_hash_hex": "67" * 32,
+        "entrypoint": "route_swap",
+        "gas_limit": gas_limit,
+        "fee_payment": fee_payment,
+        "payload_digest_hex": "89" * 32,
+    }
+    if submitted:
+        receipt["tx_hash_hex"] = "ab" * 32
+        receipt["entrypoint_hash_hex"] = "cd" * 32
+    return {
+        "ok": True,
+        "submitted": submitted,
+        "dataspace": "apps",
+        "contract_address": "tairac1routerfixture",
+        "code_hash_hex": "45" * 32,
+        "abi_hash_hex": "67" * 32,
+        "creation_time_ms": 1_750_000_000_003,
+        "tx_hash_hex": "ab" * 32 if submitted else None,
+        "entrypoint_hash_hex": "cd" * 32 if submitted else None,
+        "transaction_payload_b64": None if submitted else DETACHED_TEST_TRANSACTION_B64,
+        "signing_message_b64": None if submitted else DETACHED_TEST_SIGNING_MESSAGE_B64,
+        "entrypoint": "route_swap",
+        "operation_receipt": receipt,
+    }
 
 
 class RunningTraderServer:
@@ -416,6 +515,132 @@ class TraderUiBackendTests(unittest.TestCase):
                         parser.parse_args(["--port", value])
                 self.assertEqual(error.exception.code, 2)
 
+    def test_fixture_enforces_exact_launchpad_allocation_payloads(self) -> None:
+        state = trader_fixture_server.MockToriiState()
+
+        for entrypoint in ("claim_allocation", "refund_allocation"):
+            with self.subTest(entrypoint=entrypoint, payload="canonical"):
+                response = state.submit_call(
+                    {
+                        "authority": trader_fixture_server.FIXTURE_AUTHORITY,
+                        "contract_address": trader_fixture_server.FIXTURE_LAUNCHPAD_ADDRESS,
+                        "entrypoint": entrypoint,
+                        "payload": {"allocation": "alloc-alpha"},
+                    }
+                )
+                self.assertNotIn("error", response)
+                self.assertEqual(
+                    state.contract_events[-1]["payload"],
+                    {"allocation": "alloc-alpha"},
+                )
+
+            with self.subTest(entrypoint=entrypoint, payload="retired-sale-field"):
+                response = state.submit_call(
+                    {
+                        "authority": trader_fixture_server.FIXTURE_AUTHORITY,
+                        "contract_address": trader_fixture_server.FIXTURE_LAUNCHPAD_ADDRESS,
+                        "entrypoint": entrypoint,
+                        "payload": {"sale": "seed-alpha", "allocation": "alloc-alpha"},
+                    }
+                )
+                self.assertEqual(response, {"error": "invalid_payload_schema"})
+
+            with self.subTest(entrypoint=entrypoint, payload="missing-allocation"):
+                response = state.submit_call(
+                    {
+                        "authority": trader_fixture_server.FIXTURE_AUTHORITY,
+                        "contract_address": trader_fixture_server.FIXTURE_LAUNCHPAD_ADDRESS,
+                        "entrypoint": entrypoint,
+                        "payload": {},
+                    }
+                )
+                self.assertEqual(response, {"error": "invalid_payload_schema"})
+
+    def test_fixture_enforces_exact_perps_payloads_and_current_views(self) -> None:
+        state = trader_fixture_server.MockToriiState()
+        canonical_payloads = {
+            "open_position": {
+                "market_id": "1",
+                "size": "-520",
+                "margin": "120",
+                "requested_leverage_bps": "40000",
+            },
+            "modify_position": {
+                "position_id": "7",
+                "size_delta": "-40",
+                "margin_delta": "-10",
+                "requested_leverage_bps": "40000",
+            },
+            "add_margin": {"position_id": "7", "amount": "24"},
+            "remove_margin": {"position_id": "7", "amount": "12"},
+            "close_position": {"position_id": "7"},
+        }
+
+        for entrypoint, payload in canonical_payloads.items():
+            with self.subTest(entrypoint=entrypoint, payload="canonical"):
+                response = state.submit_call(
+                    {
+                        "authority": trader_fixture_server.FIXTURE_AUTHORITY,
+                        "contract_address": trader_fixture_server.FIXTURE_PERPS_ADDRESS,
+                        "entrypoint": entrypoint,
+                        "payload": payload,
+                    }
+                )
+                self.assertNotIn("error", response)
+                self.assertEqual(state.contract_events[-1]["payload"], payload)
+
+        retired_open_payload = {
+            **canonical_payloads["open_position"],
+            "position_id": "8",
+        }
+        retired_modify_payload = {
+            key: value
+            for key, value in canonical_payloads["modify_position"].items()
+            if key != "requested_leverage_bps"
+        }
+        retired_modify_payload["market_id"] = "1"
+        for entrypoint, payload in (
+            ("open_position", retired_open_payload),
+            ("modify_position", retired_modify_payload),
+        ):
+            with self.subTest(entrypoint=entrypoint, payload="retired"):
+                response = state.submit_call(
+                    {
+                        "authority": trader_fixture_server.FIXTURE_AUTHORITY,
+                        "contract_address": trader_fixture_server.FIXTURE_PERPS_ADDRESS,
+                        "entrypoint": entrypoint,
+                        "payload": payload,
+                    }
+                )
+                self.assertEqual(response, {"error": "invalid_payload_schema"})
+
+        self.assertEqual(
+            state.view(trader_fixture_server.FIXTURE_PERPS_ADDRESS, "engine_config", {}),
+            [
+                "usdt#soraswap.universal",
+                "perps-custody@universal",
+                "perps-oracle@universal",
+                0,
+                2,
+                8,
+                201,
+                202,
+                64,
+            ],
+        )
+        self.assertEqual(
+            state.view(trader_fixture_server.FIXTURE_PERPS_ADDRESS, "collateral_pool_state", {}),
+            ["perps-custody@universal", 1000, 110, 890],
+        )
+        self.assertEqual(
+            state.view(
+                trader_fixture_server.FIXTURE_PERPS_ADDRESS,
+                "market_oracle_state",
+                {"market_id": 1},
+            ),
+            [10000, 10000, 25, 100, 174],
+        )
+
     def test_access_log_redacts_sensitive_query_values(self) -> None:
         class FakeHandler:
             def address_string(self) -> str:
@@ -473,6 +698,7 @@ class TraderUiBackendTests(unittest.TestCase):
         self.assertEqual(api_headers.get("Cache-Control"), "no-store")
 
     def test_catalog_prefers_dlmm_router(self) -> None:
+        self.fixture.write_completed_deploy_evidence()
         catalog = self.state.load_catalog()
         environment = catalog["environments"][0]
 
@@ -514,6 +740,85 @@ class TraderUiBackendTests(unittest.TestCase):
         self.assertEqual(call_status, 400)
         self.assertFalse(call_payload["ok"])
         self.assertIn("gas_limit must be between", call_payload["error"])
+        proxy.assert_not_called()
+
+    def test_trader_call_uses_exact_two_phase_detached_signing(self) -> None:
+        self.fixture.write_completed_deploy_evidence()
+        signer = make_signer()
+        state = trader_ui.TraderUiState(self.fixture.root, {"testnet": signer})
+        captured_payloads: list[dict] = []
+
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
+            self.assertEqual(path, "/v1/contracts/call")
+            self.assertEqual(method, "POST")
+            captured_payloads.append(payload)
+            return (
+                200,
+                json.dumps(contract_call_response(submitted=len(captured_payloads) == 2, gas_limit=123456)),
+                "application/json",
+            )
+
+        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=False):
+            with mock.patch.object(contract_console, "proxy_torii_request", side_effect=fake_proxy):
+                with RunningTraderServer(state) as server:
+                    status, payload = request_json(
+                        f"{server.base_url}/api/call",
+                        {
+                            "environment": "testnet",
+                            "contract_address": "tairac1routerfixture",
+                            "entrypoint": "route_swap",
+                            "gas_limit": 123456,
+                            "payload": {
+                                "amount_in": "10",
+                                "input_is_base": "1",
+                                "min_out": "9",
+                            },
+                        },
+                    )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(len(captured_payloads), 2)
+        self.assertNotIn("gas_limit", captured_payloads[0])
+        self.assertNotIn("private_key", json.dumps(captured_payloads))
+        self.assertEqual(
+            captured_payloads[0]["fee_payment"],
+            contract_console.authority_fee_payment_intent(123456),
+        )
+        self.assertEqual(captured_payloads[1]["fee_payment"], captured_payloads[0]["fee_payment"])
+        self.assertEqual(
+            captured_payloads[1]["public_key_hex"],
+            DETACHED_TEST_PUBLIC_KEY.removeprefix("ed0120"),
+        )
+        self.assertEqual(captured_payloads[1]["creation_time_ms"], 1_750_000_000_003)
+
+    def test_trader_proxy_rejects_json_number_manifest_numeric_arguments(self) -> None:
+        self.fixture.write_completed_deploy_evidence()
+        signer = make_signer()
+        state = trader_ui.TraderUiState(self.fixture.root, {"testnet": signer})
+
+        with mock.patch.object(contract_console, "proxy_torii_request") as proxy:
+            with RunningTraderServer(state) as server:
+                status, payload = request_json(
+                    f"{server.base_url}/api/call",
+                    {
+                        "environment": "testnet",
+                        "contract_address": "tairac1routerfixture",
+                        "entrypoint": "route_swap",
+                        "payload": {
+                            "amount_in": 10,
+                            "input_is_base": "1",
+                            "min_out": "9",
+                        },
+                    },
+                )
+
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["ok"])
+        self.assertIn(
+            "payload.amount_in for manifest type quantity must be an exact canonical JSON string",
+            payload["error"],
+        )
         proxy.assert_not_called()
 
     def test_read_proxy_caps_large_history_windows(self) -> None:
@@ -686,15 +991,13 @@ class TraderUiBackendTests(unittest.TestCase):
         state = trader_ui.TraderUiState(self.fixture.root, {"testnet": signer})
         tx_hash = "66" * 32
 
-        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json"):
+        def fake_proxy(torii_url, path, *, method, payload, query, basic_auth, timeout, accept="application/json", canonical_signer=None):
             self.assertEqual(path, "/v1/pipeline/transactions/status")
             self.assertEqual(method, "GET")
-            self.assertEqual(query, {"hash": tx_hash, "scope": "auto"})
+            self.assertEqual(query, {"hash": tx_hash, "scope": "global"})
             return 200, json.dumps({
                 "hash": tx_hash,
                 "status": {"kind": "Queued"},
-                "summary": "Queued",
-                "diagnostics": [],
                 "scope": "global",
                 "resolved_from": "queue",
             }), "application/json"
@@ -717,9 +1020,13 @@ class TraderUiBackendTests(unittest.TestCase):
 
         self.assertEqual(ok_status, 200)
         self.assertTrue(ok_payload["ok"])
-        self.assertEqual(ok_payload["query"], {"hash": tx_hash, "scope": "auto"})
+        self.assertEqual(ok_payload["query"], {"hash": tx_hash, "scope": "global"})
         self.assertEqual(ok_payload["status_kind"], "Queued")
         self.assertEqual(ok_payload["status_scope"], "global")
+        self.assertEqual(ok_payload["status_resolved_from"], "queue")
+        self.assertNotIn("status_summary", ok_payload)
+        self.assertNotIn("status_diagnostics", ok_payload)
+        self.assertNotIn("rejection_reason", ok_payload)
         self.assertEqual(missing_status, 400)
         self.assertFalse(missing_payload["ok"])
         self.assertIn("hash is required", missing_payload["error"])
@@ -749,7 +1056,7 @@ class TraderUiBackendTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status_kind"], "NotFound")
-        self.assertEqual(payload["status_scope"], "auto")
+        self.assertEqual(payload["status_scope"], "global")
 
     def test_trader_post_rejects_explicit_sensitive_key_in_browser_json(self) -> None:
         signer = make_signer()
@@ -850,7 +1157,6 @@ class TraderUiBackendTests(unittest.TestCase):
 
     def test_mutation_enabled_trader_accepts_matching_public_deploy_evidence(self) -> None:
         self.fixture.write_completed_deploy_evidence()
-        self.fixture.write_contract_shaped_foundation_bundle_receipt()
         with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
             issues = contract_console.mutation_enabled_public_deployment_evidence_issues(
                 self.state.contract_console_state
@@ -858,11 +1164,11 @@ class TraderUiBackendTests(unittest.TestCase):
 
         self.assertEqual(issues, [])
 
-    def test_mutation_enabled_trader_rejects_unverified_oracle_keypair(self) -> None:
+    def test_mutation_enabled_trader_rejects_invalid_oracle_client_config(self) -> None:
         self.fixture.write_completed_deploy_evidence()
         preflight_path = self.fixture.root / "deployments" / "testnet" / "preflight.latest.json"
         preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
-        preflight["environment"]["oracle_keypair_verified"] = False
+        preflight["environment"]["oracle_client_config_valid"] = False
         write_json(preflight_path, preflight)
 
         with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
@@ -870,7 +1176,7 @@ class TraderUiBackendTests(unittest.TestCase):
                 self.state.contract_console_state
             )
 
-        self.assertTrue(any("preflight.latest.json oracle_keypair_verified must be true" in issue for issue in issues))
+        self.assertTrue(any("preflight.latest.json is not ready for the current chain" in issue for issue in issues))
 
     def test_mutation_enabled_trader_rejects_preflight_health_issues(self) -> None:
         self.fixture.write_completed_deploy_evidence()
@@ -923,85 +1229,6 @@ class TraderUiBackendTests(unittest.TestCase):
         )
         self.assertTrue(
             any("preflight.latest.json sumeragi endpoint health snapshot is not JSON-ready" in issue for issue in issues)
-        )
-
-    def test_mutation_enabled_trader_accepts_matching_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence()
-        self.fixture.write_aggregate_bundle_receipt()
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(
-                self.state.contract_console_state
-            )
-
-        self.assertEqual(issues, [])
-
-    def test_mutation_enabled_trader_rejects_unsuccessful_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence()
-        self.fixture.write_aggregate_bundle_receipt()
-        bundle_path = self.fixture.root / "deployments" / "testnet" / "soraswap.bundle.deploy.json"
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-        bundle["ok"] = False
-        write_json(bundle_path, bundle)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(
-                self.state.contract_console_state
-            )
-
-        self.assertTrue(any("soraswap.bundle.deploy.json is not successful" in issue for issue in issues))
-
-    def test_mutation_enabled_trader_rejects_stale_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence()
-        self.fixture.write_aggregate_bundle_receipt(deploy_nonce=99)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(
-                self.state.contract_console_state
-            )
-
-        self.assertTrue(
-            any(
-                "soraswap.bundle.deploy.json does not match contracts.latest.json: dlmm.dlmm_router" in issue
-                for issue in issues
-            )
-        )
-
-    def test_mutation_enabled_trader_rejects_path_leaking_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence()
-        self.fixture.write_aggregate_bundle_receipt()
-        bundle_path = self.fixture.root / "deployments" / "testnet" / "soraswap.bundle.deploy.json"
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-        bundle["diagnostics"] = {"stderr": "wrote /private/tmp/soraswap-rollout/receipt.json"}
-        write_json(bundle_path, bundle)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(
-                self.state.contract_console_state
-            )
-
-        self.assertTrue(
-            any("soraswap.bundle.deploy.json contains raw local path diagnostics" in issue for issue in issues)
-        )
-
-    def test_mutation_enabled_trader_rejects_sensitive_aggregate_bundle_receipt(self) -> None:
-        self.fixture.write_completed_deploy_evidence()
-        self.fixture.write_aggregate_bundle_receipt()
-        bundle_path = self.fixture.root / "deployments" / "testnet" / "soraswap.bundle.deploy.json"
-        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-        bundle["diagnostics"] = {"private_key": "fixture-secret"}
-        write_json(bundle_path, bundle)
-
-        with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
-            issues = contract_console.mutation_enabled_public_deployment_evidence_issues(
-                self.state.contract_console_state
-            )
-
-        self.assertTrue(
-            any(
-                "soraswap.bundle.deploy.json contains unredacted sensitive diagnostics" in issue
-                for issue in issues
-            )
         )
 
     def test_mutation_enabled_trader_rejects_sensitive_per_contract_evidence(self) -> None:
@@ -1183,8 +1410,8 @@ class TraderUiBackendTests(unittest.TestCase):
         write_json(
             self.fixture.root / "deployments" / "testnet" / "options.series_manager.manifest.json",
             {
-                "code_hash": "hash:" + "9" * 64,
-                "abi_hash": "hash:" + "0" * 64,
+                "code_hash": canonical_hash_literal("9" * 64),
+                "abi_hash": canonical_hash_literal("0" * 64),
                 "entrypoints": [],
             },
         )
@@ -1203,8 +1430,6 @@ class TraderUiBackendTests(unittest.TestCase):
         deploy_record = json.loads(deploy_record_path.read_text(encoding="utf-8"))
         deploy_record.pop("deploy_nonce")
         deploy_record["response"].pop("deploy_nonce")
-        deploy_record["instance"].pop("deploy_nonce")
-        deploy_record["bundle_receipt"].pop("deploy_nonce")
         write_json(deploy_record_path, deploy_record)
         with mock.patch.dict(os.environ, {"SORASWAP_ALLOW_TESTNET_MUTATIONS": "1"}, clear=True):
             issues = contract_console.mutation_enabled_public_deployment_evidence_issues(

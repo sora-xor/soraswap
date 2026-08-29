@@ -99,6 +99,13 @@ test("drives the real Python console server against a local mock Torii", async (
   await expect(page.locator("#bridge-summary")).toContainText("Bridge snapshot loaded");
   await expect(page.locator("#bridge-snapshot-preview")).toContainText('"mirror_route"');
 
+  await page.locator("#bridge-action-select").selectOption("register_bridge_asset");
+  await page.locator("#bridge-asset-definition-input").fill("xor#universal");
+  await expect(page.locator("#bridge-decimals-input")).toHaveAttribute("readonly", "");
+  await expect(page.locator("#bridge-decimals-input")).toHaveValue("9");
+  await page.locator("#build-bridge-request").click();
+  await expect(page.locator("#payload-input")).toHaveValue(/"decimals": "9"/);
+
   await page.locator("#bridge-action-select").selectOption("lock_to_remote");
   await page.locator("#bridge-remote-domain-input").fill("1");
   await page.locator("#bridge-recipient-input").fill("0x1111111111111111111111111111111111111111");

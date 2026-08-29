@@ -3,15 +3,49 @@ set -euo pipefail
 
 SORASWAP_SCRIPT_DIR="${SORASWAP_SCRIPT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 SORASWAP_ROOT="${SORASWAP_ROOT:-$(cd "$SORASWAP_SCRIPT_DIR/.." && pwd)}"
-SORASWAP_IROHA_ROOT="${SORASWAP_IROHA_ROOT:-$(cd "$SORASWAP_ROOT/../iroha" && pwd)}"
+
+soraswap_resolve_iroha_root() {
+  local candidate search_root parent
+
+  if [[ -n "${SORASWAP_IROHA_ROOT:-}" ]]; then
+    if [[ ! -d "$SORASWAP_IROHA_ROOT" ]]; then
+      echo "SORASWAP_IROHA_ROOT is not a directory: $SORASWAP_IROHA_ROOT" >&2
+      return 1
+    fi
+    (cd "$SORASWAP_IROHA_ROOT" && pwd -P)
+    return
+  fi
+
+  search_root="$SORASWAP_ROOT"
+  while [[ "$search_root" != "/" ]]; do
+    parent="${search_root:h}"
+    candidate="$parent/iroha"
+    if [[ -f "$candidate/Cargo.toml" \
+      && -d "$candidate/crates/irohad" \
+      && -d "$candidate/crates/iroha_cli" ]]; then
+      (cd "$candidate" && pwd -P)
+      return
+    fi
+    search_root="$parent"
+  done
+
+  echo "unable to locate the Iroha workspace; set SORASWAP_IROHA_ROOT" >&2
+  return 1
+}
+
+SORASWAP_IROHA_ROOT="$(soraswap_resolve_iroha_root)"
 SORASWAP_COMMON_SOURCE_FILE="${${(%):-%N}:A}"
 SORASWAP_SECURE_CLIENT_CONFIG_TOOL="${SORASWAP_SECURE_CLIENT_CONFIG_TOOL:-${SORASWAP_COMMON_SOURCE_FILE:h}/secure_client_config.py}"
-SORASWAP_BASE_ASSET_ALIAS="${SORASWAP_BASE_ASSET_ALIAS:-xor#universal}"
+SORASWAP_CONTRACT_VIEW_NORMALIZER="${SORASWAP_CONTRACT_VIEW_NORMALIZER:-${SORASWAP_COMMON_SOURCE_FILE:h}/normalize_contract_view_response.py}"
+SORASWAP_TAIRA_XOR_ASSET_DEFINITION_ID="6TEAJqbb8oEPmLncoNiMRbLEK6tw"
+SORASWAP_TAIRA_XOR_ASSET_ALIAS="xor#universal"
+SORASWAP_TAIRA_XOR_ASSET_SCALE="9"
+SORASWAP_BASE_ASSET_ALIAS="${SORASWAP_BASE_ASSET_ALIAS:-$SORASWAP_TAIRA_XOR_ASSET_ALIAS}"
 SORASWAP_FEE_ASSET_ALIAS="${SORASWAP_FEE_ASSET_ALIAS:-$SORASWAP_BASE_ASSET_ALIAS}"
 SORASWAP_LOCAL_FEE_ASSET_LABEL="${SORASWAP_LOCAL_FEE_ASSET_LABEL:-xor#wonderland}"
 SORASWAP_LOCAL_FEE_ASSET_SCALE="${SORASWAP_LOCAL_FEE_ASSET_SCALE:-9}"
-SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID="${SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID:-6TEAJqbb8oEPmLncoNiMRbLEK6tw}"
-SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID="${SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID:-6TEAJqbb8oEPmLncoNiMRbLEK6tw}"
+SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID="${SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID:-$SORASWAP_TAIRA_XOR_ASSET_DEFINITION_ID}"
+SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID="${SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID:-$SORASWAP_TAIRA_XOR_ASSET_DEFINITION_ID}"
 SORASWAP_TESTNET_FEE_ASSET_LABEL="${SORASWAP_TESTNET_FEE_ASSET_LABEL:-$SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID}"
 SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID="${SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID:-}"
 SORASWAP_PRODUCTION_FEE_ASSET_LABEL="${SORASWAP_PRODUCTION_FEE_ASSET_LABEL:-}"
@@ -30,15 +64,14 @@ SORASWAP_SNS_DOMAIN_SUFFIX_ID="${SORASWAP_SNS_DOMAIN_SUFFIX_ID:-4098}"
 # Keep the default aligned with the verified local smoke path and README docs;
 # callers can still override this per-run for heavier scenarios.
 SORASWAP_SMOKE_GAS_LIMIT="${SORASWAP_SMOKE_GAS_LIMIT:-500000}"
-SORASWAP_TESTNET_CHAIN_ID_DEFAULT="${SORASWAP_TESTNET_CHAIN_ID_DEFAULT:-fc56984b-2be7-431d-840e-21514d1883f0}"
-SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT="${SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT:-369}"
-SORASWAP_TESTNET_CHAIN_ID="${SORASWAP_TESTNET_CHAIN_ID:-}"
-SORASWAP_TESTNET_CHAIN_DISCRIMINANT="${SORASWAP_TESTNET_CHAIN_DISCRIMINANT:-}"
+SORASWAP_TESTNET_CHAIN_ID_DEFAULT="fc56984b-2be7-431d-840e-21514d1883f0"
+SORASWAP_TESTNET_NETWORK_ID_DEFAULT="hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
+SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT="369"
+SORASWAP_DEPLOYMENT_DATASPACE_ALIAS="universal"
+SORASWAP_DEPLOYMENT_DATASPACE_ID="0"
 SORASWAP_PRODUCTION_CHAIN_ID="${SORASWAP_PRODUCTION_CHAIN_ID:-}"
 SORASWAP_PRODUCTION_MIN_FEE_BALANCE="${SORASWAP_PRODUCTION_MIN_FEE_BALANCE:-}"
-SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP="${SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP:-1048576}"
-SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS:-45}"
-SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS="${SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS:-3600}"
+SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP="${SORASWAP_RECOMMENDED_TX_GOSSIP_FRAME_CAP:-13631488}"
 SORASWAP_DEPLOY_PIPELINE_WAIT_SECS="${SORASWAP_DEPLOY_PIPELINE_WAIT_SECS:-300}"
 SORASWAP_DEPLOY_COMMITTED_WAIT_SECS="${SORASWAP_DEPLOY_COMMITTED_WAIT_SECS:-120}"
 SORASWAP_DEPLOY_MANIFEST_WAIT_SECS="${SORASWAP_DEPLOY_MANIFEST_WAIT_SECS:-180}"
@@ -62,7 +95,6 @@ SORASWAP_TORII_READ_MAX_TIME_SECS="${SORASWAP_TORII_READ_MAX_TIME_SECS:-10}"
 SORASWAP_TORII_READ_RETRY_COUNT="${SORASWAP_TORII_READ_RETRY_COUNT:-6}"
 SORASWAP_TORII_READ_RETRY_DELAY_SECS="${SORASWAP_TORII_READ_RETRY_DELAY_SECS:-2}"
 SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX="${SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX:-10}"
-SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX="${SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX:-8}"
 SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS="${SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS:-30000}"
 SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT="${SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT:-3}"
 SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS="${SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS:-5}"
@@ -71,8 +103,6 @@ SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_DELAY_SECS="${SORASWAP_PUBLIC_SUBMIT_HEALTH_
 SORASWAP_PUBLIC_TX_WAIT_QUEUED_STALL_MAX_MS="${SORASWAP_PUBLIC_TX_WAIT_QUEUED_STALL_MAX_MS:-180000}"
 SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_COUNT="${SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_COUNT:-5}"
 SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_DELAY_SECS="${SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_DELAY_SECS:-1}"
-SORASWAP_TORII_API_VERSION="${SORASWAP_TORII_API_VERSION:-1.0}"
-SORASWAP_ORACLE_SCHEME="${SORASWAP_ORACLE_SCHEME:-1}"
 typeset -gA SORASWAP_LOCAL_ORACLE_KEYPAIR_CACHE
 SORASWAP_PLACEHOLDER_TOKEN_PATTERN='change[_ -]?me|changeme|replace[_ -]?me|replaceme|todo|tbd|placeholder'
 SORASWAP_PLACEHOLDER_VALUE_PATTERN="${SORASWAP_PLACEHOLDER_TOKEN_PATTERN}|^[[:space:]]*<[^<>[:cntrl:]]+>[[:space:]]*$|^[[:space:]]*(none|null|n/?a|example)[[:space:]]*$"
@@ -323,6 +353,7 @@ soraswap_secure_client_config_tool() {
     --repo-root "$root" \
     --public-env "${SORASWAP_PUBLIC_ENV:-}" \
     --taira-chain-id "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT" \
+    --taira-network-id "$SORASWAP_TESTNET_NETWORK_ID_DEFAULT" \
     --taira-discriminant "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT" \
     "$@"
 }
@@ -562,12 +593,67 @@ soraswap_invoke_accepted_submission_callback() {
   "$function_name" "$config" "$label" "$transaction_hash"
 }
 
+soraswap_require_complete_torii_fanout_headers() {
+  local header_file="$1"
+
+  python3 - "$header_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+failure_headers = {
+    "x-iroha-fanout-routes-failed",
+    "x-iroha-fanout-routes-denied",
+    "x-iroha-fanout-routes-unavailable",
+    "x-iroha-fanout-routes-not-found",
+}
+
+blocks: list[tuple[int, dict[str, list[str]]]] = []
+status: int | None = None
+headers: dict[str, list[str]] = {}
+
+for raw_line in Path(sys.argv[1]).read_text(encoding="iso-8859-1").splitlines():
+    if raw_line.startswith("HTTP/"):
+        if status is not None:
+            blocks.append((status, headers))
+        parts = raw_line.split()
+        status = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 0
+        headers = {}
+        continue
+    if status is None or ":" not in raw_line:
+        continue
+    name, value = raw_line.split(":", 1)
+    headers.setdefault(name.strip().lower(), []).append(value.strip())
+
+if status is not None:
+    blocks.append((status, headers))
+
+incomplete: list[str] = []
+for response_status, response_headers in blocks:
+    if not 200 <= response_status < 300:
+        continue
+    for name in sorted(failure_headers):
+        for value in response_headers.get(name, []):
+            if re.fullmatch(r"0|[1-9][0-9]*", value) is None:
+                incomplete.append(f"{name}=invalid")
+            elif int(value) != 0:
+                incomplete.append(f"{name}={value}")
+
+if incomplete:
+    print(
+        "incomplete Torii routed response: " + ", ".join(incomplete),
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+PY
+}
+
 soraswap_curl_for_config() {
   local config="$1"
   shift
   local curl_bin="${SORASWAP_CURL_BIN:-curl}"
   local inspected configured_origin auth_line request_url request_origin arg header header_name public_env output_target
-  local stdout_file="" stderr_file="" curl_status=1 copy_status=0 cleanup_status=0 gate_status=0
+  local stdout_file="" stderr_file="" header_file="" curl_status=1 copy_status=0 cleanup_status=0 gate_status=0
   local -a curl_args output_arg_indices output_arg_styles output_targets output_temp_files
   local idx output_index
   local authenticated_url_seen=0
@@ -774,6 +860,10 @@ soraswap_curl_for_config() {
         soraswap_secure_unlink_owned_files "$stdout_file" "${output_temp_files[@]}" || true
         return 1
       }
+      header_file="$(soraswap_secure_temp_file curl-headers)" || {
+        soraswap_secure_unlink_owned_files "$stdout_file" "$stderr_file" "${output_temp_files[@]}" || true
+        return 1
+      }
       if [[ -n "$auth_line" ]]; then
         soraswap_invoke_immediate_submit_gate \
           "${SORASWAP_IMMEDIATE_CURL_GATE_FUNCTION:-}" \
@@ -781,10 +871,10 @@ soraswap_curl_for_config() {
           "${SORASWAP_IMMEDIATE_CURL_GATE_LABEL:-curl submission}" || {
           gate_status=$?
           soraswap_secure_unlink_owned_files \
-            "$stdout_file" "$stderr_file" "${output_temp_files[@]}" || true
+            "$stdout_file" "$stderr_file" "$header_file" "${output_temp_files[@]}" || true
           return "$gate_status"
         }
-        if "$curl_bin" -q --compressed --config <(printf '%s\n' "$auth_line") "${curl_args[@]}" \
+        if "$curl_bin" -q --compressed --dump-header "$header_file" --config <(printf '%s\n' "$auth_line") "${curl_args[@]}" \
           >"$stdout_file" 2>"$stderr_file"; then
           curl_status=0
         else
@@ -797,10 +887,10 @@ soraswap_curl_for_config() {
           "${SORASWAP_IMMEDIATE_CURL_GATE_LABEL:-curl submission}" || {
           gate_status=$?
           soraswap_secure_unlink_owned_files \
-            "$stdout_file" "$stderr_file" "${output_temp_files[@]}" || true
+            "$stdout_file" "$stderr_file" "$header_file" "${output_temp_files[@]}" || true
           return "$gate_status"
         }
-        if "$curl_bin" -q --compressed "${curl_args[@]}" >"$stdout_file" 2>"$stderr_file"; then
+        if "$curl_bin" -q --compressed --dump-header "$header_file" "${curl_args[@]}" >"$stdout_file" 2>"$stderr_file"; then
           curl_status=0
         else
           curl_status=$?
@@ -809,12 +899,18 @@ soraswap_curl_for_config() {
       if ! {
         command cat "$stdout_file"
         command cat "$stderr_file"
+        command cat "$header_file"
         for output_target in "${output_temp_files[@]}"; do
           command cat "$output_target"
         done
       } | soraswap_assert_client_output_clean "$config"; then
-        soraswap_secure_unlink_owned_files "$stdout_file" "$stderr_file" "${output_temp_files[@]}" || true
+        soraswap_secure_unlink_owned_files "$stdout_file" "$stderr_file" "$header_file" "${output_temp_files[@]}" || true
         echo "authenticated Torii response credential echo was suppressed" >&2
+        return 1
+      fi
+      if (( curl_status == 0 )) \
+        && ! soraswap_require_complete_torii_fanout_headers "$header_file"; then
+        soraswap_secure_unlink_owned_files "$stdout_file" "$stderr_file" "$header_file" "${output_temp_files[@]}" || true
         return 1
       fi
       for (( output_index = 1; output_index <= ${#output_targets[@]}; output_index++ )); do
@@ -828,7 +924,7 @@ soraswap_curl_for_config() {
       if ! command cat "$stderr_file" >&2; then
         copy_status=1
       fi
-      if ! soraswap_secure_unlink_owned_files "$stdout_file" "$stderr_file" "${output_temp_files[@]}"; then
+      if ! soraswap_secure_unlink_owned_files "$stdout_file" "$stderr_file" "$header_file" "${output_temp_files[@]}"; then
         cleanup_status=1
       fi
       if (( copy_status != 0 || cleanup_status != 0 )); then
@@ -1127,6 +1223,9 @@ soraswap_print_preflight_report_reasons() {
     if ! jq -e '((.endpoint.health.sumeragi.http_status // "") | tostring) == "200" and .endpoint.health.sumeragi.json_available == true' "$preflight_file" >/dev/null 2>&1; then
       echo "  ${reason_prefix}health issue: sumeragi endpoint health snapshot is not JSON-ready" >&2
     fi
+    if ! jq -e '((.endpoint.health.sumeragi_diagnostics.http_status // "") | tostring) == "200" and .endpoint.health.sumeragi_diagnostics.json_available == true' "$preflight_file" >/dev/null 2>&1; then
+      echo "  ${reason_prefix}health issue: sumeragi diagnostics endpoint health snapshot is not JSON-ready" >&2
+    fi
   fi
 
   if jq -e '(.endpoint.direct_validator_health.validators // []) | type == "array" and length > 0' "$preflight_file" >/dev/null 2>&1; then
@@ -1394,7 +1493,6 @@ soraswap_validate_torii_read_retry_settings() {
 
 soraswap_validate_public_write_health_settings() {
   soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX" "$SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX" || return 1
-  soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX" "$SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX" || return 1
   soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS" "$SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS" || return 1
   soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT" "$SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT" || return 1
   soraswap_require_nonnegative_number_setting "SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS" "$SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS" || return 1
@@ -1462,31 +1560,9 @@ soraswap_require_json_number_setting() {
   fi
 }
 
-soraswap_normalize_oracle_public_key_hex() {
-  local raw_key="${1:-}"
-  local value
-  if [[ -z "$raw_key" ]]; then
-    echo "SORASWAP_ORACLE_PUBLIC_KEY_HEX is required" >&2
-    return 1
-  fi
-  value="${raw_key#ed25519:}"
-  value="${value#ED25519:}"
-  value="${value#0x}"
-  value="${value#0X}"
-  value="$(printf '%s' "$value" | tr -d '[:space:]')"
-  if [[ "${#value}" == "70" && "${value[1,6]:l}" == "ed0120" ]]; then
-    value="${value[7,-1]}"
-  fi
-  if [[ "${#value}" != "64" || ! "$value" =~ '^[0-9A-Fa-f]+$' ]]; then
-    echo "public key must be a raw 32-byte Ed25519 key or ed0120-prefixed Iroha key" >&2
-    return 1
-  fi
-  printf '0x%s\n' "${value:l}"
-}
-
 soraswap_local_oracle_keypair_json_for_config() {
   local config="$1"
-  local chain torii_base seed cache_key key_output public_key private_key kagami_bin
+  local chain torii_base seed_material seed_hex cache_key key_output public_key private_key kagami_bin
 
   if public_env_for_config "$config" >/dev/null 2>&1; then
     return 1
@@ -1500,11 +1576,16 @@ soraswap_local_oracle_keypair_json_for_config() {
     return 0
   fi
 
-  seed="soraswap:oracle:v1:${chain}:${torii_base}"
+  seed_material="soraswap:oracle:v1:${chain}:${torii_base}"
+  seed_hex="$(printf '%s' "$seed_material" | json_sha256)" || return 1
+  if [[ "${#seed_hex}" != "64" || ! "$seed_hex" =~ '^[0-9a-f]{64}$' ]]; then
+    echo "failed to derive the exact 32-byte local oracle key-generation seed" >&2
+    return 1
+  fi
 
   ensure_kagami_bin >/dev/null
   kagami_bin="${KAGAMI_BIN:-$SORASWAP_IROHA_ROOT/target/debug/kagami}"
-  key_output="$("$kagami_bin" keys --algorithm ed25519 --seed "$seed" --compact 2>/dev/null)"
+  key_output="$("$kagami_bin" keys --algorithm ed25519 --seed-hex "$seed_hex" --compact 2>/dev/null)"
   public_key="$(awk '/^ed[0-9A-Fa-f]+$/ { print; exit }' <<<"$key_output")"
   private_key="$(awk '/^8026[0-9A-Fa-f]+$/ { print; exit }' <<<"$key_output")"
   if [[ -z "$public_key" || -z "$private_key" ]]; then
@@ -1519,110 +1600,172 @@ soraswap_local_oracle_keypair_json_for_config() {
   printf '%s\n' "${SORASWAP_LOCAL_ORACLE_KEYPAIR_CACHE[$cache_key]}"
 }
 
-soraswap_oracle_public_key_hex_for_config() {
-  local config="${1:-}"
-  local keypair_json
+soraswap_require_secure_oracle_client_config() {
+  local config="$1"
+  local public_env="$2"
+  local root="${3:-$SORASWAP_ROOT}"
+  local metadata config_abs root_abs config_rel
 
-  if [[ -n "${SORASWAP_ORACLE_PUBLIC_KEY_HEX:-}" ]]; then
-    soraswap_normalize_oracle_public_key_hex "$SORASWAP_ORACLE_PUBLIC_KEY_HEX"
-    return
+  require_public_client_config_matches_env "$public_env" "$config" || return 1
+  metadata="$(soraswap_inspect_client_config "$config" metadata "$root")" || return 1
+  if ! jq -e '.mode == 384 and .nlink == 1' >/dev/null <<<"$metadata" \
+    || [[ -L "$config" || ! -O "$config" ]]; then
+    echo "SORASWAP_ORACLE_CLIENT_CONFIG must be an owner-held mode-0600 regular file with one hard link" >&2
+    return 1
   fi
 
-  if [[ -n "$config" ]]; then
-    local config_public_key
-    config_public_key="$(account_public_key_from_config "$config" 2>/dev/null || true)"
-    if [[ -n "$config_public_key" ]]; then
-      soraswap_normalize_oracle_public_key_hex "$config_public_key"
-      return
-    fi
+  config_abs="${config:A}"
+  root_abs="${root:A}"
+  if [[ "$config_abs" != "$root_abs/"* ]] \
+    || ! git -C "$root_abs" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "SORASWAP_ORACLE_CLIENT_CONFIG must be an ignored, untracked file inside the SoraSwap worktree" >&2
+    return 1
   fi
-
-  if [[ -n "$config" ]] && keypair_json="$(soraswap_local_oracle_keypair_json_for_config "$config")"; then
-    soraswap_normalize_oracle_public_key_hex "$(jq -r '.public_key' <<<"$keypair_json")"
-    return
+  config_rel="${config_abs#$root_abs/}"
+  if git -C "$root_abs" ls-files --error-unmatch -- "$config_rel" >/dev/null 2>&1; then
+    echo "SORASWAP_ORACLE_CLIENT_CONFIG must be untracked: $config_rel" >&2
+    return 1
   fi
-
-  echo "SORASWAP_ORACLE_PUBLIC_KEY_HEX is required for public bootstrap; local configs use the signer key unless explicitly overridden" >&2
-  return 1
+  if ! git -C "$root_abs" check-ignore -q -- "$config_rel"; then
+    echo "SORASWAP_ORACLE_CLIENT_CONFIG must be ignored by git: $config_rel" >&2
+    return 1
+  fi
 }
 
-soraswap_oracle_private_key_hex_for_config() {
-  local config="${1:-}"
-  local keypair_json
+soraswap_prepare_oracle_client_config() {
+  local source_config="$1"
+  local public_env explicit_config active_config keypair_json oracle_config
+  local source_metadata oracle_metadata source_account oracle_account
 
-  if [[ -n "${SORASWAP_ORACLE_PRIVATE_KEY_HEX:-}" ]]; then
-    printf '%s\n' "$SORASWAP_ORACLE_PRIVATE_KEY_HEX"
-    return
-  fi
-
-  if [[ -n "$config" ]]; then
-    local config_private_key
-    config_private_key="$(account_private_key_from_config "$config" 2>/dev/null || true)"
-    if [[ -n "$config_private_key" ]]; then
-      printf '%s\n' "$config_private_key"
-      return
+  public_env="$(public_env_for_config "$source_config" 2>/dev/null || true)"
+  explicit_config="${SORASWAP_ORACLE_CLIENT_CONFIG:-}"
+  active_config="${SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG:-}"
+  if [[ -n "$active_config" ]]; then
+    if [[ -n "$explicit_config" && "${explicit_config:A}" != "${active_config:A}" ]]; then
+      echo "active typed-oracle config does not match SORASWAP_ORACLE_CLIENT_CONFIG" >&2
+      return 1
     fi
+    if [[ -n "$public_env" ]]; then
+      if [[ -z "$explicit_config" ]]; then
+        echo "SORASWAP_ORACLE_CLIENT_CONFIG is required for typed oracle publication on $public_env" >&2
+        return 1
+      fi
+      soraswap_require_secure_oracle_client_config "$active_config" "$public_env" || return 1
+    else
+      require_file "$active_config"
+    fi
+    oracle_config="$active_config"
+    if [[ "${SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED:-0}" != "1" ]]; then
+      typeset -g SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED=0
+    fi
+  elif [[ -n "$public_env" ]]; then
+    if [[ -z "$explicit_config" ]]; then
+      echo "SORASWAP_ORACLE_CLIENT_CONFIG is required for typed oracle publication on $public_env" >&2
+      return 1
+    fi
+    soraswap_require_secure_oracle_client_config "$explicit_config" "$public_env" || return 1
+    oracle_config="$explicit_config"
+    typeset -g SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED=0
+  elif [[ -n "$explicit_config" ]]; then
+    require_file "$explicit_config"
+    oracle_config="$explicit_config"
+    typeset -g SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED=0
+  else
+    keypair_json="$(soraswap_local_oracle_keypair_json_for_config "$source_config")" || return 1
+    oracle_config="$(materialize_cli_compatible_config \
+      "$source_config" \
+      "$(jq -r '.public_key' <<<"$keypair_json")" \
+      "$(jq -r '.private_key' <<<"$keypair_json")")" || return 1
+    typeset -g SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED=1
   fi
 
-  if [[ -n "$config" ]] && keypair_json="$(soraswap_local_oracle_keypair_json_for_config "$config")"; then
-    jq -r '.private_key' <<<"$keypair_json"
-    return
+  if ! source_metadata="$(soraswap_inspect_client_config "$source_config" metadata)" \
+    || ! oracle_metadata="$(soraswap_inspect_client_config "$oracle_config" metadata)"; then
+    if [[ "$SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED" == "1" ]]; then
+      soraswap_secure_unlink_owned_file "$oracle_config" || true
+    fi
+    unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED
+    return 1
+  fi
+  if ! jq -en \
+    --argjson source "$source_metadata" \
+    --argjson oracle "$oracle_metadata" \
+    '$source.chain == $oracle.chain
+     and $source.network_id == $oracle.network_id
+     and $source.chain_discriminant == $oracle.chain_discriminant
+     and $source.torii_origin == $oracle.torii_origin' >/dev/null; then
+    if [[ "$SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED" == "1" ]]; then
+      soraswap_secure_unlink_owned_file "$oracle_config" || true
+    fi
+    unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED
+    echo "SORASWAP_ORACLE_CLIENT_CONFIG must select the same chain, network, discriminant, and Torii origin as the primary client config" >&2
+    return 1
   fi
 
-  echo "SORASWAP_ORACLE_PRIVATE_KEY_HEX is required for signed oracle smoke on public configs; local configs use the signer key unless explicitly overridden" >&2
-  return 1
+  if ! source_account="$(authority_from_config "$source_config")" \
+    || ! oracle_account="$(authority_from_config "$oracle_config")"; then
+    if [[ "$SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED" == "1" ]]; then
+      soraswap_secure_unlink_owned_file "$oracle_config" || true
+    fi
+    unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED
+    return 1
+  fi
+  if [[ -z "$oracle_account" || "$oracle_account" == "$source_account" ]]; then
+    if [[ "$SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED" == "1" ]]; then
+      soraswap_secure_unlink_owned_file "$oracle_config" || true
+    fi
+    unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED
+    echo "typed oracle signer account must be distinct from the primary deploy/operator account" >&2
+    return 1
+  fi
+
+  typeset -g SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG="$oracle_config"
+  typeset -g SORASWAP_ACTIVE_ORACLE_ACCOUNT="$oracle_account"
 }
 
-soraswap_required_oracle_public_key_hex() {
-  soraswap_oracle_public_key_hex_for_config "${1:-}"
-}
+soraswap_ensure_oracle_account_ready() {
+  local source_config="$1"
+  local public_env
 
-soraswap_oracle_payload_python() {
-  local candidate candidate_path
-  local -a candidates
-
-  candidates=()
-  if [[ -n "${SORASWAP_ORACLE_PYTHON_BIN:-}" ]]; then
-    candidates+=("$SORASWAP_ORACLE_PYTHON_BIN")
+  soraswap_prepare_oracle_client_config "$source_config" || return 1
+  ensure_account_registered "$source_config" "$SORASWAP_ACTIVE_ORACLE_ACCOUNT" oracle || return 1
+  ensure_unit_account_permission "$source_config" "$SORASWAP_ACTIVE_ORACLE_ACCOUNT" Oracle || return 1
+  public_env="$(public_env_for_config "$source_config" 2>/dev/null || true)"
+  if [[ -n "$public_env" ]]; then
+    ensure_public_signer_ready \
+      "$SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG" \
+      "$SORASWAP_ACTIVE_ORACLE_ACCOUNT" \
+      autofund || return 1
   fi
-  candidates+=(python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3)
-
-  for candidate in "${candidates[@]}"; do
-    candidate_path="$(command -v "$candidate" 2>/dev/null || true)"
-    if [[ -z "$candidate_path" ]]; then
-      continue
-    fi
-    if "$candidate_path" - <<'PY' >/dev/null 2>&1; then
-import nacl.signing
-PY
-      printf '%s\n' "$candidate_path"
-      return 0
-    fi
-  done
-
-  echo "no Python interpreter with PyNaCl/nacl.signing is available for oracle signing" >&2
-  echo "install PyNaCl for python3 or set SORASWAP_ORACLE_PYTHON_BIN to a compatible interpreter" >&2
-  return 1
 }
 
-soraswap_oracle_payload_script_path() {
-  local candidate
-  typeset -a candidates
+soraswap_call_contract_as_oracle_and_wait() {
+  local source_config="$1"
+  local contract_id="$2"
+  local entrypoint="$3"
+  local payload_json="${4:-null}"
+  local gas_limit="${5:-$SORASWAP_SMOKE_GAS_LIMIT}"
 
-  candidates=(
-    "$SORASWAP_SCRIPT_DIR/oracle_payload.py"
-    "$SORASWAP_SCRIPT_DIR/scripts/oracle_payload.py"
-    "$SORASWAP_ROOT/scripts/oracle_payload.py"
-  )
-  for candidate in "${candidates[@]}"; do
-    if [[ -f "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
+  soraswap_prepare_oracle_client_config "$source_config" || return 1
+  call_contract_and_wait \
+    "$SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG" \
+    "$contract_id" \
+    "$entrypoint" \
+    "$payload_json" \
+    "$gas_limit"
+}
 
-  echo "oracle payload signing helper not found under script directory or SORASWAP_ROOT" >&2
-  return 1
+soraswap_cleanup_oracle_client_config() {
+  local cleanup_status=0
+
+  if [[ "${SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED:-0}" == "1" \
+    && -n "${SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG:-}" ]]; then
+    soraswap_secure_unlink_owned_file "$SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG" || cleanup_status=1
+  fi
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED
+  unset SORASWAP_ACTIVE_ORACLE_ACCOUNT
+  return "$cleanup_status"
 }
 
 soraswap_current_block_height() {
@@ -1656,7 +1799,7 @@ soraswap_current_block_height() {
 
     response="$(soraswap_curl_for_config "$config" -sS --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" "$torii_base/status" 2>/dev/null || true)"
     if [[ -n "$response" ]]; then
-      height="$(jq -r '[.blocks?, .sumeragi.commit_qc_height?] | map(tonumber? // empty) | max // empty' <<<"$response" 2>/dev/null || true)"
+      height="$(jq -r 'if (.blocks | type) == "number" then .blocks else empty end' <<<"$response" 2>/dev/null || true)"
       if [[ -n "$height" && "$height" == <-> && "$height" -gt "$best_height" ]]; then
         best_height="$height"
       fi
@@ -1664,7 +1807,7 @@ soraswap_current_block_height() {
 
     response="$(soraswap_curl_for_config "$config" -sS --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" "$torii_base/v1/sumeragi/status" 2>/dev/null || true)"
     if [[ -n "$response" ]]; then
-      height="$(jq -r '[.commit_qc.height?, .highest_qc.height?] | map(tonumber? // empty) | max // empty' <<<"$response" 2>/dev/null || true)"
+      height="$(jq -r 'if (.last_committed_height | type) == "number" then .last_committed_height else empty end' <<<"$response" 2>/dev/null || true)"
       if [[ -n "$height" && "$height" == <-> && "$height" -gt "$best_height" ]]; then
         best_height="$height"
       fi
@@ -1684,7 +1827,7 @@ soraswap_submit_block_height_tick() {
     safe_label="block-height-wait"
   fi
 
-  iroha_cli_with_gas_metadata "$config" ledger transaction ping \
+  iroha_cli_with_authority_fee "$config" ledger transaction ping \
     --msg "soraswap-${safe_label}-tick" \
     --no-wait >/dev/null 2>&1
 }
@@ -1820,379 +1963,6 @@ soraswap_next_oracle_slot() {
   done
 }
 
-soraswap_native_oracle_attestation_json() {
-  local config="$1"
-  local domain="$2"
-  local subject_id="$3"
-  local response_json="" torii_base endpoint response http_code body
-
-  torii_base="$(torii_base_from_config "$config")"
-  endpoint="$torii_base/v1/soracles/defi/attestations/latest?domain=$(uri_encode "$domain")&subject_id=$(uri_encode "$subject_id")"
-  if response="$(soraswap_curl_for_config "$config" -sS --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-    -w $'\n%{http_code}' \
-    "$endpoint" 2>/dev/null)"; then
-    http_code="${response##*$'\n'}"
-    body="${response%$'\n'*}"
-    if [[ "$http_code" == "200" ]] && jq -e . >/dev/null 2>&1 <<<"$body"; then
-      response_json="$body"
-    elif [[ "$http_code" == "404" ]]; then
-      echo "native DeFi oracle attestation not found for domain=$domain subject_id=$subject_id" >&2
-      return 1
-    fi
-  fi
-
-  if [[ -z "$response_json" ]]; then
-    response_json="$(iroha_cli_json --config "$config" app soracles query defi-attestation \
-      --domain "$domain" \
-      --subject-id "$subject_id")" || {
-        echo "native DeFi oracle attestation not found for domain=$domain subject_id=$subject_id" >&2
-        return 1
-      }
-  fi
-
-  jq -ce . <<<"$response_json"
-}
-
-soraswap_native_oracle_fields_json() {
-  local config="$1"
-  local domain="$2"
-  local subject_id="$3"
-  local response_json
-
-  response_json="$(soraswap_native_oracle_attestation_json "$config" "$domain" "$subject_id")" || return 1
-
-  jq -ce --argjson raw "$response_json" '
-    def hex_digit:
-      ((. / 16) | floor) as $hi
-      | (. % 16) as $lo
-      | "0123456789abcdef"[$hi:$hi + 1]
-        + "0123456789abcdef"[$lo:$lo + 1];
-    def bytes_hex:
-      if type == "string" then
-        if startswith("0x") or startswith("0X") then . else "0x" + . end
-      elif type == "array" then
-        "0x" + (map(hex_digit) | join(""))
-      else
-        empty
-      end;
-    ($raw.data // $raw.result // $raw) as $a
-    | {
-        oracle_payload: (($a.oracle_payload // $a.oraclePayload) | bytes_hex),
-        oracle_signature: (($a.oracle_signature // $a.oracleSignature) | bytes_hex)
-      }
-    | select(.oracle_payload != null and .oracle_signature != null)
-  ' || {
-    echo "native DeFi oracle attestation response did not include oracle payload/signature" >&2
-    return 1
-  }
-}
-
-soraswap_sign_oracle_payload_json() {
-  local config="$1"
-  local payload_json="$2"
-  local private_key expected_public_key actual_public_key python_bin payload_script private_key_file signed_status public_env
-
-  expected_public_key="$(soraswap_oracle_public_key_hex_for_config "$config")" || return 1
-  python_bin="$(soraswap_oracle_payload_python)" || return 1
-  payload_script="$(soraswap_oracle_payload_script_path)" || return 1
-  local signed_json
-  public_env="$(public_env_for_config "$config" 2>/dev/null || true)"
-  if [[ -n "${SORASWAP_ORACLE_PRIVATE_KEY_HEX:-}" ]]; then
-    private_key_file="$(printf '%s\n' "$SORASWAP_ORACLE_PRIVATE_KEY_HEX" \
-      | soraswap_secret_temp_from_stdin oracle-private-key)" || return 1
-  elif [[ -n "$public_env" ]]; then
-    private_key_file="$(soraswap_config_private_key_temp_file "$config" oracle-private-key)" || return 1
-  else
-    private_key="$(soraswap_oracle_private_key_hex_for_config "$config")" || return 1
-    private_key_file="$(printf '%s\n' "$private_key" \
-      | soraswap_secret_temp_from_stdin oracle-private-key)" || return 1
-  fi
-  {
-    if signed_json="$(SORASWAP_ORACLE_PRIVATE_KEY_HEX= "$python_bin" "$payload_script" \
-      --payload-json "$payload_json" \
-      --private-key-file "$private_key_file")"; then
-      signed_status=0
-    else
-      signed_status=$?
-    fi
-  } always {
-    if ! soraswap_secure_unlink_owned_file "$private_key_file"; then
-      signed_status=1
-    fi
-  }
-  (( signed_status == 0 )) || return "$signed_status"
-  actual_public_key="$(soraswap_normalize_oracle_public_key_hex "$(jq -r '.oracle_public_key' <<<"$signed_json")")" || return 1
-  if [[ "$actual_public_key" != "$expected_public_key" ]]; then
-    echo "oracle private key does not match SORASWAP_ORACLE_PUBLIC_KEY_HEX/config signer public key" >&2
-    return 1
-  fi
-
-  printf '%s\n' "$signed_json"
-}
-
-soraswap_oracle_keypair_matches_for_config() {
-  local config="${1:-}"
-  local probe_payload
-
-  probe_payload='{"soraswap_oracle_keypair_probe":1}'
-  soraswap_sign_oracle_payload_json "$config" "$probe_payload" >/dev/null
-}
-
-soraswap_submit_native_defi_attestation() {
-  local config="$1"
-  local domain="$2"
-  local subject_id="$3"
-  local oracle_slot="$4"
-  local status_flags="$5"
-  local attestation_hash="$6"
-  local signed_json="$7"
-  local provider account_public_key oracle_public_key attestation_file
-  local exit_code
-
-  provider="$(authority_from_config "$config")" || {
-    echo "failed to derive DeFi oracle provider account from $(soraswap_display_path "$config")" >&2
-    return 1
-  }
-  account_public_key="$(soraswap_normalize_oracle_public_key_hex "$(account_public_key_from_config "$config")")"
-  oracle_public_key="$(soraswap_oracle_public_key_hex_for_config "$config")"
-  if [[ "$account_public_key" != "$oracle_public_key" ]]; then
-    echo "native DeFi oracle attestations must be signed by the submitting provider account key" >&2
-    return 1
-  fi
-
-  attestation_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-defi-attestation.XXXXXX")"
-  jq -cn \
-    --arg provider "$provider" \
-    --argjson domain "$domain" \
-    --argjson subject_id "$subject_id" \
-    --argjson oracle_slot "$oracle_slot" \
-    --argjson status_flags "$status_flags" \
-    --argjson attestation_hash "$attestation_hash" \
-    --argjson oracle_payload "$(jq -c '.oracle_payload_bytes' <<<"$signed_json")" \
-    --argjson oracle_signature "$(jq -c '.oracle_signature_bytes' <<<"$signed_json")" \
-    --argjson signer_public_key "$(jq -c '.oracle_public_key_bytes' <<<"$signed_json")" \
-    '{
-      key: {
-        domain: $domain,
-        subject_id: $subject_id
-      },
-      provider: $provider,
-      oracle_slot: $oracle_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash,
-      oracle_payload: $oracle_payload,
-      oracle_signature: $oracle_signature,
-      signer_public_key: $signer_public_key,
-      oracle_scheme: 1,
-      source_events: []
-    }' > "$attestation_file"
-
-  if iroha_cli_with_gas_metadata "$config" app soracles tx attest-defi --attestation-json "$attestation_file" >/dev/null; then
-    exit_code=0
-  else
-    exit_code=$?
-  fi
-  rm -f "$attestation_file"
-  return "$exit_code"
-}
-
-soraswap_wait_native_oracle_attestation_json() {
-  local config="$1"
-  local domain="$2"
-  local subject_id="$3"
-  local attempts=0
-  local attestation_json
-
-  while (( attempts < 20 )); do
-    if attestation_json="$(soraswap_native_oracle_attestation_json "$config" "$domain" "$subject_id" 2>/dev/null)"; then
-      printf '%s\n' "$attestation_json"
-      return 0
-    fi
-    attempts=$(( attempts + 1 ))
-    sleep 1
-  done
-
-  soraswap_native_oracle_attestation_json "$config" "$domain" "$subject_id"
-}
-
-soraswap_use_native_oracle_fields_json() {
-  local config="$1"
-  local domain="$2"
-  local subject_id="$3"
-  local payload_json="$4"
-  local oracle_slot="$5"
-  local status_flags="$6"
-  local attestation_hash="$7"
-  local signed_json
-
-  signed_json="$(soraswap_sign_oracle_payload_json "$config" "$payload_json")" || return 1
-  soraswap_submit_native_defi_attestation \
-    "$config" \
-    "$domain" \
-    "$subject_id" \
-    "$oracle_slot" \
-    "$status_flags" \
-    "$attestation_hash" \
-    "$signed_json" || return 1
-  soraswap_wait_native_oracle_attestation_json "$config" "$domain" "$subject_id" >/dev/null || return 1
-  jq -ce '{oracle_payload, oracle_signature}' <<<"$signed_json"
-}
-
-soraswap_perps_oracle_fields_json() {
-  local config="$1"
-  local market_id="$2"
-  local mark_price_bps="$3"
-  local index_price_bps="$4"
-  local confidence_bps="$5"
-  local attestation_hash="$6"
-  local status_flags="${7:-0}"
-  local oracle_slot="${8:-}"
-  if [[ -z "$oracle_slot" ]]; then
-    oracle_slot="$(soraswap_next_oracle_slot "$config")" || return 1
-  fi
-  local payload_json
-  payload_json="$(jq -cn \
-    --argjson domain 1 \
-    --argjson market_id "$market_id" \
-    --argjson mark_price_bps "$mark_price_bps" \
-    --argjson index_price_bps "$index_price_bps" \
-    --argjson confidence_bps "$confidence_bps" \
-    --argjson oracle_slot "$oracle_slot" \
-    --argjson status_flags "$status_flags" \
-    --argjson attestation_hash "$attestation_hash" \
-    '{
-      domain: $domain,
-      market_id: $market_id,
-      mark_price_bps: $mark_price_bps,
-      index_price_bps: $index_price_bps,
-      confidence_bps: $confidence_bps,
-      oracle_slot: $oracle_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }')"
-  soraswap_use_native_oracle_fields_json "$config" 1 "$market_id" "$payload_json" "$oracle_slot" "$status_flags" "$attestation_hash"
-}
-
-soraswap_options_series_oracle_fields_json() {
-  local config="$1"
-  local series_id="$2"
-  local final_mark="$3"
-  local final_quote_mark="$4"
-  local attestation_hash="$5"
-  local status_flags="${6:-0}"
-  local oracle_slot="${7:-}"
-  if [[ -z "$oracle_slot" ]]; then
-    oracle_slot="$(soraswap_next_oracle_slot "$config")" || return 1
-  fi
-  local payload_json
-  payload_json="$(jq -cn \
-    --argjson domain 2 \
-    --argjson series_id "$series_id" \
-    --argjson final_mark "$final_mark" \
-    --argjson final_quote_mark "$final_quote_mark" \
-    --argjson oracle_slot "$oracle_slot" \
-    --argjson status_flags "$status_flags" \
-    --argjson attestation_hash "$attestation_hash" \
-    '{
-      domain: $domain,
-      series_id: $series_id,
-      final_mark: $final_mark,
-      final_quote_mark: $final_quote_mark,
-      oracle_slot: $oracle_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }')"
-  soraswap_use_native_oracle_fields_json "$config" 2 "$series_id" "$payload_json" "$oracle_slot" "$status_flags" "$attestation_hash"
-}
-
-soraswap_shout_oracle_fields_json() {
-  local config="$1"
-  local position_id="$2"
-  local mark_price_bps="$3"
-  local attestation_hash="$4"
-  local status_flags="${5:-0}"
-  local oracle_slot="${6:-}"
-  if [[ -z "$oracle_slot" ]]; then
-    oracle_slot="$(soraswap_next_oracle_slot "$config")" || return 1
-  fi
-  local payload_json
-  payload_json="$(jq -cn \
-    --argjson domain 3 \
-    --argjson position_id "$position_id" \
-    --argjson mark_price_bps "$mark_price_bps" \
-    --argjson oracle_slot "$oracle_slot" \
-    --argjson status_flags "$status_flags" \
-    --argjson attestation_hash "$attestation_hash" \
-    '{
-      domain: $domain,
-      position_id: $position_id,
-      mark_price_bps: $mark_price_bps,
-      oracle_slot: $oracle_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }')"
-  soraswap_use_native_oracle_fields_json "$config" 3 "$position_id" "$payload_json" "$oracle_slot" "$status_flags" "$attestation_hash"
-}
-
-soraswap_cover_oracle_fields_json() {
-  local config="$1"
-  local policy_id="$2"
-  local observed_price="$3"
-  local attestation_hash="$4"
-  local status_flags="${5:-0}"
-  local oracle_slot="${6:-}"
-  if [[ -z "$oracle_slot" ]]; then
-    oracle_slot="$(soraswap_next_oracle_slot "$config")" || return 1
-  fi
-  local payload_json
-  payload_json="$(jq -cn \
-    --argjson domain 4 \
-    --argjson policy_id "$policy_id" \
-    --argjson observed_price "$observed_price" \
-    --argjson oracle_slot "$oracle_slot" \
-    --argjson status_flags "$status_flags" \
-    --argjson attestation_hash "$attestation_hash" \
-    '{
-      domain: $domain,
-      policy_id: $policy_id,
-      observed_price: $observed_price,
-      oracle_slot: $oracle_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }')"
-  soraswap_use_native_oracle_fields_json "$config" 4 "$policy_id" "$payload_json" "$oracle_slot" "$status_flags" "$attestation_hash"
-}
-
-soraswap_cover_contract_oracle_fields_json() {
-  local config="$1"
-  local policy_id="$2"
-  local observed_price="$3"
-  local attestation_hash="$4"
-  local status_flags="${5:-0}"
-  local oracle_slot="${6:-}"
-  if [[ -z "$oracle_slot" ]]; then
-    oracle_slot="$(soraswap_next_oracle_slot "$config")" || return 1
-  fi
-  local payload_json signed_json
-  payload_json="$(jq -cn \
-    --argjson domain 4 \
-    --argjson policy_id "$policy_id" \
-    --argjson observed_price "$observed_price" \
-    --argjson oracle_slot "$oracle_slot" \
-    --argjson status_flags "$status_flags" \
-    --argjson attestation_hash "$attestation_hash" \
-    '{
-      domain: $domain,
-      policy_id: $policy_id,
-      observed_price: $observed_price,
-      oracle_slot: $oracle_slot,
-      status_flags: $status_flags,
-      attestation_hash: $attestation_hash
-    }')"
-  signed_json="$(soraswap_sign_oracle_payload_json "$config" "$payload_json")" || return 1
-  jq -ce '{oracle_payload, oracle_signature}' <<<"$signed_json"
-}
-
 strict_chain_fingerprint_json_or_null() {
   local raw="${1:-}"
   local normalized
@@ -2257,22 +2027,6 @@ require_deployment_evidence_chain_fingerprint() {
 
   echo "${context} for ${env} requires a complete chain fingerprint; call prepare_env_chain_state before writing deployment evidence" >&2
   return 1
-}
-
-contract_bundle_receipt_chain_fingerprint_json_for_env() {
-  local env="$1"
-  local chain_fingerprint_json
-
-  case "$env" in
-    testnet|production)
-      chain_fingerprint_json="$(current_or_saved_chain_fingerprint_json_for_env "$env")" || return 1
-      require_deployment_evidence_chain_fingerprint "$env" "$chain_fingerprint_json" "contract bundle receipt" || return 1
-      printf '%s\n' "$chain_fingerprint_json"
-      ;;
-    *)
-      chain_fingerprint_json_or_null 2>/dev/null || echo 'null'
-      ;;
-  esac
 }
 
 extract_last_json_object() {
@@ -2409,29 +2163,6 @@ fee_asset_label_for_config() {
   fi
 
   printf '%s\n' "$SORASWAP_FEE_ASSET_ALIAS"
-}
-
-gas_metadata_asset_id_for_config() {
-  local config="$1"
-  local public_env label
-
-  public_env="$(public_env_for_config "$config" 2>/dev/null || true)"
-  if [[ -z "$public_env" && -n "$SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID" ]]; then
-    printf '%s\n' "$SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID"
-    return 0
-  fi
-
-  label="$(fee_asset_label_for_config "$config" 2>/dev/null || true)"
-  if [[ -n "$label" ]]; then
-    if [[ "$label" == *"#"* ]] && ! asset_definition_alias_exists "$config" "$label"; then
-      fee_asset_definition_id_for_config "$config"
-      return 0
-    fi
-    printf '%s\n' "$label"
-    return 0
-  fi
-
-  fee_asset_definition_id_for_config "$config"
 }
 
 localnet_fee_asset_definition_id_for_config() {
@@ -2583,21 +2314,30 @@ ensure_iroha_cli_bin() {
   SORASWAP_ACTIVE_IROHA_CLI_BIN="$bin"
 }
 
-ensure_split_contract_deploy_bin() {
-  local debug_bin="$SORASWAP_IROHA_ROOT/target/debug/split_contract_deploy"
-  local bin="$debug_bin"
+ensure_ivm_contract_deploy_bin() {
+  local debug_bin="$SORASWAP_IROHA_ROOT/target/debug/ivm_contract_deploy"
+  local bin="${SORASWAP_IVM_CONTRACT_DEPLOY_BIN:-$debug_bin}"
   local cargo_lock="$SORASWAP_IROHA_ROOT/target/debug/.cargo-lock"
   local lock_holder=""
 
   soraswap_require_binary_integer_setting "SORASWAP_SKIP_IROHA_CLI_BUILD" "${SORASWAP_SKIP_IROHA_CLI_BUILD:-0}" || return 1
 
-  if [[ "${SORASWAP_SKIP_IROHA_CLI_BUILD:-0}" == "1" ]]; then
+  if [[ -n "${SORASWAP_IVM_CONTRACT_DEPLOY_BIN:-}" ]]; then
     if [[ -x "$bin" ]]; then
-      echo "cli tool: reusing existing split_contract_deploy binary" >&2
-      SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN="$bin"
+      echo "cli tool: reusing explicit ivm_contract_deploy binary $(soraswap_display_path "$bin")" >&2
+      SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN="$bin"
       return 0
     fi
-    echo "missing split_contract_deploy binary at $(soraswap_display_path "$bin") and SORASWAP_SKIP_IROHA_CLI_BUILD=1" >&2
+    echo "explicit SORASWAP_IVM_CONTRACT_DEPLOY_BIN is missing or not executable: $(soraswap_display_path "$bin")" >&2
+    return 1
+  fi
+  if [[ "${SORASWAP_SKIP_IROHA_CLI_BUILD:-0}" == "1" ]]; then
+    if [[ -x "$bin" ]]; then
+      echo "cli tool: reusing existing ivm_contract_deploy binary" >&2
+      SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN="$bin"
+      return 0
+    fi
+    echo "missing ivm_contract_deploy binary at $(soraswap_display_path "$bin") and SORASWAP_SKIP_IROHA_CLI_BUILD=1" >&2
     return 1
   fi
   if [[ ! -x "$bin" ]] || path_is_newer_than "$bin" \
@@ -2609,23 +2349,68 @@ ensure_split_contract_deploy_bin() {
     if [[ -x "$debug_bin" && -f "$cargo_lock" ]]; then
       lock_holder="$(cargo_lock_holder_pid "$cargo_lock")"
       if [[ -n "$lock_holder" ]]; then
-        SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN="$debug_bin"
-        echo "cli tool: sibling cargo job holds $(soraswap_display_path "$cargo_lock"); reusing existing split_contract_deploy binary $(soraswap_display_path "$debug_bin")" >&2
+        SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN="$debug_bin"
+        echo "cli tool: sibling cargo job holds $(soraswap_display_path "$cargo_lock"); reusing existing ivm_contract_deploy binary $(soraswap_display_path "$debug_bin")" >&2
         return 0
       fi
     fi
     (
       cd "$SORASWAP_IROHA_ROOT"
-      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_cli --bin split_contract_deploy
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_cli --features dev-tools --bin ivm_contract_deploy
     )
   fi
-  SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN="$bin"
+  SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN="$bin"
 }
 
-split_contract_deploy_cli() {
-  ensure_split_contract_deploy_bin
-  local bin="${SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN:-$SORASWAP_IROHA_ROOT/target/debug/split_contract_deploy}"
+ivm_contract_deploy_cli() {
+  ensure_ivm_contract_deploy_bin
+  local bin="${SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN:-$SORASWAP_IROHA_ROOT/target/debug/ivm_contract_deploy}"
   "$bin" "$@"
+}
+
+ensure_account_literal_reencode_bin() {
+  local debug_bin="$SORASWAP_IROHA_ROOT/target/debug/account_literal_reencode"
+  local bin="${SORASWAP_ACCOUNT_LITERAL_REENCODE_BIN:-$debug_bin}"
+  local cargo_lock="$SORASWAP_IROHA_ROOT/target/debug/.cargo-lock"
+  local lock_holder=""
+
+  soraswap_require_binary_integer_setting "SORASWAP_SKIP_IROHA_CLI_BUILD" "${SORASWAP_SKIP_IROHA_CLI_BUILD:-0}" || return 1
+  if [[ -n "${SORASWAP_ACCOUNT_LITERAL_REENCODE_BIN:-}" ]]; then
+    if [[ ! -x "$bin" ]]; then
+      echo "explicit SORASWAP_ACCOUNT_LITERAL_REENCODE_BIN is missing or not executable: $(soraswap_display_path "$bin")" >&2
+      return 1
+    fi
+    SORASWAP_ACTIVE_ACCOUNT_LITERAL_REENCODE_BIN="$bin"
+    return 0
+  fi
+  if [[ "${SORASWAP_SKIP_IROHA_CLI_BUILD:-0}" == "1" ]]; then
+    if [[ ! -x "$bin" ]]; then
+      echo "missing account_literal_reencode binary at $(soraswap_display_path "$bin") and SORASWAP_SKIP_IROHA_CLI_BUILD=1" >&2
+      return 1
+    fi
+    SORASWAP_ACTIVE_ACCOUNT_LITERAL_REENCODE_BIN="$bin"
+    return 0
+  fi
+  if [[ ! -x "$bin" ]] || path_is_newer_than "$bin" \
+    "$SORASWAP_IROHA_ROOT/Cargo.toml" \
+    "$SORASWAP_IROHA_ROOT/Cargo.lock" \
+    "$SORASWAP_IROHA_ROOT/crates/iroha_cli/src/bin/account_literal_reencode.rs" \
+    "$SORASWAP_IROHA_ROOT/crates/iroha_data_model" \
+    "$SORASWAP_IROHA_ROOT/crates/iroha_crypto"; then
+    if [[ -x "$debug_bin" && -f "$cargo_lock" ]]; then
+      lock_holder="$(cargo_lock_holder_pid "$cargo_lock")"
+      if [[ -n "$lock_holder" ]]; then
+        SORASWAP_ACTIVE_ACCOUNT_LITERAL_REENCODE_BIN="$debug_bin"
+        echo "cli tool: sibling cargo job holds $(soraswap_display_path "$cargo_lock"); reusing existing account_literal_reencode binary $(soraswap_display_path "$debug_bin")" >&2
+        return 0
+      fi
+    fi
+    (
+      cd "$SORASWAP_IROHA_ROOT"
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_cli --features dev-tools --bin account_literal_reencode
+    )
+  fi
+  SORASWAP_ACTIVE_ACCOUNT_LITERAL_REENCODE_BIN="$bin"
 }
 
 ensure_gov_instruction_bin() {
@@ -2663,7 +2448,7 @@ ensure_gov_instruction_bin() {
     echo "$rebuild_reason" >&2
     (
       cd "$SORASWAP_IROHA_ROOT"
-      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_cli --bin gov_instruction
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_cli --features dev-tools --bin gov_instruction
     )
   fi
 
@@ -2676,7 +2461,7 @@ gov_instruction_bin() {
 }
 
 ensure_localnet_tool_bins() {
-  local irohad_bin="$SORASWAP_IROHA_ROOT/target/debug/irohad"
+  local iroha3d_bin="$SORASWAP_IROHA_ROOT/target/debug/iroha3d"
   local iroha_bin="$SORASWAP_IROHA_ROOT/target/debug/iroha"
   local kagami_bin="$SORASWAP_IROHA_ROOT/target/debug/kagami"
   local cargo_lock="$SORASWAP_IROHA_ROOT/target/debug/.cargo-lock"
@@ -2684,30 +2469,36 @@ ensure_localnet_tool_bins() {
 
   soraswap_require_binary_integer_setting "SORASWAP_SKIP_LOCALNET_TOOL_BUILD" "${SORASWAP_SKIP_LOCALNET_TOOL_BUILD:-0}" || return 1
 
-  if [[ -n "${IROHAD_BIN:-}" || -n "${IROHA_BIN:-}" || -n "${KAGAMI_BIN:-}" ]]; then
-    irohad_bin="${IROHAD_BIN:-$irohad_bin}"
+  if [[ -n "${IROHA3D_BIN:-}" || -n "${IROHA_BIN:-}" || -n "${KAGAMI_BIN:-}" ]]; then
+    iroha3d_bin="${IROHA3D_BIN:-$iroha3d_bin}"
     iroha_bin="${IROHA_BIN:-$iroha_bin}"
     kagami_bin="${KAGAMI_BIN:-$kagami_bin}"
-    if [[ -x "$irohad_bin" && -x "$iroha_bin" && -x "$kagami_bin" ]]; then
-      echo "localnet tools: reusing explicit iroha/kagami binary paths" >&2
+    if [[ -x "$iroha3d_bin" && -x "$iroha_bin" && -x "$kagami_bin" ]]; then
+      SORASWAP_ACTIVE_IROHA3D_BIN="$iroha3d_bin"
+      SORASWAP_ACTIVE_LOCALNET_IROHA_BIN="$iroha_bin"
+      SORASWAP_ACTIVE_LOCALNET_KAGAMI_BIN="$kagami_bin"
+      echo "localnet tools: reusing explicit iroha3d/iroha/kagami binary paths" >&2
       return 0
     fi
     echo "localnet tools: one or more explicit binary paths are missing or not executable" >&2
-    echo "  IROHAD_BIN=$irohad_bin" >&2
+    echo "  IROHA3D_BIN=$iroha3d_bin" >&2
     echo "  IROHA_BIN=$iroha_bin" >&2
     echo "  KAGAMI_BIN=$kagami_bin" >&2
     return 1
   fi
 
   if [[ "${SORASWAP_SKIP_LOCALNET_TOOL_BUILD:-0}" == "1" ]]; then
-    if [[ -x "$irohad_bin" && -x "$iroha_bin" && -x "$kagami_bin" ]]; then
-      echo "localnet tools: reusing existing iroha/kagami binaries" >&2
+    if [[ -x "$iroha3d_bin" && -x "$iroha_bin" && -x "$kagami_bin" ]]; then
+      SORASWAP_ACTIVE_IROHA3D_BIN="$iroha3d_bin"
+      SORASWAP_ACTIVE_LOCALNET_IROHA_BIN="$iroha_bin"
+      SORASWAP_ACTIVE_LOCALNET_KAGAMI_BIN="$kagami_bin"
+      echo "localnet tools: reusing existing iroha3d/iroha/kagami binaries" >&2
       return 0
     fi
   fi
 
-  if [[ ! -x "$irohad_bin" || ! -x "$iroha_bin" || ! -x "$kagami_bin" ]] || \
-    path_is_newer_than "$irohad_bin" \
+  if [[ ! -x "$iroha3d_bin" || ! -x "$iroha_bin" || ! -x "$kagami_bin" ]] || \
+    path_is_newer_than "$iroha3d_bin" \
       "$SORASWAP_IROHA_ROOT/Cargo.toml" \
       "$SORASWAP_IROHA_ROOT/Cargo.lock" \
       "$SORASWAP_IROHA_ROOT/crates/irohad" \
@@ -2726,24 +2517,30 @@ ensure_localnet_tool_bins() {
       "$SORASWAP_IROHA_ROOT/crates/iroha_kagami" \
       "$SORASWAP_IROHA_ROOT/crates/iroha_swarm" \
       "$SORASWAP_IROHA_ROOT/crates/iroha_test_samples"; then
-    if [[ -x "$irohad_bin" && -x "$iroha_bin" && -x "$kagami_bin" && -f "$cargo_lock" ]]; then
+    if [[ -x "$iroha3d_bin" && -x "$iroha_bin" && -x "$kagami_bin" && -f "$cargo_lock" ]]; then
       lock_holder="$(cargo_lock_holder_pid "$cargo_lock")"
       if [[ -n "$lock_holder" ]]; then
-        echo "localnet tools: sibling cargo job holds $cargo_lock; reusing existing iroha/kagami binaries" >&2
+        SORASWAP_ACTIVE_IROHA3D_BIN="$iroha3d_bin"
+        SORASWAP_ACTIVE_LOCALNET_IROHA_BIN="$iroha_bin"
+        SORASWAP_ACTIVE_LOCALNET_KAGAMI_BIN="$kagami_bin"
+        echo "localnet tools: sibling cargo job holds $cargo_lock; reusing existing iroha3d/iroha/kagami binaries" >&2
         return 0
       fi
     fi
     (
       cd "$SORASWAP_IROHA_ROOT"
       NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_kagami --bin kagami
-      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p irohad --bin irohad
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p irohad --bin iroha3d
       NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p iroha_cli --bin iroha
     )
   fi
+  SORASWAP_ACTIVE_IROHA3D_BIN="$iroha3d_bin"
+  SORASWAP_ACTIVE_LOCALNET_IROHA_BIN="$iroha_bin"
+  SORASWAP_ACTIVE_LOCALNET_KAGAMI_BIN="$kagami_bin"
 }
 
-ensure_irohad_bin() {
-  local bin="$SORASWAP_IROHA_ROOT/target/debug/irohad"
+ensure_iroha3d_bin() {
+  local bin="$SORASWAP_IROHA_ROOT/target/debug/iroha3d"
   if [[ ! -x "$bin" ]] || path_is_newer_than "$bin" \
     "$SORASWAP_IROHA_ROOT/Cargo.toml" \
     "$SORASWAP_IROHA_ROOT/Cargo.lock" \
@@ -2753,7 +2550,7 @@ ensure_irohad_bin() {
     "$SORASWAP_IROHA_ROOT/crates/iroha_torii"; then
     (
       cd "$SORASWAP_IROHA_ROOT"
-      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p irohad --bin irohad
+      NORITO_SKIP_BINDINGS_SYNC=1 CARGO_INCREMENTAL=0 cargo build -p irohad --bin iroha3d
     )
   fi
 }
@@ -2972,34 +2769,23 @@ iroha_cli_json_with_config_timeout() {
   return "$exit_code"
 }
 
-iroha_cli_with_gas_metadata() {
+iroha_cli_with_authority_fee() {
   local config="$1"
   shift
-  local metadata_file gas_asset_id gas_limit command_timeout_secs exit_code tmp_config iroha_bin
+  local command_timeout_secs exit_code tmp_config iroha_bin
   local -a ledger_command
 
   ensure_iroha_cli_bin || return 1
   iroha_bin="${SORASWAP_ACTIVE_IROHA_CLI_BIN:-$SORASWAP_IROHA_ROOT/target/debug/iroha}"
-  gas_asset_id="$(gas_metadata_asset_id_for_config "$config")"
-  gas_limit="${SORASWAP_LEDGER_GAS_LIMIT:-2000000}"
   command_timeout_secs="${SORASWAP_LEDGER_COMMAND_TIMEOUT_SECS:-180}"
-  soraswap_require_positive_integer_setting "SORASWAP_LEDGER_GAS_LIMIT" "$gas_limit" || return 1
   soraswap_require_nonnegative_integer_setting "SORASWAP_LEDGER_COMMAND_TIMEOUT_SECS" "$command_timeout_secs" || return 1
-  metadata_file="$(jq -cn \
-    --arg gas_asset_id "$gas_asset_id" \
-    --argjson gas_limit "$gas_limit" \
-    '{gas_asset_id: $gas_asset_id, gas_limit: $gas_limit}' \
-    | soraswap_secret_temp_from_stdin ledger-metadata)" || return 1
-  tmp_config="$(materialize_cli_compatible_config "$config")" || {
-    soraswap_secure_unlink_owned_file "$metadata_file" || true
-    return 1
-  }
+  tmp_config="$(materialize_cli_compatible_config "$config")" || return 1
   if (( command_timeout_secs == 0 )); then
     ledger_command=(
       "$iroha_bin"
       --machine
       --config "$tmp_config"
-      --metadata "$metadata_file"
+      --fee-payer authority
       "$@"
     )
   elif (( $+commands[gtimeout] )); then
@@ -3008,7 +2794,7 @@ iroha_cli_with_gas_metadata() {
       "$iroha_bin"
       --machine
       --config "$tmp_config"
-      --metadata "$metadata_file"
+      --fee-payer authority
       "$@"
     )
   elif (( $+commands[timeout] )); then
@@ -3017,7 +2803,7 @@ iroha_cli_with_gas_metadata() {
       "$iroha_bin"
       --machine
       --config "$tmp_config"
-      --metadata "$metadata_file"
+      --fee-payer authority
       "$@"
     )
   else
@@ -3026,7 +2812,7 @@ iroha_cli_with_gas_metadata() {
       "$iroha_bin"
       --machine
       --config "$tmp_config"
-      --metadata "$metadata_file"
+      --fee-payer authority
       "$@"
     )
   fi
@@ -3052,11 +2838,236 @@ iroha_cli_with_gas_metadata() {
       exit_code=$?
     fi
   } always {
-    if ! soraswap_secure_unlink_owned_files "$metadata_file" "$tmp_config"; then
+    if ! soraswap_secure_unlink_owned_file "$tmp_config"; then
       exit_code=1
     fi
   }
   return "$exit_code"
+}
+
+iroha_taira_write_canary_with_config_signer() {
+  local config="$1"
+  local expected_account_id="$2"
+  local onboarding_token_file="${SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE:-}"
+  local public_root fee_asset_id tmp_config iroha_bin output receipt redacted_output
+  local command_status=1
+  local -a command
+
+  if ! is_taira_public_config "$config"; then
+    echo "Taira write-canary autofunding requires a testnet client config" >&2
+    return 1
+  fi
+  require_public_mutation_consent testnet "Taira signer write canary" || return 1
+  if [[ -z "$onboarding_token_file" ]]; then
+    echo "SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE is required when Taira signer autofunding is needed" >&2
+    echo "set it to the owner-only account-onboarding token file used by the current Iroha CLI" >&2
+    return 1
+  fi
+
+  # Validate the token file and config before the command can make a network
+  # request. The same checker suppresses all command output if it contains the
+  # private key, HTTP credentials, or onboarding token in any supported form.
+  soraswap_assert_client_output_clean "$config" "$onboarding_token_file" </dev/null || return 1
+  ensure_iroha_cli_bin || return 1
+  iroha_bin="${SORASWAP_ACTIVE_IROHA_CLI_BIN:-$SORASWAP_IROHA_ROOT/target/debug/iroha}"
+  public_root="$(torii_base_from_config "$config")" || return 1
+  fee_asset_id="$(fee_asset_definition_id_for_config "$config")" || return 1
+  tmp_config="$(materialize_cli_compatible_config "$config")" || return 1
+  command=(
+    "$iroha_bin"
+    --machine
+    --output-format json
+    --config "$tmp_config"
+    --fee-payer authority
+    taira write-canary
+    --public-root "$public_root"
+    --onboarding-token-file "$onboarding_token_file"
+    --use-config-signer
+    --faucet-asset-id "$fee_asset_id"
+    --json
+  )
+
+  output=""
+  {
+    if output="$("${command[@]}" 2>&1)"; then
+      command_status=0
+    else
+      command_status=$?
+    fi
+  } always {
+    if ! soraswap_secure_unlink_owned_file "$tmp_config"; then
+      command_status=1
+    fi
+  }
+
+  if ! printf '%s' "$output" \
+    | soraswap_assert_client_output_clean "$config" "$onboarding_token_file"; then
+    echo "Iroha Taira write-canary output contained credential material and was suppressed" >&2
+    return 1
+  fi
+  if (( command_status != 0 )); then
+    redacted_output="$(soraswap_redact_sensitive_text "$output")"
+    echo "Iroha Taira write canary failed for $expected_account_id" >&2
+    [[ -z "$redacted_output" ]] || printf '%s\n' "$redacted_output" >&2
+    return "$command_status"
+  fi
+  if ! receipt="$(jq -cse 'if length == 1 then .[0] else error("expected one JSON value") end' <<<"$output")"; then
+    redacted_output="$(soraswap_redact_sensitive_text "$output")"
+    echo "Iroha Taira write canary did not return exactly one JSON receipt" >&2
+    [[ -z "$redacted_output" ]] || printf '%s\n' "$redacted_output" >&2
+    return 1
+  fi
+  # Current Iroha keeps status=ok when the post-apply transaction query has
+  # not indexed the ping yet. Accept that one warning-success shape; the
+  # caller still requires the exact faucet asset to become query-visible.
+  if ! jq -e \
+    --arg expected_account_id "$expected_account_id" \
+    --arg fee_asset_id "$fee_asset_id" \
+    --arg public_root "$public_root" \
+    '
+      def exact_keys($expected):
+        (keys | sort) == ($expected | sort);
+      def integer:
+        type == "number" and (floor == .);
+      def positive_integer:
+        integer and . > 0;
+      def positive_quantity:
+        type == "string"
+        and . != "0"
+        and test("^(0|[1-9][0-9]*)(\\.[0-9]{0,27}[1-9])?$");
+      def current_charge($asset):
+        type == "object"
+        and exact_keys(["asset_definition_id", "kind", "max_amount"])
+        and .asset_definition_id == $asset
+        and (.kind |
+          type == "object"
+          and exact_keys(["kind", "value"])
+          and (.kind == "nexus" or .kind == "pipeline_gas")
+          and .value == null)
+        and (.max_amount | positive_quantity);
+      def current_authority_fee_payment($asset):
+        type == "object"
+        and exact_keys(["payer", "value"])
+        and .payer == "authority"
+        and (.value |
+          type == "object"
+          and exact_keys(["charge_limits", "gas_limit"])
+          and .gas_limit == null
+          and (.charge_limits |
+            type == "array"
+            and all(.[]; current_charge($asset))));
+      def current_check($name; $statuses):
+        type == "object"
+        and exact_keys(
+          if has("detail")
+          then ["detail", "http_status", "name", "ok"]
+          else ["http_status", "name", "ok"]
+          end
+        )
+        and .name == $name
+        and .ok == true
+        and (.http_status | integer)
+        and (.http_status as $status | ($statuses | index($status)) != null)
+        and ((has("detail") | not) or (.detail | type == "string"));
+      def current_authority_fee_quote($fee_payment; $asset; $account):
+        type == "object"
+        and exact_keys(["capacities", "components", "decision", "intent", "observation"])
+        and .intent == $fee_payment
+        and (.components |
+          type == "array"
+          and all(.[]; current_charge($asset)))
+        and .components == $fee_payment.value.charge_limits
+        and .capacities == []
+        and (.observation |
+          type == "object"
+          and exact_keys(["ledger_time_ms", "next_block_height", "route_dataspace_id"])
+          and (.ledger_time_ms | integer and . >= 0)
+          and (.next_block_height | positive_integer)
+          and .route_dataspace_id == 0)
+        and (.decision |
+          type == "object"
+          and exact_keys(["status", "value"])
+          and .status == "accepted"
+          and (.value |
+            type == "object"
+            and exact_keys(["debit_source"])
+            and (.debit_source |
+              type == "object"
+              and exact_keys(["kind", "value"])
+              and .kind == "account"
+              and .value == $account)));
+
+      type == "object"
+      and exact_keys([
+        "account_id",
+        "alias",
+        "applied_block_height",
+        "chain",
+        "chain_discriminant",
+        "checks",
+        "command",
+        "failures",
+        "faucet_asset_id",
+        "faucet_tx_hash",
+        "fee_payment",
+        "fee_quote",
+        "generated_signer",
+        "message",
+        "ping_tx_hash",
+        "public_root",
+        "status",
+        "terminal_kind",
+        "tx_query_verified",
+        "warnings"
+      ])
+      and .command == "taira_write_canary"
+      and .status == "ok"
+      and .public_root == $public_root
+      and .chain == "fc56984b-2be7-431d-840e-21514d1883f0"
+      and .chain_discriminant == 369
+      and .account_id == $expected_account_id
+      and (.alias |
+        type == "string"
+        and test("^tairarolloutcanary[a-z0-9]+@universal$"))
+      and .faucet_asset_id == $fee_asset_id
+      and .generated_signer == false
+      and (.checks | type == "array" and length == 5)
+      and (.checks[0] | current_check("accounts_onboard_plan"; [200]))
+      and (.checks[1] | current_check("accounts_onboard"; [200, 202]))
+      and (.checks[2] | current_check("accounts_onboard_finality"; [200]))
+      and (.checks[3] | current_check("accounts_faucet"; [202]))
+      and (.checks[4] | current_check("accounts_faucet_finality"; [200]))
+      and (.warnings | type == "array" and all(.[]; type == "string"))
+      and .failures == []
+      and (.fee_payment | current_authority_fee_payment($fee_asset_id))
+      and (.fee_payment as $fee_payment |
+        .fee_quote |
+        current_authority_fee_quote($fee_payment; $fee_asset_id; $expected_account_id))
+      and (.message |
+        type == "string"
+        and test("^taira-write-canary-[0-9]+$"))
+      and (.faucet_tx_hash |
+        type == "string"
+        and test("^[0-9A-Fa-f]{64}$"))
+      and (.ping_tx_hash |
+        type == "string"
+        and test("^[0-9A-Fa-f]{64}$"))
+      and (.applied_block_height == null or (.applied_block_height | positive_integer))
+      and .terminal_kind == "Applied"
+      and (.tx_query_verified | type == "boolean")
+      and (
+        if .tx_query_verified
+        then .warnings == []
+        else (.warnings | length > 0 and any(.[]; test("transaction query")))
+        end
+      )
+    ' >/dev/null <<<"$receipt"; then
+    echo "Iroha Taira write-canary receipt did not match the exact current success schema" >&2
+    printf '%s\n' "$(soraswap_redact_sensitive_text "$receipt")" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$receipt"
 }
 
 normalize_hash_literal() {
@@ -3192,7 +3203,6 @@ testnet_client_config_unexpected_chain_blocker_message() {
   local config="$1"
   local config_chain
 
-  [[ -z "${SORASWAP_TESTNET_CHAIN_ID:-}" ]] || return 1
   if [[ -f "$config" ]]; then
     config_chain="$(config_chain_literal_from_config "$config" 2>/dev/null || true)"
   else
@@ -3201,7 +3211,7 @@ testnet_client_config_unexpected_chain_blocker_message() {
   [[ -n "$config_chain" ]] || return 1
   [[ "$config_chain" != "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT" ]] || return 1
 
-  echo "Taira client config chain $config_chain does not match the expected Taira chain; set SORASWAP_TESTNET_CHAIN_ID if this public Taira reset is intentional"
+  echo "Taira client config chain $config_chain does not match the canonical Taira chain $SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
 }
 
 production_client_config_taira_chain_blocker_message() {
@@ -3285,14 +3295,8 @@ config_toml_string_value_in_section() {
 account_toml_string_value() {
   local config="$1"
   local key="$2"
-  local value
 
-  value="$(config_toml_string_value_in_section "$config" account "$key")"
-  if [[ -n "$value" ]]; then
-    printf '%s\n' "$value"
-    return 0
-  fi
-  config_toml_string_value "$config" "$key"
+  config_toml_string_value_in_section "$config" account "$key"
 }
 
 account_domain_from_config() {
@@ -3459,12 +3463,12 @@ chain_id_override_for_config() {
   public_env="$(public_env_for_config "$config" 2>/dev/null || true)"
   case "$public_env" in
     testnet)
-      if [[ -n "${SORASWAP_TESTNET_CHAIN_ID:-}" ]]; then
-        printf '%s\n' "$SORASWAP_TESTNET_CHAIN_ID"
-        return 0
-      fi
       config_chain="$(config_chain_literal_from_config "$config")"
-      printf '%s\n' "${config_chain:-$SORASWAP_TESTNET_CHAIN_ID_DEFAULT}"
+      if [[ "$config_chain" != "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT" ]]; then
+        echo "Taira client config chain ${config_chain:-<missing>} does not match the canonical Taira chain $SORASWAP_TESTNET_CHAIN_ID_DEFAULT" >&2
+        return 1
+      fi
+      printf '%s\n' "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
       ;;
     production)
       if [[ -n "${SORASWAP_PRODUCTION_CHAIN_ID:-}" ]]; then
@@ -3583,11 +3587,11 @@ deployment_records_snapshot_json_for_env() {
   chain_fingerprint_json="$(current_or_saved_chain_fingerprint_json_for_env "$env")" || return 1
   require_deployment_evidence_chain_fingerprint "$env" "$chain_fingerprint_json" "deployment records snapshot" || return 1
   deploy_scope="${SORASWAP_DEPLOY_SCOPE:-full}"
-  contracts_json="$(deployment_records_json_for_env "$env")"
+  contracts_json="$(deployment_records_json_for_env "$env")" || return 1
   expected_contract_keys_json="$(expected_contract_ids_for_deploy_scope "$deploy_scope" | json_array_from_lines)" || return 1
   if ! jq -e --argjson expected_contract_keys "$expected_contract_keys_json" '
     def snapshot_keys:
-      [.[]? | select(type == "object") | (.contract_key? // .name? // empty) | select(. != "")];
+      [.[] | .contract_key];
     ($expected_contract_keys | unique | sort) as $expected
     | snapshot_keys as $actual
     | type == "array"
@@ -3600,12 +3604,7 @@ deployment_records_snapshot_json_for_env() {
   fi
   if [[ "$chain_fingerprint_json" != "null" ]] \
     && ! jq -e --argjson chain "$chain_fingerprint_json" '
-      def matches_chain($fingerprint):
-        (($fingerprint.torii_url // "") | type == "string" and length > 0)
-        and (($fingerprint.torii_url // null) == ($chain.torii_url // null))
-        and (($fingerprint.chain // null) == ($chain.chain // null))
-        and (($fingerprint.block_1_hash // null) == ($chain.block_1_hash // null));
-      all(.[]?; (type == "object") and matches_chain(.chain_fingerprint // {}))
+      all(.[]; .chain_fingerprint == $chain)
     ' <<<"$contracts_json" >/dev/null 2>&1; then
     echo "deployment records snapshot for $env contains records without the current chain fingerprint" >&2
     return 1
@@ -3666,58 +3665,19 @@ public_reusable_contracts_snapshot_check_json() {
 
   if [[ ! -s "$contracts_snapshot_path" ]]; then
     issues+=("missing contracts snapshot at $(soraswap_display_path "$contracts_snapshot_path")")
+  elif ! deployment_records_snapshot_matches_current_schema "$contracts_snapshot_path" "$env"; then
+    issues+=("contracts snapshot does not match the closed current deployment-evidence schema")
   elif ! jq -e \
-    --arg env "$env" \
     --argjson chain "$chain_fingerprint_json" \
     --argjson expected_contract_keys "$expected_contract_keys_json" \
     '
-      def nonempty_string($v): (($v // "") | type == "string" and length > 0);
-      def normalized_hash($v): (($v // "") | ascii_downcase | sub("^0x"; ""));
-      def bundle_deploy_proof($item):
-        (($item.deploy_strategy // "") == "bundle")
-        and (($item.bundle_receipt.status // "") == "deployed")
-        and (($item.bundle_receipt.name // $item.bundle_receipt.contract_key // "") == ($item.contract_key // ""))
-        and (($item.bundle_receipt.contract_address // "") == ($item.contract_address // $item.response.contract_address // $item.instance.contract_address // $item.instance.contract_id // ""))
-        and (($item.bundle_receipt.deploy_nonce // null) | type == "number")
-        and ((($item.bundle_receipt.deploy_nonce // null) | tostring) == (($item.deploy_nonce // $item.response.deploy_nonce // $item.instance.deploy_nonce // null) | tostring))
-        and (normalized_hash($item.bundle_receipt.code_hash_hex) == normalized_hash($item.code_hash_hex // $item.response.code_hash_hex // $item.instance.code_hash_hex))
-        and (normalized_hash($item.bundle_receipt.abi_hash_hex) == normalized_hash($item.abi_hash_hex // $item.response.abi_hash_hex // $item.instance.abi_hash_hex));
-      def deploy_write_proof($item):
-        nonempty_string($item.response.tx_hash_hex)
-        or bundle_deploy_proof($item);
-      .status == "completed"
-      and nonempty_string(.generated_at)
-      and (.environment // "") == $env
-      and (($expected_contract_keys | type) == "array")
+      (($expected_contract_keys | type) == "array")
       and (($expected_contract_keys | length) > 0)
-      and ((.contracts // []) | type == "array")
-      and ([.contracts[]? | select(type == "object") | (.contract_key? // .name? // empty) | select(. != "")] as $snapshot_keys
-        | (($snapshot_keys | length) == ($expected_contract_keys | unique | length))
-        and (($snapshot_keys | unique | sort) == ($expected_contract_keys | unique | sort)))
-      and all((.contracts // [])[]?;
-        (type == "object")
-        and ((.environment // "") == $env)
-        and nonempty_string(.contract_key)
-        and nonempty_string(.contract_source)
-        and nonempty_string(.contract_alias)
-        and nonempty_string(.contract_address)
-        and ((.deploy_nonce // null) | type == "number")
-        and ((.response.ok // false) == true)
-        and deploy_write_proof(.)
-        and nonempty_string(.response.code_hash_hex)
-        and nonempty_string(.response.abi_hash_hex)
-        and nonempty_string(.instance.contract_id)
-        and nonempty_string(.instance.code_hash_hex)
-        and nonempty_string(.instance.abi_hash_hex)
-        and ((.instance.verification // "") == "transaction_and_manifest")
-        and ((.chain_fingerprint.torii_url // null) == ($chain.torii_url // null))
-        and ((.chain_fingerprint.chain // null) == ($chain.chain // null))
-        and ((.chain_fingerprint.block_1_hash // null) == ($chain.block_1_hash // null)))
-      and ((.chain_fingerprint.torii_url // null) == ($chain.torii_url // null))
-      and ((.chain_fingerprint.chain // null) == ($chain.chain // null))
-      and ((.chain_fingerprint.block_1_hash // null) == ($chain.block_1_hash // null))
+      and ([.contracts[].contract_key] | sort) == ($expected_contract_keys | unique | sort)
+      and .chain_fingerprint == $chain
+      and all(.contracts[]; .chain_fingerprint == $chain)
     ' "$contracts_snapshot_path" >/dev/null 2>&1; then
-    issues+=("contracts snapshot is not reusable: missing completed status, selected environment, exact current contract set, deploy receipts, manifests, or current chain fingerprint")
+    issues+=("contracts snapshot is not reusable: expected contract coverage or current chain fingerprint does not match")
   fi
 
   if (( ${#issues[@]} == 0 )); then
@@ -3783,27 +3743,19 @@ public_current_deploy_snapshot_check_json() {
 
   if [[ ! -s "$contracts_snapshot_path" ]]; then
     issues+=("missing contracts snapshot at $(soraswap_display_path "$contracts_snapshot_path")")
+  elif ! deployment_records_snapshot_matches_current_schema "$contracts_snapshot_path" "$env"; then
+    issues+=("contracts snapshot does not match the closed current deployment-evidence schema")
   elif ! jq -e \
-    --arg env "$env" \
     --argjson chain "$chain_fingerprint_json" \
     --argjson expected_contract_keys "$expected_contract_keys_json" \
     '
-      .status == "completed"
-      and ((.generated_at // "") | type == "string" and length > 0)
-      and (.environment // "") == $env
-      and (($expected_contract_keys | type) == "array")
+      (($expected_contract_keys | type) == "array")
       and (($expected_contract_keys | length) > 0)
-      and ((.contracts // []) | type == "array")
-      and ([.contracts[]? | select(type == "object") | (.contract_key? // .name? // empty) | select(. != "")] as $snapshot_keys
-        | (($snapshot_keys | length) == ($expected_contract_keys | unique | length))
-        and (($snapshot_keys | unique | sort) == ($expected_contract_keys | unique | sort)))
-      and all((.contracts // [])[]?; (type == "object") and ((.environment // "") == $env))
-      and ((.chain_fingerprint.torii_url // "") | type == "string" and length > 0)
-      and (.chain_fingerprint.torii_url // null) == ($chain.torii_url // null)
-      and (.chain_fingerprint.chain // null) == ($chain.chain // null)
-      and (.chain_fingerprint.block_1_hash // null) == ($chain.block_1_hash // null)
+      and ([.contracts[].contract_key] | sort) == ($expected_contract_keys | unique | sort)
+      and .chain_fingerprint == $chain
+      and all(.contracts[]; .chain_fingerprint == $chain)
     ' "$contracts_snapshot_path" >/dev/null 2>&1; then
-    issues+=("contracts snapshot is missing completed status, selected environment, current contract set, or current chain fingerprint")
+    issues+=("contracts snapshot does not exactly cover the current contract set and chain fingerprint")
   fi
 
   if [[ ! -s "$deploy_snapshot_path" ]]; then
@@ -3863,17 +3815,19 @@ public_current_deploy_snapshot_check_json() {
       and ((.blockers // []) | length) == 0
       and ((.warnings // []) | length) == 0
       and (.environment.mutations_allowed // false) == true
-      and (.environment.oracle_public_key_present // false) == true
-      and (.environment.oracle_private_key_present // false) == true
-      and (.environment.oracle_keypair_verified // false) == true
-      and ((.environment.oracle_public_key_source // "") | type == "string" and length > 0)
-      and ((.environment.oracle_private_key_source // "") | type == "string" and length > 0)
+      and (.environment.oracle_client_config_present // false) == true
+      and (.environment.oracle_client_config_valid // false) == true
+      and (.environment.oracle_account_derivable // false) == true
+      and (.environment.oracle_account_distinct // false) == true
+      and ((.environment.oracle_client_config_source // "") | type == "string" and length > 0)
       and ((.endpoint.mcp_http_status // "") | tostring) == "200"
       and (.endpoint.health_issues | type == "array" and length == 0)
       and ((.endpoint.health.status.http_status // "") | tostring) == "200"
       and (.endpoint.health.status.json_available == true)
       and ((.endpoint.health.sumeragi.http_status // "") | tostring) == "200"
       and (.endpoint.health.sumeragi.json_available == true)
+      and ((.endpoint.health.sumeragi_diagnostics.http_status // "") | tostring) == "200"
+      and (.endpoint.health.sumeragi_diagnostics.json_available == true)
       and (.chain.fingerprint_available // false) == true
       and (.chain.saved_snapshot_exists // false) == true
       and (.chain.saved_snapshot_matches // false) == true
@@ -4124,6 +4078,21 @@ config_chain_id_from_config() {
   config_chain_literal_from_config "$config"
 }
 
+network_id_from_config() {
+  local config="$1"
+  local metadata
+
+  metadata="$(soraswap_inspect_client_config "$config" metadata)" || return 1
+  jq -er '
+    if ((.network_id // "") | type) == "string"
+      and (.network_id | test("^hash:[0-9A-F]{64}#[0-9A-F]{4}$")) then
+      .network_id
+    else
+      error("client config network_id is missing or non-canonical")
+    end
+  ' <<<"$metadata"
+}
+
 account_private_key_from_config() {
   local config="$1"
   if public_env_for_config "$config" >/dev/null 2>&1; then
@@ -4185,18 +4154,23 @@ chain_discriminant_for_env_config() {
 
   case "$env" in
     testnet)
-      if [[ -n "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT" ]]; then
-        echo "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT"
-        return 0
-      fi
       if [[ -n "$config" && -f "$config" ]]; then
         config_discriminant="$(account_chain_discriminant_from_config "$config")" || return 1
         if [[ -n "$config_discriminant" ]]; then
-          echo "$config_discriminant"
+          if [[ "$config_discriminant" != "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT" ]]; then
+            echo "Taira account.chain_discriminant must be $SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT" >&2
+            return 1
+          fi
+          echo "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT"
           return 0
         fi
         profile="$(account_profile_from_config "$config")"
-        if [[ -n "$profile" ]] && profile_discriminant="$(chain_discriminant_for_profile "$profile" 2>/dev/null)"; then
+        if [[ -n "$profile" ]]; then
+          if [[ "$profile" != "taira" ]]; then
+            echo "Taira account.profile must be taira" >&2
+            return 1
+          fi
+          profile_discriminant="$(chain_discriminant_for_profile "$profile")" || return 1
           echo "$profile_discriminant"
           return 0
         fi
@@ -4228,7 +4202,7 @@ chain_discriminant_for_env() {
   local env="${1:-testnet}"
   case "$env" in
     testnet)
-      echo "${SORASWAP_TESTNET_CHAIN_DISCRIMINANT:-$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT}"
+      echo "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT"
       ;;
     production)
       if [[ -n "${SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT:-}" ]]; then
@@ -4754,58 +4728,30 @@ torii_json_endpoint_snapshot_with_display_url() {
 soraswap_chain_health_snapshot_from_endpoint_snapshots_json() {
   local status_snapshot="$1"
   local sumeragi_snapshot="$2"
+  local sumeragi_diagnostics_snapshot="$3"
 
   jq -cn \
     --argjson status_snapshot "$status_snapshot" \
     --argjson sumeragi_snapshot "$sumeragi_snapshot" \
+    --argjson sumeragi_diagnostics_snapshot "$sumeragi_diagnostics_snapshot" \
     '
-    def normalized_sumeragi_json($json):
-      if ($json | type) == "object" then
-        $json
-      elif ($json | type) == "array" then
-        ([
-          $json[]?
-          | select(type == "object")
-          | select(
-              ((.canonical // null) | type) == "object"
-              or ((.membership // null) | type) == "object"
-              or ((.commit_qc // null) | type) == "object"
-              or ((.highest_qc // null) | type) == "object"
-              or ((.tx_queue // null) | type) == "object"
-            )
-        ] | if length == 0 then null else max_by(((.canonical.height // .membership.height // .height // 0) | tonumber? // 0)) end)
-      else
-        null
-      end;
-
-    (normalized_sumeragi_json($sumeragi_snapshot.json)) as $sumeragi_json
-    | {
+    {
       status: {
         url: $status_snapshot.url,
         tls_verified: (if ($status_snapshot | has("tls_verified")) then $status_snapshot.tls_verified else null end),
         http_status: $status_snapshot.http_status,
         json_available: $status_snapshot.json_available,
         summary: (
-          if $status_snapshot.json == null then null else {
-            blocks: ($status_snapshot.json.blocks // null),
-            peers: ($status_snapshot.json.peers // null),
-            queue_size: ($status_snapshot.json.queue_size // null),
-            queue_queued: ($status_snapshot.json.queue_queued // null),
-            queue_inflight: ($status_snapshot.json.queue_inflight // null),
-            tx_queue_depth: ($status_snapshot.json.tx_queue_depth // null),
-            tx_queue_saturated: (
-              if ($status_snapshot.json | has("tx_queue_saturated")) then
-                $status_snapshot.json.tx_queue_saturated
-              elif (($status_snapshot.json.sumeragi // {}) | has("tx_queue_saturated")) then
-                $status_snapshot.json.sumeragi.tx_queue_saturated
-              else
-                null
-              end
-            ),
-            time_since_last_block_ms: ($status_snapshot.json.time_since_last_block_ms // null),
-            time_since_last_non_empty_block_ms: ($status_snapshot.json.time_since_last_non_empty_block_ms // null),
-            last_block_committed_at_ms: ($status_snapshot.json.last_block_committed_at_ms // null),
-            view_changes: ($status_snapshot.json.view_changes // null),
+          if ($status_snapshot.json | type) != "object" then null else {
+            blocks: $status_snapshot.json.blocks,
+            peers: $status_snapshot.json.peers,
+            queue_size: $status_snapshot.json.queue_size,
+            queue_queued: $status_snapshot.json.queue_queued,
+            queue_inflight: $status_snapshot.json.queue_inflight,
+            time_since_last_block_ms: $status_snapshot.json.time_since_last_block_ms,
+            time_since_last_non_empty_block_ms: $status_snapshot.json.time_since_last_non_empty_block_ms,
+            last_block_committed_at_ms: $status_snapshot.json.last_block_committed_at_ms,
+            view_changes: $status_snapshot.json.view_changes,
             teu_backlog_total: (([$status_snapshot.json.teu_dataspace_backlog[]?.backlog] | add) // 0)
           } end
         )
@@ -4816,50 +4762,40 @@ soraswap_chain_health_snapshot_from_endpoint_snapshots_json() {
         http_status: $sumeragi_snapshot.http_status,
         json_available: $sumeragi_snapshot.json_available,
         summary: (
-          if $sumeragi_json == null then null else {
-            height: ($sumeragi_json.canonical.height // $sumeragi_json.membership.height // $sumeragi_json.height // null),
-            commit_qc_height: ($sumeragi_json.commit_qc.height // $sumeragi_json.commit_qc_height // null),
-            highest_qc_height: ($sumeragi_json.highest_qc.height // $sumeragi_json.highest_qc_height // null),
-            phase: ($sumeragi_json.canonical.phase // $sumeragi_json.phase // null),
-            rbc_status: ($sumeragi_json.canonical.rbc_status // $sumeragi_json.rbc_status // null),
-            payload_status: ($sumeragi_json.canonical.payload_status // $sumeragi_json.payload_status // null),
-            tx_queue: {
-              depth: ($sumeragi_json.tx_queue.depth // null),
-              saturated: (
-                if (($sumeragi_json.tx_queue // {}) | has("saturated")) then
-                  $sumeragi_json.tx_queue.saturated
-                else
-                  null
-                end
-              ),
-              saturated_by_age: (
-                if (($sumeragi_json.tx_queue // {}) | has("saturated_by_age")) then
-                  $sumeragi_json.tx_queue.saturated_by_age
-                else
-                  null
-                end
-              ),
-              saturated_by_count: (
-                if (($sumeragi_json.tx_queue // {}) | has("saturated_by_count")) then
-                  $sumeragi_json.tx_queue.saturated_by_count
-                else
-                  null
-                end
-              ),
-              saturated_by_bytes: (
-                if (($sumeragi_json.tx_queue // {}) | has("saturated_by_bytes")) then
-                  $sumeragi_json.tx_queue.saturated_by_bytes
-                else
-                  null
-                end
-              ),
-              oldest_queued_age_ms: ($sumeragi_json.tx_queue.oldest_queued_age_ms // null)
-            },
-            view_change_last_cause: ($sumeragi_json.view_change_causes.last_cause // null),
-            missing_qc_total: ($sumeragi_json.view_change_causes.missing_qc_total // null),
-            quorum_timeout_total: ($sumeragi_json.view_change_causes.quorum_timeout_total // null),
-            missing_payload_total: ($sumeragi_json.view_change_causes.missing_payload_total // null),
-            worker_stage: ($sumeragi_json.worker_loop.stage // null)
+          if ($sumeragi_snapshot.json | type) != "object" then null else {
+            protocol_version: $sumeragi_snapshot.json.protocol_version,
+            height_context_id: $sumeragi_snapshot.json.height_context_id,
+            height: $sumeragi_snapshot.json.height,
+            view: $sumeragi_snapshot.json.view,
+            phase: $sumeragi_snapshot.json.phase.phase,
+            leader: $sumeragi_snapshot.json.leader,
+            body_state: $sumeragi_snapshot.json.body_state.state,
+            pending_persistence_id: $sumeragi_snapshot.json.pending_persistence_id,
+            last_committed_height: $sumeragi_snapshot.json.last_committed_height,
+            last_committed_subject: $sumeragi_snapshot.json.last_committed_subject,
+            restart_required: $sumeragi_snapshot.json.restart_required,
+            no_progress_age_ms: $sumeragi_snapshot.json.liveness.no_progress_age_ms,
+            blocker: $sumeragi_snapshot.json.liveness.blocker.blocker
+          } end
+        )
+      },
+      sumeragi_diagnostics: {
+        url: $sumeragi_diagnostics_snapshot.url,
+        tls_verified: (if ($sumeragi_diagnostics_snapshot | has("tls_verified")) then $sumeragi_diagnostics_snapshot.tls_verified else null end),
+        http_status: $sumeragi_diagnostics_snapshot.http_status,
+        json_available: $sumeragi_diagnostics_snapshot.json_available,
+        summary: (
+          if ($sumeragi_diagnostics_snapshot.json | type) != "object" then null else {
+            pipeline_execution: $sumeragi_diagnostics_snapshot.json.pipeline_execution,
+            tx_queue_depth: $sumeragi_diagnostics_snapshot.json.tx_queue_depth,
+            tx_queue_capacity: $sumeragi_diagnostics_snapshot.json.tx_queue_capacity,
+            tx_queue_retained_bytes: $sumeragi_diagnostics_snapshot.json.tx_queue_retained_bytes,
+            tx_queue_max_retained_bytes: $sumeragi_diagnostics_snapshot.json.tx_queue_max_retained_bytes,
+            tx_queue_saturated: $sumeragi_diagnostics_snapshot.json.tx_queue_saturated,
+            tx_queue_saturated_by_count: $sumeragi_diagnostics_snapshot.json.tx_queue_saturated_by_count,
+            tx_queue_saturated_by_bytes: $sumeragi_diagnostics_snapshot.json.tx_queue_saturated_by_bytes,
+            tx_queue_saturated_by_age: $sumeragi_diagnostics_snapshot.json.tx_queue_saturated_by_age,
+            tx_queue_oldest_queued_age_ms: $sumeragi_diagnostics_snapshot.json.tx_queue_oldest_queued_age_ms
           } end
         )
       }
@@ -4868,17 +4804,18 @@ soraswap_chain_health_snapshot_from_endpoint_snapshots_json() {
 
 soraswap_public_chain_health_snapshot_json() {
   local config="$1"
-  local torii_base status_snapshot sumeragi_snapshot
+  local torii_base status_snapshot sumeragi_snapshot sumeragi_diagnostics_snapshot
 
   torii_base="$(torii_base_from_config "$config")"
   status_snapshot="$(torii_json_endpoint_snapshot "$config" "$torii_base/status")"
   sumeragi_snapshot="$(torii_json_endpoint_snapshot "$config" "$torii_base/v1/sumeragi/status")"
-  soraswap_chain_health_snapshot_from_endpoint_snapshots_json "$status_snapshot" "$sumeragi_snapshot"
+  sumeragi_diagnostics_snapshot="$(torii_json_endpoint_snapshot "$config" "$torii_base/v1/sumeragi/diagnostics")"
+  soraswap_chain_health_snapshot_from_endpoint_snapshots_json "$status_snapshot" "$sumeragi_snapshot" "$sumeragi_diagnostics_snapshot"
 }
 
 soraswap_taira_direct_validator_health_json() {
   local dns_records_path="${1:-${SORASWAP_TAIRA_DNS_RECORDS_JSON:-$SORASWAP_IROHA_ROOT/configs/soranexus/taira/dns_records.json}}"
-  local records_json validators_json host ip status_snapshot sumeragi_snapshot health_json validator_json validator_index validator_label
+  local records_json validators_json host ip status_snapshot sumeragi_snapshot sumeragi_diagnostics_snapshot health_json validator_json validator_index validator_label
 
   if [[ ! -s "$dns_records_path" ]]; then
     jq -cn '{available: false, reason: "dns_records_json_missing", validator_count: 0, validators: []}'
@@ -4910,7 +4847,8 @@ soraswap_taira_direct_validator_health_json() {
     validator_label="direct-validator-$validator_index"
     status_snapshot="$(torii_json_endpoint_snapshot_with_resolve "https://$host/status" "$host" "$ip" 443 "$validator_label/status" "[redacted-host]")"
     sumeragi_snapshot="$(torii_json_endpoint_snapshot_with_resolve "https://$host/v1/sumeragi/status" "$host" "$ip" 443 "$validator_label/v1/sumeragi/status" "[redacted-host]")"
-    health_json="$(soraswap_chain_health_snapshot_from_endpoint_snapshots_json "$status_snapshot" "$sumeragi_snapshot")"
+    sumeragi_diagnostics_snapshot="$(torii_json_endpoint_snapshot_with_resolve "https://$host/v1/sumeragi/diagnostics" "$host" "$ip" 443 "$validator_label/v1/sumeragi/diagnostics" "[redacted-host]")"
+    health_json="$(soraswap_chain_health_snapshot_from_endpoint_snapshots_json "$status_snapshot" "$sumeragi_snapshot" "$sumeragi_diagnostics_snapshot")"
     validator_json="$(jq -cn \
       --arg host "$validator_label" \
       --argjson source_index "$validator_index" \
@@ -4933,7 +4871,7 @@ soraswap_taira_direct_validator_health_json() {
 soraswap_taira_direct_torii_port_health_json() {
   local torii_host="${1:-${SORASWAP_TAIRA_DIRECT_TORII_HOST:-}}"
   local torii_ports="${2:-${SORASWAP_TAIRA_DIRECT_TORII_PORTS:-}}"
-  local validators_json port status_snapshot sumeragi_snapshot health_json validator_json
+  local validators_json port status_snapshot sumeragi_snapshot sumeragi_diagnostics_snapshot health_json validator_json
 
   if [[ -z "$torii_host" ]]; then
     jq -cn '{available: false, reason: "direct_torii_host_missing", validator_count: 0, validators: []}'
@@ -4954,7 +4892,8 @@ soraswap_taira_direct_torii_port_health_json() {
     fi
     status_snapshot="$(torii_json_endpoint_snapshot_with_display_url "http://$torii_host:$port/status" "direct-torii-port-$port/status")"
     sumeragi_snapshot="$(torii_json_endpoint_snapshot_with_display_url "http://$torii_host:$port/v1/sumeragi/status" "direct-torii-port-$port/v1/sumeragi/status")"
-    health_json="$(soraswap_chain_health_snapshot_from_endpoint_snapshots_json "$status_snapshot" "$sumeragi_snapshot")"
+    sumeragi_diagnostics_snapshot="$(torii_json_endpoint_snapshot_with_display_url "http://$torii_host:$port/v1/sumeragi/diagnostics" "direct-torii-port-$port/v1/sumeragi/diagnostics")"
+    health_json="$(soraswap_chain_health_snapshot_from_endpoint_snapshots_json "$status_snapshot" "$sumeragi_snapshot" "$sumeragi_diagnostics_snapshot")"
     validator_json="$(jq -cn \
       --arg host "port-$port" \
       --argjson port "$port" \
@@ -4983,8 +4922,10 @@ soraswap_direct_validator_health_summary_text_from_json() {
     | (.host // "unknown") as $host
     | (.health.status // {}) as $status
     | (.health.sumeragi // {}) as $sumeragi
+    | (.health.sumeragi_diagnostics // {}) as $diagnostics
     | ($sumeragi.summary // {}) as $summary
-    | "direct-validator \($host): status_http=\(value($status.http_status)) sumeragi_http=\(value($sumeragi.http_status)) height=\(value($summary.height)) commit_qc=\(value($summary.commit_qc_height)) highest_qc=\(value($summary.highest_qc_height)) tx_queue_depth=\(value($summary.tx_queue.depth)) saturated=\(value($summary.tx_queue.saturated)) saturated_by_age=\(value($summary.tx_queue.saturated_by_age)) oldest_queued_age_ms=\(value($summary.tx_queue.oldest_queued_age_ms)) payload_status=\(value($summary.payload_status)) view_change=\(value($summary.view_change_last_cause)) missing_payload_total=\(value($summary.missing_payload_total)) worker_stage=\(value($summary.worker_stage))"
+    | ($diagnostics.summary // {}) as $diagnostics_summary
+    | "direct-validator \($host): status_http=\(value($status.http_status)) sumeragi_http=\(value($sumeragi.http_status)) diagnostics_http=\(value($diagnostics.http_status)) height=\(value($summary.height)) last_committed=\(value($summary.last_committed_height)) phase=\(value($summary.phase)) body_state=\(value($summary.body_state)) restart_required=\(value($summary.restart_required)) no_progress_age_ms=\(value($summary.no_progress_age_ms)) blocker=\(value($summary.blocker)) tx_queue_depth=\(value($diagnostics_summary.tx_queue_depth)) saturated=\(value($diagnostics_summary.tx_queue_saturated)) saturated_by_age=\(value($diagnostics_summary.tx_queue_saturated_by_age)) oldest_queued_age_ms=\(value($diagnostics_summary.tx_queue_oldest_queued_age_ms))"
   ' <<<"$direct_health_json"
 }
 
@@ -5006,54 +4947,50 @@ soraswap_direct_validator_health_diagnosis_text_from_json() {
         | select(.health.status.json_available == true)
         | select(((.health.sumeragi.http_status // "") | tostring) == "200")
         | select(.health.sumeragi.json_available == true)
+        | select(((.health.sumeragi_diagnostics.http_status // "") | tostring) == "200")
+        | select(.health.sumeragi_diagnostics.json_available == true)
       ] as $ready
-    | [ $ready[]? | (.health.sumeragi.summary // {}) ] as $summaries
+    | [ $ready[]?
+        | {
+            status: (.health.sumeragi.summary // {}),
+            diagnostics: (.health.sumeragi_diagnostics.summary // {})
+          }
+      ] as $summaries
     | ($validators | length) as $validator_count
     | ($ready | length) as $ready_count
     | [ $summaries[]?
         | select(
-            (num(.height) != null)
-            and (num(.commit_qc_height) != null)
-            and (num(.highest_qc_height) != null)
-            and (num(.height) == (num(.commit_qc_height) + 1))
-            and (num(.height) == (num(.highest_qc_height) + 1))
-          )
-      ] as $one_height_ahead
-    | [ $summaries[]?
-        | select(
-            ((num(.tx_queue.depth) // 0) > 0)
-            or bool(.tx_queue.saturated)
-            or bool(.tx_queue.saturated_by_age)
+            ((num(.diagnostics.tx_queue_depth) // 0) > 0)
+            or bool(.diagnostics.tx_queue_saturated)
+            or bool(.diagnostics.tx_queue_saturated_by_age)
           )
       ] as $queued
     | [ $summaries[]?
         | select(
-            bool(.tx_queue.saturated_by_age)
+            bool(.diagnostics.tx_queue_saturated_by_age)
             and (
               ($age_max_ms == 0)
-              or ((num(.tx_queue.oldest_queued_age_ms) // 0) >= $age_max_ms)
+              or ((num(.diagnostics.tx_queue_oldest_queued_age_ms) // 0) >= $age_max_ms)
             )
           )
       ] as $age_saturated
     | [ $summaries[]?
-        | ((.view_change_last_cause // "") | tostring | ascii_downcase)
-        | select(. == "missing_qc" or . == "quorum_timeout")
-      ] as $view_change_blocked
+        | select(((.status.blocker // "") | tostring | length) > 0)
+      ] as $liveness_blocked
     | [ $summaries[]?
-        | ((.worker_stage // "") | tostring | ascii_downcase)
-        | select(. == "idle")
-      ] as $idle_workers
+        | select(bool(.status.restart_required))
+      ] as $restart_required
     | if (
         $validator_count > 0
         and $ready_count == $validator_count
-        and ($one_height_ahead | length) == $ready_count
         and (
           ($queued | length) > 0
           or ($age_saturated | length) > 0
-          or ($view_change_blocked | length) > 0
+          or ($liveness_blocked | length) > 0
+          or ($restart_required | length) > 0
         )
       ) then
-        "direct-validator diagnosis: sampled validators are one height ahead of committed/highest QC with \($queued | length) queued/saturated peer(s), \($age_saturated | length) age-saturated peer(s), \($view_change_blocked | length) missing_qc/quorum_timeout peer(s), and \($idle_workers | length) idle worker(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence"
+        "direct-validator diagnosis: sampled validators report \($liveness_blocked | length) liveness-blocked peer(s), \($queued | length) queued/saturated peer(s), \($age_saturated | length) age-saturated peer(s), and \($restart_required | length) restart-required peer(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence"
       else
         empty
       end
@@ -5067,7 +5004,8 @@ soraswap_public_chain_health_summary_text_from_json() {
     def value($v): if $v == null then "unknown" else ($v | tostring) end;
     (.status.summary // {}) as $status
     | (.sumeragi.summary // {}) as $sumeragi
-    | "blocks=\(value($status.blocks)) sumeragi_height=\(value($sumeragi.height)) commit_qc=\(value($sumeragi.commit_qc_height)) highest_qc=\(value($sumeragi.highest_qc_height)) queue=\(value($status.queue_size // $sumeragi.tx_queue.depth)) tx_queue_depth=\(value($sumeragi.tx_queue.depth // $status.tx_queue_depth)) tx_queue_saturated=\(value($sumeragi.tx_queue.saturated // $status.tx_queue_saturated)) saturated_by_age=\(value($sumeragi.tx_queue.saturated_by_age)) oldest_queued_age_ms=\(value($sumeragi.tx_queue.oldest_queued_age_ms)) time_since_last_block_ms=\(value($status.time_since_last_block_ms)) phase=\(value($sumeragi.phase)) rbc_status=\(value($sumeragi.rbc_status)) payload_status=\(value($sumeragi.payload_status)) view_change=\(value($sumeragi.view_change_last_cause)) missing_qc_total=\(value($sumeragi.missing_qc_total)) quorum_timeout_total=\(value($sumeragi.quorum_timeout_total)) missing_payload_total=\(value($sumeragi.missing_payload_total)) worker_stage=\(value($sumeragi.worker_stage))"
+    | (.sumeragi_diagnostics.summary // {}) as $diagnostics
+    | "blocks=\(value($status.blocks)) sumeragi_height=\(value($sumeragi.height)) last_committed=\(value($sumeragi.last_committed_height)) queue=\(value($status.queue_size)) tx_queue_depth=\(value($diagnostics.tx_queue_depth)) tx_queue_saturated=\(value($diagnostics.tx_queue_saturated)) saturated_by_age=\(value($diagnostics.tx_queue_saturated_by_age)) oldest_queued_age_ms=\(value($diagnostics.tx_queue_oldest_queued_age_ms)) time_since_last_block_ms=\(value($status.time_since_last_block_ms)) phase=\(value($sumeragi.phase)) body_state=\(value($sumeragi.body_state)) restart_required=\(value($sumeragi.restart_required)) no_progress_age_ms=\(value($sumeragi.no_progress_age_ms)) blocker=\(value($sumeragi.blocker))"
   ' <<<"$health_json"
 }
 
@@ -5087,15 +5025,14 @@ soraswap_public_chain_queued_stall_detected() {
     def num($v): ($v | tonumber? // 0);
     def bool($v): if $v == true then true else false end;
     (.status.summary // {}) as $status
-    | (.sumeragi.summary // {}) as $sumeragi
-    | ($sumeragi.tx_queue.oldest_queued_age_ms // null) as $oldest_queued_age_ms
-    | (num($status.queue_size // $status.tx_queue_depth // $sumeragi.tx_queue.depth) > 0
-        or bool($status.tx_queue_saturated)
-        or bool($sumeragi.tx_queue.saturated)
-        or bool($sumeragi.tx_queue.saturated_by_age)) as $has_queued_or_saturated_write
+    | (.sumeragi_diagnostics.summary // {}) as $diagnostics
+    | ($diagnostics.tx_queue_oldest_queued_age_ms // null) as $oldest_queued_age_ms
+    | (num($status.queue_size) > 0
+        or bool($diagnostics.tx_queue_saturated)
+        or bool($diagnostics.tx_queue_saturated_by_age)) as $has_queued_or_saturated_write
     | (num($oldest_queued_age_ms) >= $max_stall_ms
         or ($oldest_queued_age_ms == null and num($status.time_since_last_block_ms) >= $max_stall_ms)
-        or ($oldest_queued_age_ms == null and bool($sumeragi.tx_queue.saturated_by_age))) as $stale
+        or ($oldest_queued_age_ms == null and bool($diagnostics.tx_queue_saturated_by_age))) as $stale
     | $has_queued_or_saturated_write and $stale
   ' >/dev/null <<<"$health_json"
 }
@@ -5103,8 +5040,7 @@ soraswap_public_chain_queued_stall_detected() {
 soraswap_public_write_health_issues_json() {
   local health_json="$1"
   local queue_max="${2:-$SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX}"
-  local qc_lag_max="${3:-$SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX}"
-  local age_max_ms="${4:-$SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS}"
+  local age_max_ms="${3:-$SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS}"
 
   if [[ -z "$health_json" || "$health_json" == "null" ]]; then
     printf '%s\n' '["public chain health snapshot is empty"]'
@@ -5113,39 +5049,38 @@ soraswap_public_write_health_issues_json() {
 
   jq -c \
     --argjson queue_max "$queue_max" \
-    --argjson qc_lag_max "$qc_lag_max" \
     --argjson age_max_ms "$age_max_ms" \
     '
       def num($v):
-        if $v == null then null else ($v | tonumber? // null) end;
+        if ($v | type) == "number" then $v else null end;
       def bool($v):
-        $v == true or (($v | tostring | ascii_downcase) == "true");
+        $v == true;
       def present_text($v):
         ($v // "") | tostring;
 
       (.status.summary // {}) as $status
       | (.sumeragi.summary // {}) as $sumeragi
+      | (.sumeragi_diagnostics.summary // {}) as $diagnostics
       | (num($status.blocks)) as $blocks
       | (num($sumeragi.height)) as $height
-      | (num($sumeragi.commit_qc_height)) as $commit_qc
-      | (num($sumeragi.highest_qc_height)) as $highest_qc
-      | (num($status.queue_size // $status.tx_queue_depth // $sumeragi.tx_queue.depth)) as $queue_size
+      | (num($sumeragi.last_committed_height)) as $last_committed_height
+      | (num($status.queue_size)) as $queue_size
       | (num($status.queue_queued)) as $queue_queued
       | (num($status.queue_inflight)) as $queue_inflight
       | (num($status.time_since_last_block_ms)) as $time_since_last_block_ms
-      | (num($sumeragi.tx_queue.oldest_queued_age_ms)) as $oldest_queued_age_ms
-      | (bool($status.tx_queue_saturated) or bool($sumeragi.tx_queue.saturated) or bool($sumeragi.tx_queue.saturated_by_age)) as $queue_saturated
+      | (num($diagnostics.tx_queue_depth)) as $diagnostics_queue_depth
+      | (num($diagnostics.tx_queue_oldest_queued_age_ms)) as $oldest_queued_age_ms
+      | (bool($diagnostics.tx_queue_saturated) or bool($diagnostics.tx_queue_saturated_by_age)) as $queue_saturated
       | (
           ($queue_size != null and $queue_size > 0)
           or ($queue_queued != null and $queue_queued > 0)
           or ($queue_inflight != null and $queue_inflight > 0)
+          or ($diagnostics_queue_depth != null and $diagnostics_queue_depth > 0)
           or $queue_saturated
         ) as $queue_pressure
-      | ($highest_qc != null and $commit_qc != null and (($highest_qc - $commit_qc) > $qc_lag_max)) as $qc_lag_high
-      | ($height != null and (($commit_qc != null and $height > $commit_qc) or ($highest_qc != null and $height > $highest_qc))) as $canonical_ahead
-      | ((present_text($sumeragi.phase) | ascii_downcase) == "pending_finality") as $pending_finality
-      | ((present_text($sumeragi.view_change_last_cause) | test("^(missing_qc|quorum_timeout)$"; "i"))) as $view_change_blocked
-      | ((present_text($sumeragi.payload_status) | ascii_downcase) == "missing_local_payload") as $missing_local_payload
+      | ((present_text($sumeragi.blocker) | length) > 0) as $liveness_blocked
+      | (bool($sumeragi.restart_required)) as $restart_required
+      | ((present_text($sumeragi.body_state) | ascii_downcase) == "pending_apply") as $pending_apply
       | [
           if ((.status.http_status // "") != "200") then
             "status endpoint returned HTTP \(.status.http_status // "unknown")"
@@ -5153,11 +5088,20 @@ soraswap_public_write_health_issues_json() {
           if ((.sumeragi.http_status // "") != "200") then
             "sumeragi endpoint returned HTTP \(.sumeragi.http_status // "unknown")"
           else empty end,
+          if ((.sumeragi_diagnostics.http_status // "") != "200") then
+            "sumeragi diagnostics endpoint returned HTTP \(.sumeragi_diagnostics.http_status // "unknown")"
+          else empty end,
           if (.status.json_available != true) then
             "status endpoint did not return JSON"
           else empty end,
           if (.sumeragi.json_available != true) then
             "sumeragi endpoint did not return JSON"
+          else empty end,
+          if (.sumeragi_diagnostics.json_available != true) then
+            "sumeragi diagnostics endpoint did not return JSON"
+          else empty end,
+          if (num($sumeragi.protocol_version)) != 4 then
+            "sumeragi protocol_version is \($sumeragi.protocol_version // "missing"); expected 4"
           else empty end,
           if $blocks == null then
             "status summary is missing committed block height"
@@ -5165,47 +5109,50 @@ soraswap_public_write_health_issues_json() {
             "status blocks is \($blocks); public Torii status is not reporting committed blocks"
           else empty end,
           if $height == null then
-            "sumeragi status is missing canonical height"
+            "sumeragi status is missing height"
           elif $height < 1 then
-            "sumeragi canonical height is \($height)"
+            "sumeragi height is \($height)"
           else empty end,
-          if $commit_qc != null and $commit_qc < 1 then
-            "sumeragi commit_qc_height is \($commit_qc)"
+          if $last_committed_height == null then
+            "sumeragi status is missing last_committed_height"
+          elif $last_committed_height < 1 then
+            "sumeragi last_committed_height is \($last_committed_height)"
           else empty end,
-          if $qc_lag_high then
-            "sumeragi highest_qc_height is \($highest_qc - $commit_qc) ahead of commit_qc_height, above SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX=\($qc_lag_max)"
+          if $blocks != null and $last_committed_height != null and $blocks != $last_committed_height then
+            "status blocks \($blocks) does not match sumeragi last_committed_height \($last_committed_height)"
+          else empty end,
+          if $restart_required then
+            "sumeragi restart_required is true"
+          else empty end,
+          if $liveness_blocked then
+            "sumeragi liveness blocker is \(present_text($sumeragi.blocker))"
           else empty end,
           if $time_since_last_block_ms != null
               and ($age_max_ms == 0 or $time_since_last_block_ms >= $age_max_ms)
               and (
                 ($blocks == null or $blocks < 1)
                 or $queue_pressure
-                or $qc_lag_high
-                or (($canonical_ahead or $pending_finality) and $queue_pressure)
-                or $view_change_blocked
-                or $missing_local_payload
+                or $restart_required
+                or $liveness_blocked
+                or $pending_apply
               ) then
             "latest committed block is stale at \($time_since_last_block_ms)ms, at or above SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS=\($age_max_ms)"
           else empty end,
           if $queue_size != null and $queue_size > $queue_max then
             "transaction queue size \($queue_size) exceeds SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX=\($queue_max)"
           else empty end,
-          if bool($status.tx_queue_saturated) or bool($sumeragi.tx_queue.saturated) then
+          if $diagnostics_queue_depth == null then
+            "sumeragi diagnostics is missing tx_queue_depth"
+          elif $diagnostics_queue_depth > $queue_max then
+            "sumeragi transaction queue depth \($diagnostics_queue_depth) exceeds SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX=\($queue_max)"
+          else empty end,
+          if bool($diagnostics.tx_queue_saturated) then
             "transaction queue is saturated"
           else empty end,
-          if bool($sumeragi.tx_queue.saturated_by_age) and ($age_max_ms == 0 or ($oldest_queued_age_ms != null and $oldest_queued_age_ms >= $age_max_ms)) then
+          if bool($diagnostics.tx_queue_saturated_by_age) and ($age_max_ms == 0 or ($oldest_queued_age_ms != null and $oldest_queued_age_ms >= $age_max_ms)) then
             "transaction queue is age-saturated with oldest queued age \($oldest_queued_age_ms // "unknown")ms, at or above SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS=\($age_max_ms)"
-          elif bool($sumeragi.tx_queue.saturated_by_age) and $oldest_queued_age_ms == null then
+          elif bool($diagnostics.tx_queue_saturated_by_age) and $oldest_queued_age_ms == null then
             "transaction queue is age-saturated and oldest queued age is unavailable"
-          else empty end,
-          if $view_change_blocked then
-            "sumeragi view-change cause is \(present_text($sumeragi.view_change_last_cause))"
-          else empty end,
-          if $missing_local_payload then
-            "sumeragi payload status is missing_local_payload"
-          else empty end,
-          if ((present_text($sumeragi.worker_stage) | ascii_downcase) == "idle") and ($queue_size != null and $queue_size > 0) then
-            "sumeragi worker is idle while the transaction queue is non-empty"
           else empty end
         ]
     ' <<<"$health_json"
@@ -5348,9 +5295,10 @@ nested_call_probe_health_summary_text() {
   jq -r '
     def field($object; $key):
       if (($object // {}) | has($key)) then $object[$key] else "unknown" end;
-    .health_snapshot.sumeragi.summary? as $health
-    | if $health == null then empty else
-        "height=\($health.height // "unknown") queue_depth=\($health.tx_queue.depth // "unknown") saturated=\(field($health.tx_queue; "saturated")) saturated_by_age=\(field($health.tx_queue; "saturated_by_age")) view_change=\($health.view_change_last_cause // "none")"
+    .health_snapshot.sumeragi.summary? as $status
+    | .health_snapshot.sumeragi_diagnostics.summary? as $diagnostics
+    | if $status == null or $diagnostics == null then empty else
+        "height=\($status.height // "unknown") last_committed=\($status.last_committed_height // "unknown") queue_depth=\($diagnostics.tx_queue_depth // "unknown") saturated=\(field($diagnostics; "tx_queue_saturated")) saturated_by_age=\(field($diagnostics; "tx_queue_saturated_by_age")) blocker=\($status.blocker // "none")"
       end
   ' "$report_path"
 }
@@ -5626,8 +5574,18 @@ EOF
   asset_caller_alias="nar${stamp}::scratch.universal"
   probe_asset_alias="$SORASWAP_BASE_ASSET_ALIAS"
   if ! probe_asset_id="$(asset_definition_id_for_alias "$config" "$probe_asset_alias" 2>/dev/null)"; then
-    probe_asset_id="$SORASWAP_XOR_ASSET_DEFINITION_ID"
-    echo "$env nested-call probe: base asset alias $probe_asset_alias is not query-visible; using configured fallback $probe_asset_id" >&2
+    write_nested_call_probe_failure_report \
+      "$env" \
+      "$config" \
+      "$timestamp" \
+      "$latest_report" \
+      "$timestamped_report" \
+      "$chain_fingerprint_json" \
+      "$compiler_bin" \
+      "$probe_dir" \
+      "resolve_probe_asset_alias" \
+      "base asset alias $probe_asset_alias is not query-visible"
+    return 0
   fi
   probe_amount=1
   if ! bytes_probe_response="$(submit_contract_deploy_file "$config" "$bytes_probe_to" "$bytes_probe_alias" 2>&1)"; then
@@ -5930,7 +5888,7 @@ EOF
         "$config" \
         "$asset_caller_contract" \
         "relay" \
-        "$(jq -cn --argjson amount "$probe_amount" '{ amount: $amount }')" 2>&1
+        "$(jq -cn --arg amount "$probe_amount" '{ amount: $amount }')" 2>&1
     )"; then
       asset_relay_status="completed"
       asset_relay_tx_hash="$asset_relay_output"
@@ -6350,19 +6308,10 @@ exact_account_readback_json() {
   fi
 
   jq -c --arg requested_id "$account_id" '
-    def known_ids:
-      [
-        .id?,
-        .account_id?,
-        .account?.id?,
-        .result?.id?,
-        .result?.account_id?,
-        .result?.account?.id?,
-        .data?.id?,
-        .data?.account_id?,
-        .data?.account?.id?
-      ] | map(select(type == "string" and length > 0));
-    known_ids as $observed
+    (if type == "object" and (.account_id | type) == "string" and (.account_id | length) > 0
+      then [.account_id]
+      else []
+    end) as $observed
     | {
         requested_id: $requested_id,
         query_available: true,
@@ -6402,31 +6351,18 @@ wait_for_account_exists() {
 contract_deploy_nonce_for_authority() {
   local config="$1"
   local authority="$2"
-  local response value
+  local response
 
   response="$(iroha_cli_json_with_config_timeout \
     "$config" \
     "$SORASWAP_TX_LOOKUP_COMMAND_TIMEOUT_SECS" \
     ledger account meta get \
     --id "$authority" \
-    --key contract_deploy_nonce 2>/dev/null)" || return 1
-  value="$(jq -r '
-    if type == "number" then
-      tostring
-    elif type == "string" then
-      .
-    elif type == "object" then
-      (.value // .Value // .json // empty | tostring)
-    else
-      empty
-    end
-  ' <<<"$response" 2>/dev/null || true)"
-  if [[ "$value" =~ '^[0-9]+$' ]]; then
-    printf '%s\n' "$value"
-    return 0
-  fi
-
-  return 1
+    --key contract_deploy_nonce 2>/dev/null)" || return 2
+  jq -er '
+    select(type == "number" and floor == . and . >= 0)
+    | tostring
+  ' <<<"$response"
 }
 
 wait_for_contract_deploy_nonce_at_least() {
@@ -6454,44 +6390,6 @@ wait_for_contract_deploy_nonce_at_least() {
 
   echo "contract deploy nonce for $authority did not reach $expected_nonce after ${attempts}s" >&2
   return 1
-}
-
-ensure_contract_deploy_nonce_after_bundle() {
-  local config="$1"
-  local receipt_json="$2"
-  local authority max_nonce expected_nonce current_nonce
-
-  max_nonce="$(jq -r '[.contracts[]?.deploy_nonce // empty | select(type == "number")] | max // empty' <<<"$receipt_json")"
-  if [[ -z "$max_nonce" || "$max_nonce" == "null" || "$max_nonce" != <-> ]]; then
-    return 0
-  fi
-
-  expected_nonce=$(( max_nonce + 1 ))
-  authority="$(authority_from_config "$config" 2>/dev/null || true)"
-  if [[ -z "$authority" ]]; then
-    ensure_authority "$config"
-    authority="$SORASWAP_AUTHORITY"
-  fi
-
-  if current_nonce="$(contract_deploy_nonce_for_authority "$config" "$authority" 2>/dev/null)" \
-    && [[ "$current_nonce" == <-> ]] \
-    && (( current_nonce >= expected_nonce )); then
-    return 0
-  fi
-
-  jq -cn --argjson expected_nonce "$expected_nonce" '$expected_nonce' \
-    | iroha_cli_with_gas_metadata "$config" ledger account meta set \
-        --id "$authority" \
-        --key contract_deploy_nonce >/dev/null || {
-          echo "failed to repair contract deploy nonce for $authority to $expected_nonce" >&2
-          return 1
-        }
-
-  wait_for_contract_deploy_nonce_at_least \
-    "$config" \
-    "$expected_nonce" \
-    "${SORASWAP_CONTRACT_APP_NONCE_REPAIR_WAIT_SECS:-60}" \
-    1
 }
 
 ensure_account_registered() {
@@ -6524,7 +6422,7 @@ ensure_account_registered() {
 
     output_status=0
     if output="$(
-      iroha_cli_with_gas_metadata "$config" ledger account register \
+      iroha_cli_with_authority_fee "$config" ledger account register \
         --id "$account_id" 2>&1
     )"; then
       printf '%s\n' "$(soraswap_redact_sensitive_text "$output")"
@@ -6615,275 +6513,6 @@ soraswap_stop_if_public_transport_health_degraded() {
   return 0
 }
 
-read_norito_error_message() {
-  local file_path="$1"
-  if [[ ! -f "$file_path" ]]; then
-    return 1
-  fi
-
-  if jq -er '
-    if type == "object" then
-      (.code // .error.code // empty) as $code
-      | (.message // .error.message // empty) as $message
-      | if $code != "" and $message != "" then "\($code): \($message)"
-        elif $message != "" then $message
-        elif $code != "" then $code
-        else empty
-        end
-    else empty
-    end
-  ' "$file_path" 2>/dev/null; then
-    return 0
-  fi
-
-  /usr/bin/python3 - "$file_path" <<'PY'
-from pathlib import Path
-import sys
-
-data = Path(sys.argv[1]).read_bytes()
-parts = []
-current = []
-for byte in data:
-    if 32 <= byte <= 126:
-        current.append(chr(byte))
-    else:
-        if current:
-            parts.append("".join(current))
-            current = []
-if current:
-    parts.append("".join(current))
-if parts:
-    print(parts[-1])
-PY
-}
-
-norito_error_summary_from_text() {
-  local text="$1"
-  jq -er '
-    if type == "object" then
-      (.code // .error.code // empty) as $code
-      | (.message // .error.message // empty) as $message
-      | if $code != "" and $message != "" then "\($code): \($message)"
-        elif $message != "" then $message
-        elif $code != "" then $code
-        else empty
-        end
-    else empty
-    end
-  ' <<<"$text" 2>/dev/null || true
-}
-
-norito_error_code_from_text() {
-  local text="$1"
-  jq -er '
-    if type == "object" then
-      (.code // .error.code // empty)
-    else empty
-    end
-  ' <<<"$text" 2>/dev/null || true
-}
-
-extract_expected_chain_id_from_error() {
-  local text="$1"
-  printf '%s\n' "$text" \
-    | sed -n 's/.*Expected ChainId("\([^"]*\)").*/\1/p' \
-    | tail -n 1
-}
-
-try_public_self_register_account() {
-  local config="$1"
-  local account_id="$2"
-  local output
-
-  SORASWAP_LAST_SELF_REGISTER_ERROR=""
-  if output="$(iroha_cli --machine --output-format json --config "$config" \
-    ledger account register --id "$account_id" 2>&1)"; then
-    SORASWAP_LAST_SELF_REGISTER_ERROR="$output"
-    return 0
-  fi
-
-  SORASWAP_LAST_SELF_REGISTER_ERROR="$output"
-  return 1
-}
-
-try_public_onboard_account() {
-  local config="$1"
-  local account_id="$2"
-  local alias="$3"
-  local torii_base payload tmp http_code
-
-  SORASWAP_LAST_ONBOARD_STATUS=""
-  SORASWAP_LAST_ONBOARD_ERROR=""
-
-  torii_base="$(torii_base_from_config "$config")"
-  payload="$(jq -cn --arg alias "$alias" --arg account_id "$account_id" \
-    '{alias: $alias, account_id: $account_id}')"
-  tmp="$(mktemp "${TMPDIR:-/tmp}/soraswap-onboard-response.XXXXXX")"
-  http_code="$(soraswap_curl_for_config "$config" -sS -o "$tmp" -w '%{http_code}' \
-    --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-    -H 'Accept: application/json' \
-    -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION" \
-    -H 'Content-Type: application/json' \
-    -X POST \
-    "$torii_base/v1/accounts/onboard" \
-    -d "$payload" || true)"
-  SORASWAP_LAST_ONBOARD_STATUS="$http_code"
-
-  if [[ "$http_code" == "200" || "$http_code" == "202" ]]; then
-    rm -f "$tmp"
-    return 0
-  fi
-
-  SORASWAP_LAST_ONBOARD_ERROR="$(read_norito_error_message "$tmp" || true)"
-  rm -f "$tmp"
-  return 1
-}
-
-public_onboard_alias_for_account() {
-  local account_id="$1"
-  local digest
-
-  digest="$(printf '%s' "$account_id" | shasum -a 256 | awk '{print substr($1, 1, 16)}')"
-  printf 'soraswap-%s\n' "$digest"
-}
-
-probe_public_faucet() {
-  local config="$1"
-  fetch_public_faucet_puzzle_json "$config" >/dev/null
-}
-
-fetch_public_faucet_puzzle_json() {
-  local config="$1"
-  local torii_base tmp http_code
-
-  SORASWAP_LAST_FAUCET_STATUS=""
-  SORASWAP_LAST_FAUCET_ERROR=""
-
-  torii_base="$(torii_base_from_config "$config")"
-  tmp="$(mktemp "${TMPDIR:-/tmp}/soraswap-faucet-puzzle.XXXXXX")"
-  http_code="$(soraswap_curl_for_config "$config" -sS -o "$tmp" -w '%{http_code}' \
-    --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-    -H 'Accept: application/json' \
-    -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION" \
-    "$torii_base/v1/accounts/faucet/puzzle" || true)"
-  SORASWAP_LAST_FAUCET_STATUS="$http_code"
-
-  if [[ "$http_code" == "200" ]]; then
-    cat "$tmp"
-    rm -f "$tmp"
-    return 0
-  fi
-
-  SORASWAP_LAST_FAUCET_ERROR="$(read_norito_error_message "$tmp" || true)"
-  rm -f "$tmp"
-  return 1
-}
-
-scrypt_capable_python() {
-  local candidate
-
-  for candidate in python3 /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
-    if ! command -v "$candidate" >/dev/null 2>&1; then
-      continue
-    fi
-    if "$candidate" - <<'PY' >/dev/null 2>&1
-import hashlib
-raise SystemExit(0 if hasattr(hashlib, "scrypt") else 1)
-PY
-    then
-      echo "$candidate"
-      return 0
-    fi
-  done
-
-  echo "no python interpreter with hashlib.scrypt support is available" >&2
-  return 1
-}
-
-solve_public_faucet_nonce_hex() {
-  local account_id="$1"
-  local puzzle_json="$2"
-  local python_bin
-
-  python_bin="$(scrypt_capable_python)"
-
-  PUZZLE_JSON="$puzzle_json" "$python_bin" - "$account_id" <<'PY'
-import hashlib
-import json
-import os
-import sys
-
-DOMAIN = b"iroha:accounts:faucet:pow:v2"
-
-def leading_zero_bits(data: bytes) -> int:
-    total = 0
-    for byte in data:
-        if byte == 0:
-            total += 8
-            continue
-        total += 8 - byte.bit_length()
-        break
-    return total
-
-account_id = sys.argv[1]
-puzzle = json.loads(os.environ["PUZZLE_JSON"])
-difficulty = int(puzzle.get("difficulty_bits", 0) or 0)
-if difficulty <= 0:
-    print("")
-    raise SystemExit(0)
-
-anchor_height = int(puzzle["anchor_height"])
-anchor_hash = bytes.fromhex(puzzle["anchor_block_hash_hex"])
-challenge_salt_hex = puzzle.get("challenge_salt_hex")
-challenge_salt = bytes.fromhex(challenge_salt_hex) if challenge_salt_hex else b""
-
-challenge = hashlib.sha256(
-    DOMAIN
-    + account_id.encode("utf-8")
-    + anchor_height.to_bytes(8, "big")
-    + anchor_hash
-    + challenge_salt
-).digest()
-n = 1 << int(puzzle["scrypt_log_n"])
-r = int(puzzle["scrypt_r"])
-p = int(puzzle["scrypt_p"])
-
-counter = 0
-while True:
-    nonce = counter.to_bytes(8, "big")
-    digest = hashlib.scrypt(nonce, salt=challenge, n=n, r=r, p=p, dklen=32)
-    if leading_zero_bits(digest) >= difficulty:
-        print(nonce.hex())
-        break
-    counter += 1
-PY
-}
-
-wait_for_positive_asset_balance() {
-  local config="$1"
-  local alias="$2"
-  local account="$3"
-  local attempts="${4:-60}"
-  local sleep_seconds="${5:-1}"
-  local attempt=1
-  local current="0"
-
-  soraswap_validate_poll_window "positive asset balance wait" "$attempts" "$sleep_seconds" || return 1
-
-  while (( attempt <= attempts )); do
-    current="$(asset_value_for_account "$config" "$alias" "$account")"
-    if numeric_gt_zero "$current"; then
-      printf '%s\n' "$current"
-      return 0
-    fi
-    sleep "$sleep_seconds"
-    attempt=$(( attempt + 1 ))
-  done
-
-  printf '%s\n' "$current"
-  return 1
-}
-
 wait_for_positive_asset_balance_id() {
   local config="$1"
   local asset_id="$2"
@@ -6912,60 +6541,19 @@ wait_for_positive_asset_balance_id() {
 account_contract_deploy_nonce() {
   local config="$1"
   local account_id="$2"
-  local response
+  local nonce result_status
 
-  if ! response="$(iroha_cli_json --config "$config" ledger account get --id "$account_id" 2>/dev/null)"; then
-    echo 0
+  if nonce="$(contract_deploy_nonce_for_authority "$config" "$account_id")"; then
+    printf '%s\n' "$nonce"
+    return 0
+  else
+    result_status=$?
+  fi
+  if (( result_status == 2 )); then
+    printf '0\n'
     return 0
   fi
-
-  ACCOUNT_JSON="$response" /usr/bin/python3 - <<'PY'
-import json
-import os
-import sys
-
-def coerce(value):
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
-    if isinstance(value, dict):
-        for key in ("value", "u64", "U64", "int", "Int", "raw"):
-            if key in value:
-                converted = coerce(value[key])
-                if converted is not None:
-                    return converted
-    return None
-
-def visit(value):
-    if isinstance(value, dict):
-        if "contract_deploy_nonce" in value:
-            converted = coerce(value["contract_deploy_nonce"])
-            if converted is not None:
-                return converted
-        if value.get("key") == "contract_deploy_nonce":
-            converted = coerce(value.get("value"))
-            if converted is not None:
-                return converted
-        for nested in value.values():
-            converted = visit(nested)
-            if converted is not None:
-                return converted
-    elif isinstance(value, list):
-        for item in value:
-            converted = visit(item)
-            if converted is not None:
-                return converted
-    return None
-
-document = json.loads(os.environ["ACCOUNT_JSON"])
-print(visit(document) or 0)
-PY
+  return "$result_status"
 }
 
 max_deploy_nonce_for_env_records() {
@@ -6979,11 +6567,6 @@ max_deploy_nonce_for_env_records() {
   done
 
   for record_path in "$SORASWAP_ROOT/deployments/${env}"/*.deploy.json(N); do
-    if [[ "${record_path:t}" == "soraswap.bundle.deploy.json" \
-      || "${record_path:t}" == "soraswap.foundation.bundle.deploy.json" ]]; then
-      continue
-    fi
-
     contract_key="$(jq -r '.contract_key // empty' "$record_path" 2>/dev/null || true)"
     [[ -n "$contract_key" ]] || continue
     [[ -n "${expected_contract_key_map[$contract_key]:-}" ]] || continue
@@ -7058,121 +6641,6 @@ positive_asset_balances_from_account_assets_json() {
   ' <<<"$assets_json"
 }
 
-account_has_any_positive_asset_balance() {
-  local config="$1"
-  local account_id="$2"
-  local response
-
-  if ! response="$(account_assets_json "$config" "$account_id" 50)"; then
-    return 1
-  fi
-
-  jq -e 'any(.items[]?; ((.quantity | tonumber?) // 0) > 0)' <<<"$response" >/dev/null
-}
-
-account_positive_asset_balances_json() {
-  local config="$1"
-  local account_id="$2"
-  local response
-
-  if ! response="$(account_assets_json "$config" "$account_id" 200)"; then
-    echo '[]'
-    return 1
-  fi
-
-  positive_asset_balances_from_account_assets_json "$response"
-}
-
-claim_public_testnet_faucet() {
-  local config="$1"
-  local account_id="$2"
-  local torii_base puzzle_json nonce_hex payload_json response http_code body tx_hash error_code error_summary
-  local attempt=1
-  local max_attempts="${SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS:-3}"
-
-  soraswap_require_positive_integer_setting "SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS" "$max_attempts" || return 1
-
-  torii_base="$(torii_base_from_config "$config")"
-  while (( attempt <= max_attempts )); do
-    puzzle_json="$(fetch_public_faucet_puzzle_json "$config")" || return 1
-    nonce_hex="$(solve_public_faucet_nonce_hex "$account_id" "$puzzle_json")"
-    payload_json="$(jq -cn \
-      --arg account_id "$account_id" \
-      --argjson anchor_height "$(jq -r '.anchor_height' <<<"$puzzle_json")" \
-      --arg nonce_hex "$nonce_hex" \
-      --argjson difficulty_bits "$(jq -r '.difficulty_bits // 0' <<<"$puzzle_json")" \
-      '{
-        account_id: $account_id
-      } + (if $difficulty_bits > 0 then {
-        pow_anchor_height: $anchor_height,
-        pow_nonce_hex: $nonce_hex
-      } else {} end)')"
-
-    response="$(soraswap_curl_for_config "$config" -sS \
-      --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-      -H 'Accept: application/json' \
-      -H 'Content-Type: application/json' \
-      -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION" \
-      -w $'\n%{http_code}' \
-      -X POST \
-      "$torii_base/v1/accounts/faucet" \
-      -d "$payload_json")" || {
-        echo "failed to reach $torii_base/v1/accounts/faucet" >&2
-        return 1
-      }
-    http_code="${response##*$'\n'}"
-    body="${response%$'\n'*}"
-
-    if [[ "$http_code" != "200" && "$http_code" != "202" ]]; then
-      error_code="$(norito_error_code_from_text "$body")"
-      error_summary="$(norito_error_summary_from_text "$body")"
-      case "$error_code:$error_summary:$body" in
-        *faucet_pow_anchor_stale*|*"faucet pow anchor is stale"*|*faucet_pow_solution_invalid*|*"invalid faucet pow solution"*)
-          if (( attempt < max_attempts )); then
-            echo "faucet claim puzzle expired or lost the PoW race for $account_id; retrying with a fresh puzzle (${attempt}/${max_attempts})" >&2
-            sleep 1
-            attempt=$(( attempt + 1 ))
-            continue
-          fi
-          ;;
-      esac
-      if [[ -n "$error_summary" ]]; then
-        echo "faucet claim failed for $account_id: HTTP $http_code: $error_summary" >&2
-      else
-        echo "faucet claim failed for $account_id: HTTP $http_code: $(soraswap_redact_sensitive_text "$body")" >&2
-      fi
-      return 1
-    fi
-
-    tx_hash="$(jq -r '.tx_hash_hex // empty' <<<"$body")"
-    if [[ -n "$tx_hash" ]]; then
-      local pipeline_json pipeline_kind
-      if pipeline_json="$(wait_for_transaction_terminal_status "$config" "$tx_hash" 90 1 auto)"; then
-        pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_json")"
-        case "$pipeline_kind" in
-          Applied|Committed)
-            printf '%s\n' "$body"
-            return 0
-            ;;
-          Expired)
-            if (( attempt < max_attempts )); then
-              echo "faucet claim expired for $account_id; retrying with a fresh puzzle (${attempt}/${max_attempts})" >&2
-              sleep 1
-              attempt=$(( attempt + 1 ))
-              continue
-            fi
-            ;;
-        esac
-        echo "faucet claim transaction did not commit cleanly: $pipeline_json" >&2
-        return 1
-      fi
-    fi
-
-    printf '%s\n' "$body"
-    return 0
-  done
-}
-
 warn_if_public_tx_gossip_cap_low() {
   local config="$1"
   local torii_base frame_cap
@@ -7220,76 +6688,58 @@ asset_definition_alias_exists() {
 asset_definition_id_for_alias() {
   local config="$1"
   local alias="$2"
-  local torii_base response attempt=1 fallback_id
+  local torii_base response resolved_id public_env expected_id="" expected_scale="" attempt=1
 
   soraswap_validate_torii_read_max_time || return 1
   torii_base="$(torii_base_from_config "$config")"
+  public_env="$(public_env_for_config "$config" 2>/dev/null || true)"
+  if [[ "$public_env" == "testnet" && "$alias" == "$SORASWAP_TAIRA_XOR_ASSET_ALIAS" ]]; then
+    expected_id="$SORASWAP_TAIRA_XOR_ASSET_DEFINITION_ID"
+    expected_scale="$SORASWAP_TAIRA_XOR_ASSET_SCALE"
+  fi
   while (( attempt <= 3 )); do
     if response="$(soraswap_curl_for_config "$config" -fsS --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" "$torii_base/v1/assets/definitions/$(uri_encode "$alias")" 2>/dev/null)"; then
-      jq -r '.id' <<<"$response"
-      return 0
+      if resolved_id="$(jq -er \
+        --arg alias "$alias" \
+        --arg expected_id "$expected_id" \
+        --argjson expected_scale "${expected_scale:-null}" '
+        select(
+          type == "object"
+          and ((.id // null) | type) == "string"
+          and (.id | length) > 0
+          and .alias == $alias
+          and ((.alias_binding // null) | type) == "object"
+          and .alias_binding.alias == $alias
+          and (
+            ($expected_id != "" and .alias_binding.status == "permanent")
+            or (
+              $expected_id == ""
+              and (.alias_binding.status == "permanent" or .alias_binding.status == "leased_active")
+            )
+          )
+          and (
+            $expected_id == ""
+            or (
+              .id == $expected_id
+              and ((.spec // null) | type) == "object"
+              and .spec.scale == $expected_scale
+            )
+          )
+        )
+        | .id
+      ' <<<"$response" 2>/dev/null)"; then
+        printf '%s\n' "$resolved_id"
+        return 0
+      fi
     fi
     sleep 1
     attempt=$(( attempt + 1 ))
   done
 
-  fallback_id="$(asset_definition_id_fallback_for_alias "$config" "$alias" 2>/dev/null || true)"
-  if [[ -n "$fallback_id" ]]; then
-    printf '%s\n' "$fallback_id"
-    return 0
+  if [[ -n "$expected_id" ]]; then
+    echo "Taira XOR must resolve as alias $SORASWAP_TAIRA_XOR_ASSET_ALIAS, definition $expected_id, scale $expected_scale" >&2
   fi
-
   return 1
-}
-
-asset_definition_id_fallback_for_alias() {
-  local config="$1"
-  local alias="$2"
-  local public_env local_fee_id
-
-  public_env="$(public_env_for_config "$config" 2>/dev/null || true)"
-  if [[ -z "$public_env" && -n "$SORASWAP_LOCAL_FEE_ASSET_LABEL" && "$alias" == "$SORASWAP_LOCAL_FEE_ASSET_LABEL" ]]; then
-    local_fee_id="$(localnet_fee_asset_definition_id_for_config "$config" 2>/dev/null || true)"
-    if [[ -n "$local_fee_id" ]]; then
-      printf '%s\n' "$local_fee_id"
-      return 0
-    fi
-    if [[ -n "$SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID" ]]; then
-      printf '%s\n' "$SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID"
-      return 0
-    fi
-  fi
-
-  case "$alias" in
-    "$SORASWAP_BASE_ASSET_ALIAS"|"$SORASWAP_FEE_ASSET_ALIAS"|xor#universal)
-      [[ -n "$SORASWAP_XOR_ASSET_DEFINITION_ID" ]] || return 1
-      printf '%s\n' "$SORASWAP_XOR_ASSET_DEFINITION_ID"
-      ;;
-    usdt#soraswap.universal)
-      [[ -n "$SORASWAP_USDT_ASSET_DEFINITION_ID" ]] || return 1
-      printf '%s\n' "$SORASWAP_USDT_ASSET_DEFINITION_ID"
-      ;;
-    usdc#soraswap.universal)
-      [[ -n "$SORASWAP_USDC_ASSET_DEFINITION_ID" ]] || return 1
-      printf '%s\n' "$SORASWAP_USDC_ASSET_DEFINITION_ID"
-      ;;
-    kusd#soraswap.universal)
-      [[ -n "$SORASWAP_KUSD_ASSET_DEFINITION_ID" ]] || return 1
-      printf '%s\n' "$SORASWAP_KUSD_ASSET_DEFINITION_ID"
-      ;;
-    n3x#soraswap.universal)
-      [[ -n "$SORASWAP_N3X_ASSET_DEFINITION_ID" ]] || return 1
-      printf '%s\n' "$SORASWAP_N3X_ASSET_DEFINITION_ID"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-public_asset_definition_id_fallback_for_alias() {
-  public_env_for_config "$1" >/dev/null 2>&1 || return 1
-  asset_definition_id_fallback_for_alias "$@"
 }
 
 asset_definition_id_exists() {
@@ -7317,15 +6767,9 @@ ensure_asset_definition_alias() {
     return 0
   fi
 
-  existing_id="$(asset_definition_id_fallback_for_alias "$config" "$alias" 2>/dev/null || true)"
-  if [[ "$existing_id" == "$asset_id" ]] && asset_definition_id_exists "$config" "$asset_id"; then
-    echo "asset definition id already present for configured alias fallback: $alias -> $asset_id"
-    return 0
-  fi
-
   echo "register asset definition alias: $alias -> $asset_id"
   if output="$(
-    iroha_cli_with_gas_metadata "$config" ledger asset definition register \
+    iroha_cli_with_authority_fee "$config" ledger asset definition register \
       --id "$asset_id" \
       --name "$name" \
       --alias "$alias" \
@@ -7490,12 +6934,12 @@ ensure_asset_balance_min() {
   delta=$(( minimum - current ))
   echo "mint asset balance: $alias +$delta -> $account"
   if [[ -n "$asset_id" ]]; then
-    iroha_cli_with_gas_metadata "$config" ledger asset mint \
+    iroha_cli_with_authority_fee "$config" ledger asset mint \
       --definition "$asset_id" \
       --account "$account" \
       --quantity "$delta"
   else
-    iroha_cli_with_gas_metadata "$config" ledger asset mint \
+    iroha_cli_with_authority_fee "$config" ledger asset mint \
       --definition-alias "$alias" \
       --account "$account" \
       --quantity "$delta"
@@ -7515,43 +6959,28 @@ contract_manifest_json_by_code_hash() {
     "$torii_base/v1/contracts/code/$(uri_encode "$code_hash_hex")"
 }
 
-contract_code_bytes_http_status_by_code_hash() {
-  local config="$1"
-  local code_hash_hex="$2"
-  local torii_base http_code attempt retry_delay
-
-  soraswap_validate_torii_read_max_time || return 1
-  soraswap_validate_torii_read_retry_settings || return 1
-  torii_base="$(torii_base_from_config "$config")"
-  torii_base="${torii_base%/}"
-  attempt=1
-  retry_delay="$SORASWAP_TORII_READ_RETRY_DELAY_SECS"
-  while (( attempt <= SORASWAP_TORII_READ_RETRY_COUNT )); do
-    http_code="$(
-      soraswap_curl_for_config "$config" -sS \
-        -o /dev/null \
-        --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-        -H 'Accept: application/octet-stream' \
-        -w '%{http_code}' \
-        "$torii_base/v1/contracts/code-bytes/$(uri_encode "$code_hash_hex")" 2>/dev/null || true
-    )"
-    if ! soraswap_torii_read_retryable_http_code "$http_code" \
-      || (( attempt >= SORASWAP_TORII_READ_RETRY_COUNT )); then
-      printf '%s\n' "$http_code"
-      return 0
-    fi
-    sleep "$retry_delay"
-    attempt=$(( attempt + 1 ))
-  done
-
-  printf '%s\n' "$http_code"
-}
-
 contract_code_bytes_visible_by_code_hash() {
   local config="$1"
   local code_hash_hex="$2"
+  local output_path exit_code=1
 
-  [[ "$(contract_code_bytes_http_status_by_code_hash "$config" "$code_hash_hex")" == "200" ]]
+  if [[ "${#code_hash_hex}" != "64" || ! "$code_hash_hex" =~ '^[0-9a-f]{64}$' ]]; then
+    echo "contract code hash must be exactly 32 lowercase hexadecimal bytes" >&2
+    return 1
+  fi
+  output_path="$(mktemp "${TMPDIR:-/tmp}/soraswap-contract-code.XXXXXX")" || return 1
+  rm -f "$output_path"
+  {
+    if iroha_cli --config "$config" contract code get \
+      --code-hash "$code_hash_hex" \
+      --out "$output_path" >/dev/null 2>&1 \
+      && [[ -f "$output_path" ]]; then
+      exit_code=0
+    fi
+  } always {
+    rm -f "$output_path"
+  }
+  return "$exit_code"
 }
 
 wait_for_contract_code_bytes_by_code_hash() {
@@ -7586,14 +7015,17 @@ wait_for_contract_manifest_by_code_hash() {
   while (( attempt <= attempts )); do
     if response="$(contract_manifest_json_by_code_hash "$config" "$code_hash_hex" 2>/dev/null)" \
       && jq -e --arg code_hash_hex "$code_hash_hex" '
-        (
-          .manifest.code_hash
-          // .manifest.code_hash_hex
-          // .code_hash
-          // .code_hash_hex
-          // ""
-        ) as $hash
-        | (($hash | tostring | ascii_downcase | sub("^0x"; "")) == $code_hash_hex)
+        (type == "object")
+        and ((.manifest // null) | type) == "object"
+        and ((.manifest.code_hash // null) | type) == "string"
+        and ((.manifest.code_hash | ascii_downcase) == $code_hash_hex)
+        and (
+          if has("code_hash") then
+            ((.code_hash | type) == "string" and ((.code_hash | ascii_downcase) == $code_hash_hex))
+          else
+            true
+          end
+        )
       ' <<<"$response" >/dev/null 2>&1; then
       printf '%s\n' "$response"
       return 0
@@ -7606,6 +7038,49 @@ wait_for_contract_manifest_by_code_hash() {
   return 1
 }
 
+soraswap_require_canonical_contract_payload_json() {
+  local context="$1"
+  local payload_json="${2:-null}"
+  local numeric_fields
+
+  if ! jq -e '
+      . == null
+      or (
+        type == "object"
+        and all(to_entries[]; (.value | type) != "number")
+      )
+    ' >/dev/null 2>&1 <<<"$payload_json"; then
+    if ! jq -e '. == null or type == "object"' >/dev/null 2>&1 <<<"$payload_json"; then
+      echo "$context contract payload must be a JSON object or null" >&2
+      return 1
+    fi
+    numeric_fields="$(jq -r '
+      to_entries
+      | map(select((.value | type) == "number") | .key)
+      | sort
+      | join(", ")
+    ' <<<"$payload_json")" || return 1
+    echo "$context contract numeric arguments must use canonical JSON strings; JSON numbers found for: $numeric_fields" >&2
+    return 1
+  fi
+}
+
+soraswap_normalize_current_contract_view_response_json() {
+  local contract_id="$1"
+  local entrypoint="$2"
+  local response_json="$3"
+
+  if [[ ! -f "$SORASWAP_CONTRACT_VIEW_NORMALIZER" ]]; then
+    echo "current contract view normalizer is missing" >&2
+    return 1
+  fi
+  printf '%s\n' "$response_json" \
+    | command python3 "$SORASWAP_CONTRACT_VIEW_NORMALIZER" \
+      --repo-root "$SORASWAP_ROOT" \
+      --contract-address "$contract_id" \
+      --entrypoint "$entrypoint"
+}
+
 submit_contract_call() {
   local config="$1"
   local contract_id="$2"
@@ -7613,128 +7088,234 @@ submit_contract_call() {
   local gas_limit="${4:-$SORASWAP_SMOKE_GAS_LIMIT}"
   local payload_json="${5:-null}"
   local creation_time_ms="${6:-}"
-  local torii_base authority private_key_file gas_asset_id request response http_code body redacted_body attempt=1 retry_count retry_delay max_time_secs transaction_ttl_ms
-  local request_build_status
-  local curl_args=()
+  local authority torii_base environment request response helper_error helper_error_file redacted_error
+  local retry_count retry_delay max_time_secs transaction_ttl_ms attempt=1 invoke_status
 
-  retry_count="${SORASWAP_CONTRACT_CALL_RETRY_COUNT:-1}"
-  retry_delay="${SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS:-2}"
-  max_time_secs="${SORASWAP_CONTRACT_CALL_MAX_TIME_SECS:-120}"
-  transaction_ttl_ms="$(soraswap_contract_call_transaction_ttl_ms_for_config "$config")" || return 1
+  retry_count="$SORASWAP_CONTRACT_CALL_RETRY_COUNT"
+  retry_delay="$SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS"
+  max_time_secs="$SORASWAP_CONTRACT_CALL_MAX_TIME_SECS"
   soraswap_require_positive_integer_setting "contract call gas limit" "$gas_limit" || return 1
   soraswap_require_positive_integer_setting "SORASWAP_CONTRACT_CALL_RETRY_COUNT" "$retry_count" || return 1
   soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS" "$retry_delay" || return 1
-  soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_CALL_MAX_TIME_SECS" "$max_time_secs" || return 1
+  soraswap_require_positive_integer_setting "SORASWAP_CONTRACT_CALL_MAX_TIME_SECS" "$max_time_secs" || return 1
+  soraswap_require_canonical_contract_payload_json "$contract_id.$entrypoint" "$payload_json" || return 1
+  transaction_ttl_ms="$(soraswap_contract_call_transaction_ttl_ms_for_config "$config")" || return 1
   if [[ -z "$creation_time_ms" ]]; then
     creation_time_ms="$(soraswap_next_contract_call_creation_time_ms)" || return 1
   fi
   soraswap_require_nonnegative_integer_setting "contract call creation_time_ms" "$creation_time_ms" || return 1
+  if ! is_contract_address_literal "$contract_id"; then
+    echo "contract call requires a canonical contract address, got: $contract_id" >&2
+    return 1
+  fi
 
   authority="$(authority_from_config "$config" 2>/dev/null || true)"
   if [[ -z "$authority" ]]; then
     ensure_authority "$config"
     authority="$SORASWAP_AUTHORITY"
   fi
-  torii_base="$(torii_base_from_config "$config")"
-  private_key_file="$(soraswap_config_private_key_temp_file "$config" contract-call-key)" || return 1
-  gas_asset_id="$(gas_metadata_asset_id_for_config "$config")"
-
-  if is_contract_address_literal "$contract_id"; then
-    {
-      if request="$(jq -cn \
-        --arg authority "$authority" \
-        --rawfile private_key "$private_key_file" \
-        --arg contract_address "$contract_id" \
-        --arg entrypoint "$entrypoint" \
-        --arg gas_asset_id "$gas_asset_id" \
-        --argjson gas_limit "$gas_limit" \
-        --argjson creation_time_ms "$creation_time_ms" \
-        --argjson transaction_ttl_ms "$transaction_ttl_ms" \
-        --argjson payload "$payload_json" \
-        '($private_key | rtrimstr("\n") | rtrimstr("\r")) as $private_key_value
-        | {
-          authority: $authority,
-          private_key: $private_key_value,
-          contract_address: $contract_address,
-          entrypoint: $entrypoint,
-          gas_asset_id: $gas_asset_id,
-          gas_limit: $gas_limit,
-          creation_time_ms: $creation_time_ms
-        }
-        + (if $transaction_ttl_ms > 0 then {transaction_ttl_ms: $transaction_ttl_ms} else {} end)
-        + (if $payload == null then {} else {payload: $payload} end)')"; then
-        request_build_status=0
-      else
-        request_build_status=$?
-      fi
-    } always {
-      if ! soraswap_secure_unlink_owned_file "$private_key_file"; then
-        request_build_status=1
-      fi
-    }
-    (( request_build_status == 0 )) || return "$request_build_status"
-  else
-    soraswap_secure_unlink_owned_file "$private_key_file" || true
-    echo "contract call requires a canonical contract address, got: $contract_id" >&2
+  torii_base="$(torii_base_from_config "$config")" || return 1
+  environment="$(public_env_for_config "$config" 2>/dev/null || echo local)"
+  case "$environment" in
+    local|testnet|production) ;;
+    *)
+      echo "unsupported contract call environment: $environment" >&2
+      return 1
+      ;;
+  esac
+  if [[ ! -f "$SORASWAP_ROOT/scripts/current_torii_contract.py" ]]; then
+    echo "current Torii contract transport helper is missing" >&2
     return 1
   fi
 
-  curl_args=(
-    -sS
-    -H 'Content-Type: application/json'
-    -H 'Accept: application/json'
-    -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION"
-    -w $'\n%{http_code}'
-    -X POST
-    --max-time "$max_time_secs"
-    "$torii_base/v1/contracts/call"
-    --data-binary @-
-  )
+  request="$(jq -cn \
+    --arg authority "$authority" \
+    --arg contract_address "$contract_id" \
+    --arg entrypoint "$entrypoint" \
+    --argjson gas_limit "$gas_limit" \
+    --argjson creation_time_ms "$creation_time_ms" \
+    --argjson transaction_ttl_ms "$transaction_ttl_ms" \
+    --argjson payload "$payload_json" \
+    '{
+      authority: $authority,
+      contract_address: $contract_address,
+      entrypoint: $entrypoint,
+      fee_payment: {
+        payer: "authority",
+        value: {
+          charge_limits: [],
+          gas_limit: $gas_limit
+        }
+      },
+      creation_time_ms: $creation_time_ms
+    }
+    + (if $transaction_ttl_ms > 0 then {transaction_ttl_ms: $transaction_ttl_ms} else {} end)
+    + (if $payload == null then {} else {payload: $payload} end)')" || return 1
+
+  helper_error_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-contract-call.XXXXXX")" || return 1
   while (( attempt <= retry_count )); do
-    if ! response="$(
-      printf '%s' "$request" \
-        | SORASWAP_IMMEDIATE_CURL_GATE_FUNCTION="${SORASWAP_IMMEDIATE_SUBMIT_GATE_FUNCTION:-}" \
-          SORASWAP_IMMEDIATE_CURL_GATE_LABEL="$contract_id.$entrypoint submit" \
-            soraswap_curl_for_config "$config" "${curl_args[@]}" 2>&1
+    : > "$helper_error_file"
+    soraswap_invoke_immediate_submit_gate \
+      "${SORASWAP_IMMEDIATE_SUBMIT_GATE_FUNCTION:-}" \
+      "$config" \
+      "$contract_id.$entrypoint submit" || {
+        rm -f "$helper_error_file"
+        return 1
+      }
+    if response="$(
+      printf '%s\n' "$request" \
+        | python3 "$SORASWAP_ROOT/scripts/current_torii_contract.py" \
+          --config "$config" \
+          --environment "$environment" \
+          --authority "$authority" \
+          --torii-url "$torii_base" \
+          --timeout "$max_time_secs" \
+          call \
+          2>"$helper_error_file"
     )"; then
-      redacted_body="$(soraswap_redact_sensitive_text "$response")"
-      if soraswap_ledger_submit_error_retryable "$response" && (( attempt < retry_count )); then
-        echo "contract call submit transport failed transiently for $contract_id.$entrypoint; retrying same creation_time_ms=$creation_time_ms ($attempt/$retry_count): $redacted_body" >&2
-        sleep "$retry_delay"
-        attempt=$(( attempt + 1 ))
-        continue
+      rm -f "$helper_error_file"
+      if jq -ce \
+        --arg contract_address "$contract_id" \
+        --arg entrypoint "$entrypoint" \
+        --argjson gas_limit "$gas_limit" \
+        --argjson creation_time_ms "$creation_time_ms" \
+        --argjson transaction_ttl_ms "$transaction_ttl_ms" \
+        '
+          def lower_hash: type == "string" and test("^[0-9a-f]{64}$");
+          def integer: type == "number" and floor == .;
+          def fee_kind:
+            type == "object"
+            and keys == ["kind", "value"]
+            and (.kind == "nexus" or .kind == "pipeline_gas")
+            and .value == null;
+          def fee_limit:
+            type == "object"
+            and keys == ["asset_definition_id", "kind", "max_amount"]
+            and (.kind | fee_kind)
+            and ((.asset_definition_id | type) == "string" and .asset_definition_id != "")
+            and (
+              (.max_amount | type) == "string"
+              and (.max_amount | test("^(0\\.[0-9]{0,27}[1-9]|[1-9][0-9]{0,153}(\\.[0-9]{0,27}[1-9])?)$"))
+              and ((.max_amount | gsub("\\."; "") | length) <= 154)
+            );
+          (type == "object")
+          and (
+            keys == (([
+              "abi_hash_hex",
+              "code_hash_hex",
+              "contract_address",
+              "creation_time_ms",
+              "dataspace",
+              "entrypoint",
+              "entrypoint_hash_hex",
+              "ok",
+              "operation_receipt",
+              "pipeline_status",
+              "signing_message_b64",
+              "submitted",
+              "transaction_payload_b64",
+              "tx_hash_hex"
+            ] + (if $transaction_ttl_ms > 0 then ["transaction_ttl_ms"] else [] end)) | sort)
+          )
+          and .ok == true
+          and .submitted == true
+          and ((.dataspace | type) == "string" and .dataspace != "")
+          and .contract_address == $contract_address
+          and (.code_hash_hex | lower_hash)
+          and (.abi_hash_hex | lower_hash)
+          and (.creation_time_ms | integer)
+          and .creation_time_ms == $creation_time_ms
+          and (
+            if $transaction_ttl_ms > 0 then
+              (.transaction_ttl_ms | integer) and .transaction_ttl_ms == $transaction_ttl_ms
+            else
+              has("transaction_ttl_ms") | not
+            end
+          )
+          and (.tx_hash_hex | lower_hash)
+          and (.entrypoint_hash_hex | lower_hash)
+          and .transaction_payload_b64 == null
+          and .signing_message_b64 == null
+          and .entrypoint == $entrypoint
+          and ((.pipeline_status | type) == "object")
+          and (.pipeline_status | keys) == ["hash", "resolved_from", "scope", "status"]
+          and .pipeline_status.hash == .tx_hash_hex
+          and .pipeline_status.scope == "local"
+          and .pipeline_status.resolved_from == "queue"
+          and ((.pipeline_status.status | type) == "object")
+          and (.pipeline_status.status | keys) == ["kind"]
+          and .pipeline_status.status.kind == "Queued"
+          and ((.operation_receipt | type) == "object")
+          and (.operation_receipt | keys) == [
+            "abi_hash_hex",
+            "code_hash_hex",
+            "contract_address",
+            "dataspace",
+            "entrypoint",
+            "entrypoint_hash_hex",
+            "fee_payment",
+            "gas_limit",
+            "operation_kind",
+            "payload_digest_hex",
+            "status",
+            "transport",
+            "tx_hash_hex"
+          ]
+          and .operation_receipt.operation_kind == "contract_call"
+          and .operation_receipt.status == "submitted"
+          and .operation_receipt.transport == "torii"
+          and .operation_receipt.dataspace == .dataspace
+          and .operation_receipt.contract_address == $contract_address
+          and .operation_receipt.code_hash_hex == .code_hash_hex
+          and .operation_receipt.abi_hash_hex == .abi_hash_hex
+          and .operation_receipt.tx_hash_hex == .tx_hash_hex
+          and .operation_receipt.entrypoint == $entrypoint
+          and .operation_receipt.entrypoint_hash_hex == .entrypoint_hash_hex
+          and (.operation_receipt.gas_limit | integer)
+          and .operation_receipt.gas_limit == $gas_limit
+          and (.operation_receipt.payload_digest_hex | lower_hash)
+          and ((.operation_receipt.fee_payment | type) == "object")
+          and (.operation_receipt.fee_payment | keys) == ["payer", "value"]
+          and .operation_receipt.fee_payment.payer == "authority"
+          and ((.operation_receipt.fee_payment.value | type) == "object")
+          and (.operation_receipt.fee_payment.value | keys) == ["charge_limits", "gas_limit"]
+          and ((.operation_receipt.fee_payment.value.charge_limits | type) == "array")
+          and (.operation_receipt.fee_payment.value.charge_limits | length) <= 2
+          and all(.operation_receipt.fee_payment.value.charge_limits[]; fee_limit)
+          and (
+            [.operation_receipt.fee_payment.value.charge_limits[].kind.kind]
+            | . == []
+              or . == ["nexus"]
+              or . == ["pipeline_gas"]
+              or . == ["nexus", "pipeline_gas"]
+          )
+          and (.operation_receipt.fee_payment.value.gas_limit | integer)
+          and .operation_receipt.fee_payment.value.gas_limit == $gas_limit
+        ' <<<"$response" >/dev/null 2>&1; then
+        printf '%s\n' "$response"
+        return 0
       fi
-      echo "failed to reach $torii_base/v1/contracts/call for $contract_id.$entrypoint: $redacted_body" >&2
+      echo "contract call response did not match the exact submitted current Torii DTO for $contract_id.$entrypoint" >&2
       return 1
+    else
+      invoke_status=$?
     fi
 
-    http_code="${response##*$'\n'}"
-    body="${response%$'\n'*}"
-
-    if [[ "$http_code" == "200" ]]; then
-      if soraswap_ledger_submit_error_retryable "$body" && (( attempt < retry_count )); then
-        redacted_body="$(soraswap_redact_sensitive_text "$body")"
-        echo "contract call submit returned transient response for $contract_id.$entrypoint; retrying same creation_time_ms=$creation_time_ms ($attempt/$retry_count): $redacted_body" >&2
-        sleep "$retry_delay"
-        attempt=$(( attempt + 1 ))
-        continue
-      fi
-      printf '%s\n' "$body"
-      return 0
-    fi
-
-    redacted_body="$(soraswap_redact_sensitive_text "$body")"
-    if soraswap_ledger_submit_error_retryable "HTTP $http_code $body" && (( attempt < retry_count )); then
-      echo "contract call request failed transiently for $contract_id.$entrypoint; retrying same creation_time_ms=$creation_time_ms ($attempt/$retry_count): HTTP $http_code: $redacted_body" >&2
+    helper_error="$(<"$helper_error_file")"
+    redacted_error="$(soraswap_redact_sensitive_text "$helper_error")"
+    if soraswap_ledger_submit_error_retryable "$helper_error" && (( attempt < retry_count )); then
+      echo "contract call submit failed transiently for $contract_id.$entrypoint; retrying the same creation_time_ms=$creation_time_ms ($attempt/$retry_count): $redacted_error" >&2
       sleep "$retry_delay"
       attempt=$(( attempt + 1 ))
       continue
     fi
-    echo "contract call request failed for $contract_id.$entrypoint: HTTP $http_code: $redacted_body" >&2
-    return 1
+    rm -f "$helper_error_file"
+    echo "current Torii contract call failed for $contract_id.$entrypoint: $redacted_error" >&2
+    return "$invoke_status"
   done
 
-  echo "contract call request failed for $contract_id.$entrypoint after $retry_count attempts" >&2
+  rm -f "$helper_error_file"
+  echo "current Torii contract call failed for $contract_id.$entrypoint after $retry_count attempts" >&2
   return 1
 }
 
@@ -7744,86 +7325,118 @@ submit_contract_view() {
   local entrypoint="$3"
   local gas_limit="${4:-$SORASWAP_SMOKE_GAS_LIMIT}"
   local payload_json="${5:-null}"
-  local torii_base authority request response http_code body redacted_body curl_args attempt=1 max_attempts retry_delay max_time_secs
-  local allowed_http_codes
+  local authority torii_base environment request response normalized_response helper_error helper_error_file redacted_error
+  local max_attempts retry_delay max_time_secs attempt=1 invoke_status retryable_http_code
 
   max_attempts="$SORASWAP_TORII_READ_RETRY_COUNT"
   retry_delay="$SORASWAP_TORII_READ_RETRY_DELAY_SECS"
-  max_time_secs="${SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS:-30}"
+  max_time_secs="$SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS"
   soraswap_require_positive_integer_setting "contract view gas limit" "$gas_limit" || return 1
-  soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS" "$max_time_secs" || return 1
+  soraswap_require_positive_integer_setting "SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS" "$max_time_secs" || return 1
+  soraswap_require_canonical_contract_payload_json "$contract_id.$entrypoint" "$payload_json" || return 1
   soraswap_validate_torii_read_retry_settings || return 1
+  if ! is_contract_address_literal "$contract_id"; then
+    echo "contract view requires a canonical contract address, got: $contract_id" >&2
+    return 1
+  fi
 
   authority="$(authority_from_config "$config" 2>/dev/null || true)"
   if [[ -z "$authority" ]]; then
     ensure_authority "$config"
     authority="$SORASWAP_AUTHORITY"
   fi
-  torii_base="$(torii_base_from_config "$config")"
-
-  if is_contract_address_literal "$contract_id"; then
-    request="$(jq -cn \
-      --arg authority "$authority" \
-      --arg contract_address "$contract_id" \
-      --arg entrypoint "$entrypoint" \
-      --argjson gas_limit "$gas_limit" \
-      --argjson payload "$payload_json" \
-      '{
-        authority: $authority,
-        contract_address: $contract_address,
-        entrypoint: $entrypoint,
-        gas_limit: $gas_limit
-      } + (if $payload == null then {} else {payload: $payload} end)')"
-  else
-    echo "contract view requires a canonical contract address, got: $contract_id" >&2
+  torii_base="$(torii_base_from_config "$config")" || return 1
+  environment="$(public_env_for_config "$config" 2>/dev/null || echo local)"
+  case "$environment" in
+    local|testnet|production) ;;
+    *)
+      echo "unsupported contract view environment: $environment" >&2
+      return 1
+      ;;
+  esac
+  if [[ ! -f "$SORASWAP_ROOT/scripts/current_torii_contract.py" ]]; then
+    echo "current Torii contract transport helper is missing" >&2
     return 1
   fi
 
-  curl_args=(
-    -sS
-    --connect-timeout 10
-    --max-time "$max_time_secs"
-    -H 'Content-Type: application/json'
-    -H 'Accept: application/json'
-    -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION"
-    -w $'\n%{http_code}'
-    -X POST
-  )
-  curl_args+=(
-    "$torii_base/v1/contracts/view"
-    -d "$request"
-  )
-  allowed_http_codes=" ${${SORASWAP_CONTRACT_VIEW_ALLOWED_HTTP_CODES:-200}//,/ } "
+  request="$(jq -cn \
+    --arg authority "$authority" \
+    --arg contract_address "$contract_id" \
+    --arg entrypoint "$entrypoint" \
+    --argjson gas_limit "$gas_limit" \
+    --argjson payload "$payload_json" \
+    '{
+      authority: $authority,
+      contract_address: $contract_address,
+      entrypoint: $entrypoint,
+      gas_limit: $gas_limit
+    }
+    + (if $payload == null then {} else {payload: $payload} end)')" || return 1
 
+  helper_error_file="$(mktemp "${TMPDIR:-/tmp}/soraswap-contract-view.XXXXXX")" || return 1
   while (( attempt <= max_attempts )); do
-    if response="$(soraswap_curl_for_config "$config" "${curl_args[@]}")"; then
-      http_code="${response##*$'\n'}"
-      body="${response%$'\n'*}"
-
-      if [[ "$allowed_http_codes" == *" $http_code "* ]]; then
-        printf '%s\n' "$body"
+    : > "$helper_error_file"
+    if response="$(
+      printf '%s\n' "$request" \
+        | python3 "$SORASWAP_ROOT/scripts/current_torii_contract.py" \
+          --config "$config" \
+          --environment "$environment" \
+          --authority "$authority" \
+          --torii-url "$torii_base" \
+          --timeout "$max_time_secs" \
+          view \
+          2>"$helper_error_file"
+    )"; then
+      rm -f "$helper_error_file"
+      if jq -ce \
+        --arg contract_address "$contract_id" \
+        --arg entrypoint "$entrypoint" \
+        '
+          def lower_hash: type == "string" and test("^[0-9a-f]{64}$");
+          (type == "object")
+          and (keys == ["abi_hash_hex", "code_hash_hex", "contract_address", "dataspace", "entrypoint", "ok", "result"])
+          and .ok == true
+          and ((.dataspace | type) == "string" and .dataspace != "")
+          and .contract_address == $contract_address
+          and (.code_hash_hex | lower_hash)
+          and (.abi_hash_hex | lower_hash)
+          and .entrypoint == $entrypoint
+        ' <<<"$response" >/dev/null 2>&1; then
+        if ! normalized_response="$(
+          soraswap_normalize_current_contract_view_response_json \
+            "$contract_id" \
+            "$entrypoint" \
+            "$response"
+        )"; then
+          echo "contract view response did not match the current compiled return schema for $contract_id.$entrypoint" >&2
+          return 1
+        fi
+        printf '%s\n' "$normalized_response"
         return 0
       fi
-
-      if soraswap_torii_read_retryable_http_code "$http_code" && (( attempt < max_attempts )); then
-        sleep "$retry_delay"
-        attempt=$(( attempt + 1 ))
-        continue
-      fi
-
-      redacted_body="$(soraswap_redact_sensitive_text "$body")"
-      echo "contract view request failed for $contract_id.$entrypoint: HTTP $http_code: $redacted_body" >&2
+      echo "contract view response did not match the exact successful current Torii DTO for $contract_id.$entrypoint" >&2
       return 1
+    else
+      invoke_status=$?
     fi
-    if (( attempt == max_attempts )); then
-      echo "failed to reach $torii_base/v1/contracts/view for $contract_id.$entrypoint" >&2
-      return 1
+
+    helper_error="$(<"$helper_error_file")"
+    redacted_error="$(soraswap_redact_sensitive_text "$helper_error")"
+    retryable_http_code="$(sed -nE 's/.*Torii HTTP (000|408|425|429|500|502|503|504).*/\1/p' <<<"$helper_error" | head -n 1)"
+    if (( attempt < max_attempts )) \
+      && { soraswap_ledger_submit_error_retryable "$helper_error" \
+        || { [[ -n "$retryable_http_code" ]] && soraswap_torii_read_retryable_http_code "$retryable_http_code"; }; }; then
+      sleep "$retry_delay"
+      attempt=$(( attempt + 1 ))
+      continue
     fi
-    sleep "$retry_delay"
-    attempt=$(( attempt + 1 ))
+    rm -f "$helper_error_file"
+    echo "current Torii contract view failed for $contract_id.$entrypoint: $redacted_error" >&2
+    return "$invoke_status"
   done
 
-  echo "failed to reach $torii_base/v1/contracts/view for $contract_id.$entrypoint" >&2
+  rm -f "$helper_error_file"
+  echo "current Torii contract view failed for $contract_id.$entrypoint after $max_attempts attempts" >&2
   return 1
 }
 
@@ -7837,7 +7450,7 @@ submit_contract_view_expect() {
   local context="${7:-$contract_id.$entrypoint view expectation}"
   local attempts="${8:-$SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT}"
   local sleep_seconds="${9:-$SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS}"
-  local attempt=1 response latest_response=""
+  local attempt=1 response expectation_response latest_response=""
 
   soraswap_require_positive_integer_setting "SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT" "$attempts" || return 1
   soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS" "$sleep_seconds" || return 1
@@ -7845,7 +7458,14 @@ submit_contract_view_expect() {
   while (( attempt <= attempts )); do
     if response="$(submit_contract_view "$config" "$contract_id" "$entrypoint" "$gas_limit" "$payload_json")"; then
       latest_response="$response"
-      if jq -e "$expect_jq" >/dev/null 2>&1 <<<"$response"; then
+      expectation_response="$(jq -ce '
+        if .ok == true and has("normalized_result") then
+          .result = .normalized_result
+        else
+          error("current normalized contract view result is missing")
+        end
+      ' <<<"$response")" || return 1
+      if jq -e "$expect_jq" >/dev/null 2>&1 <<<"$expectation_response"; then
         printf '%s\n' "$response"
         return 0
       fi
@@ -7866,163 +7486,300 @@ submit_contract_view_expect() {
   return 1
 }
 
-contract_deploy_http_error_retryable() {
-  local http_code="$1"
-  local body="$2"
-
-  [[ "$http_code" == "400" ]] || return 1
-  jq -e '
-    (.code // "") == "queue_unresolved_route"
-    or (.details.reject_code // "") == "PRTRY:ROUTE_UNRESOLVED"
-  ' <<<"$body" >/dev/null 2>&1
-}
-
 submit_contract_deploy_file() {
   local config="$1"
   local code_file="$2"
   local contract_alias="$3"
-  local torii_base private_key_file code_b64 request response http_code body redacted_body curl_args max_time_secs
-  local attempt max_attempts retry_delay transaction_ttl_ms health_status request_build_status
+  local torii_base chain_id network_id chain_discriminant private_key_file fee_payment_file
+  local gas_limit transaction_ttl_ms deploy_bin output response redacted_output exit_code=1
+  local -a deploy_args
 
-  max_attempts="${SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_ATTEMPTS:-5}"
-  retry_delay="${SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_DELAY_SECS:-3}"
-  max_time_secs="${SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS:-45}"
   transaction_ttl_ms="${SORASWAP_CONTRACT_DEPLOY_TRANSACTION_TTL_MS:-${SORASWAP_CONTRACT_CALL_TRANSACTION_TTL_MS:-900000}}"
-  soraswap_require_positive_integer_setting "SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_ATTEMPTS" "$max_attempts" || return 1
-  soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_DELAY_SECS" "$retry_delay" || return 1
-  soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS" "$max_time_secs" || return 1
+  gas_limit="${SORASWAP_LEDGER_GAS_LIMIT:-2000000}"
+  soraswap_require_positive_integer_setting "SORASWAP_LEDGER_GAS_LIMIT" "$gas_limit" || return 1
   soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_DEPLOY_TRANSACTION_TTL_MS" "$transaction_ttl_ms" || return 1
 
   ensure_authority "$config"
   torii_base="$(torii_base_from_config "$config")"
+  chain_id="$(config_chain_id_from_config "$config")" || return 1
+  network_id="$(network_id_from_config "$config")" || return 1
+  chain_discriminant="$(account_chain_discriminant_from_config "$config")" || return 1
+  if [[ -z "$chain_discriminant" ]]; then
+    chain_discriminant="$(chain_discriminant_for_env_config "$(public_env_for_config "$config" 2>/dev/null || echo local)" "$config")" || return 1
+  fi
   private_key_file="$(soraswap_config_private_key_temp_file "$config" contract-deploy-key)" || return 1
-  code_b64="$(base64 < "$code_file" | tr -d '\r\n')"
+  fee_payment_file="$(jq -cn \
+    --argjson gas_limit "$gas_limit" \
+    '{payer: "authority", value: {charge_limits: [], gas_limit: $gas_limit}}' \
+    | soraswap_secret_temp_from_stdin contract-deploy-fee-payment)" || {
+      soraswap_secure_unlink_owned_file "$private_key_file" || true
+      return 1
+    }
+  ensure_ivm_contract_deploy_bin || {
+    soraswap_secure_unlink_owned_files "$private_key_file" "$fee_payment_file" || true
+    return 1
+  }
+  deploy_bin="$SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN"
+  deploy_args=(
+    --torii-url "$torii_base"
+    --chain-id "$chain_id"
+    --network-id "$network_id"
+    --authority "$SORASWAP_AUTHORITY"
+    --private-key-file "$private_key_file"
+    --code-file "$code_file"
+    --contract-alias "$contract_alias"
+    --chain-discriminant "$chain_discriminant"
+    --fee-payment-json "$fee_payment_file"
+    --gov-manifest-approver "$SORASWAP_AUTHORITY"
+  )
+  if (( transaction_ttl_ms > 0 )); then
+    deploy_args+=(--transaction-ttl-ms "$transaction_ttl_ms")
+  fi
 
   {
-    if request="$(jq -cn \
-      --arg authority "$SORASWAP_AUTHORITY" \
-      --rawfile private_key "$private_key_file" \
-      --arg code_b64 "$code_b64" \
-      --arg contract_alias "$contract_alias" \
-      --argjson transaction_ttl_ms "$transaction_ttl_ms" \
-      '($private_key | rtrimstr("\n") | rtrimstr("\r")) as $private_key_value
-      | {
-        authority: $authority,
-        private_key: $private_key_value,
-        code_b64: $code_b64,
-        contract_alias: $contract_alias
-      }
-      + (if $transaction_ttl_ms > 0 then {transaction_ttl_ms: $transaction_ttl_ms} else {} end)')"; then
-      request_build_status=0
+    if soraswap_invoke_immediate_submit_gate \
+      "${SORASWAP_IMMEDIATE_SUBMIT_GATE_FUNCTION:-}" \
+      "$config" \
+      "$contract_alias deploy" \
+      && output="$("$deploy_bin" "${deploy_args[@]}" 2>&1)"; then
+      exit_code=0
     else
-      request_build_status=$?
+      exit_code=$?
     fi
   } always {
-    if ! soraswap_secure_unlink_owned_file "$private_key_file"; then
-      request_build_status=1
+    if ! soraswap_secure_unlink_owned_files "$private_key_file" "$fee_payment_file"; then
+      exit_code=1
     fi
   }
-  (( request_build_status == 0 )) || return "$request_build_status"
-
-  curl_args=(
-    -sS
-    -H 'Content-Type: application/json'
-    -H 'Accept: application/json'
-    -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION"
-    -w $'\n%{http_code}'
-    -X POST
-  )
-  curl_args+=(--max-time "$max_time_secs")
-  curl_args+=(
-    "$torii_base/v1/contracts/deploy"
-    --data-binary @-
-  )
-
-  attempt=1
-  while (( attempt <= max_attempts )); do
-    if ! response="$(printf '%s' "$request" | soraswap_curl_for_config "$config" "${curl_args[@]}")"; then
-      health_status=0
-      soraswap_stop_if_public_transport_health_degraded \
-        "$config" \
-        "contract deploy transport for $(soraswap_display_path "$code_file")" \
-        "Failed to connect to $torii_base/v1/contracts/deploy" || health_status=$?
-      if (( health_status != 0 )); then
-        return "$health_status"
-      fi
-      if (( attempt == max_attempts )); then
-        echo "failed to reach $torii_base/v1/contracts/deploy" >&2
-        return 1
-      fi
-      echo "contract deploy request could not reach $torii_base/v1/contracts/deploy for $(soraswap_display_path "$code_file"); retrying ($attempt/$max_attempts)" >&2
-      sleep "$retry_delay"
-      attempt=$(( attempt + 1 ))
-      continue
-    fi
-
-    http_code="${response##*$'\n'}"
-    body="${response%$'\n'*}"
-
-    if [[ "$http_code" == "200" ]]; then
-      printf '%s\n' "$body"
-      return 0
-    fi
-
-    health_status=0
-    soraswap_stop_if_public_transport_health_degraded \
-      "$config" \
-      "contract deploy transport for $(soraswap_display_path "$code_file")" \
-      "HTTP $http_code $body" || health_status=$?
-    if (( health_status != 0 )); then
-      return "$health_status"
-    fi
-
-    if contract_deploy_http_error_retryable "$http_code" "$body" && (( attempt < max_attempts )); then
-      redacted_body="$(soraswap_redact_sensitive_text "$body")"
-      echo "contract deploy route unresolved for $(soraswap_display_path "$code_file"); retrying ($attempt/$max_attempts): HTTP $http_code: $redacted_body" >&2
-      sleep "$retry_delay"
-      attempt=$(( attempt + 1 ))
-      continue
-    fi
-
-    redacted_body="$(soraswap_redact_sensitive_text "$body")"
-    echo "contract deploy request failed for $(soraswap_display_path "$code_file"): HTTP $http_code: $redacted_body" >&2
+  if (( exit_code != 0 )); then
+    redacted_output="$(soraswap_redact_sensitive_text "$output")"
+    [[ -z "$redacted_output" ]] || printf '%s\n' "$redacted_output" >&2
+    return "$exit_code"
+  fi
+  if ! response="$(extract_last_json_object <<<"$output")"; then
+    redacted_output="$(soraswap_redact_sensitive_text "$output")"
+    echo "ivm_contract_deploy output did not end in JSON: $redacted_output" >&2
     return 1
-  done
+  fi
+  printf '%s\n' "$response"
+}
 
-  echo "contract deploy request failed for $(soraswap_display_path "$code_file") after $max_attempts attempts" >&2
-  return 1
+native_contract_deploy_response_matches_current_schema_json() {
+  local response_json="$1"
+
+  jq -e '
+    def uint: type == "number" and floor == . and . >= 0;
+    def positive_uint: uint and . > 0;
+    def nonempty_string: type == "string" and length > 0;
+    def decimal_string: type == "string" and test("^(0|[1-9][0-9]*)$");
+    def lower_hash: type == "string" and test("^[0-9a-f]{64}$");
+    def current_hash: type == "string" and test("^hash:[0-9A-F]{64}#[0-9A-F]{4}$");
+    def current_hash_body:
+      capture("^hash:(?<body>[0-9A-F]{64})#[0-9A-F]{4}$").body | ascii_downcase;
+    def fee_kind:
+      type == "object"
+      and keys == ["kind", "value"]
+      and (.kind == "nexus" or .kind == "pipeline_gas")
+      and .value == null;
+    def fee_component:
+      type == "object"
+      and keys == ["asset_definition_id", "kind", "max_amount"]
+      and (.kind | fee_kind)
+      and (.asset_definition_id | nonempty_string)
+      and (
+        (.max_amount | type) == "string"
+        and (.max_amount | test("^(0\\.[0-9]{0,27}[1-9]|[1-9][0-9]{0,153}(\\.[0-9]{0,27}[1-9])?)$"))
+        and ((.max_amount | gsub("\\."; "") | length) <= 154)
+      );
+    def authority_fee_intent:
+      type == "object"
+      and keys == ["payer", "value"]
+      and .payer == "authority"
+      and ((.value | type) == "object")
+      and (.value | keys) == ["charge_limits", "gas_limit"]
+      and ((.value.charge_limits | type) == "array")
+      and (.value.charge_limits | length) <= 2
+      and all(.value.charge_limits[]; fee_component)
+      and (
+        [.value.charge_limits[].kind.kind]
+        | . == []
+          or . == ["nexus"]
+          or . == ["pipeline_gas"]
+          or . == ["nexus", "pipeline_gas"]
+      )
+      and (.value.gas_limit | positive_uint);
+    def authority_fee_quote:
+      type == "object"
+      and keys == ["capacities", "components", "decision", "intent", "observation"]
+      and (.intent | authority_fee_intent)
+      and ((.components | type) == "array")
+      and all(.components[]; fee_component)
+      and .components == .intent.value.charge_limits
+      and .capacities == []
+      and ((.observation | type) == "object")
+      and (.observation | keys) == ["ledger_time_ms", "next_block_height", "route_dataspace_id"]
+      and (.observation.ledger_time_ms | uint)
+      and (.observation.next_block_height | positive_uint)
+      and (.observation.route_dataspace_id | uint)
+      and ((.decision | type) == "object")
+      and (.decision | keys) == ["status", "value"]
+      and .decision.status == "accepted"
+      and ((.decision.value | type) == "object")
+      and (.decision.value | keys) == ["debit_source"]
+      and ((.decision.value.debit_source | type) == "object")
+      and (.decision.value.debit_source | keys) == ["kind", "value"]
+      and .decision.value.debit_source.kind == "account"
+      and (.decision.value.debit_source.value | nonempty_string);
+    type == "object"
+    and keys == [
+      "authority",
+      "chain_discriminant",
+      "chain_id",
+      "code_hash_hex",
+      "commit_deployment_tx_hash",
+      "contract_address",
+      "contract_alias",
+      "contract_subject_account",
+      "dataspace",
+      "deploy_nonce",
+      "deployment_state",
+      "expected_previous_contract_address",
+      "fee_quotes",
+      "final",
+      "next_deploy_nonce",
+      "ok",
+      "operation_receipt",
+      "register_bytes_chunk_count",
+      "register_bytes_chunk_size",
+      "register_bytes_stage_tx_hashes",
+      "register_bytes_tx_hash",
+      "register_bytes_tx_strategy",
+      "register_manifest_tx_hash",
+      "submitted",
+      "terminal_kind",
+      "torii_url"
+    ]
+    and .ok == true
+    and .submitted == true
+    and (.torii_url | nonempty_string)
+    and (.chain_id | nonempty_string)
+    and (.authority | nonempty_string)
+    and (.chain_discriminant | uint)
+    and .chain_discriminant <= 65535
+    and (.dataspace | decimal_string)
+    and (.contract_alias | nonempty_string)
+    and (.contract_address | nonempty_string)
+    and (.contract_subject_account | nonempty_string)
+    and (.deploy_nonce | uint)
+    and (.next_deploy_nonce | uint)
+    and .next_deploy_nonce == (.deploy_nonce + 1)
+    and (.code_hash_hex | lower_hash)
+    and (.register_manifest_tx_hash | current_hash)
+    and (.commit_deployment_tx_hash | current_hash)
+    and (
+      .expected_previous_contract_address == null
+      or (.expected_previous_contract_address | nonempty_string)
+    )
+    and .terminal_kind == "Committed"
+    and ((.final | type) == "object")
+    and (.final | keys) == ["hash", "kind"]
+    and .final.kind == "Committed"
+    and .final.hash == .commit_deployment_tx_hash
+    and .register_bytes_tx_strategy == "native_chunks"
+    and .register_bytes_chunk_size == 65536
+    and (.register_bytes_chunk_count | positive_uint)
+    and ((.register_bytes_stage_tx_hashes | type) == "array")
+    and all(.register_bytes_stage_tx_hashes[]; lower_hash)
+    and ((.register_bytes_stage_tx_hashes | length) + 1 == .register_bytes_chunk_count)
+    and (.register_bytes_tx_hash | lower_hash)
+    and ((.fee_quotes | type) == "array")
+    and (.fee_quotes | length) == (.register_bytes_chunk_count + 2)
+    and all(.fee_quotes[]; authority_fee_quote)
+    and ((.deployment_state | type) == "object")
+    and (.deployment_state | keys) == [
+      "authority",
+      "chain_discriminant",
+      "contract_alias",
+      "dataspace_alias",
+      "dataspace_id",
+      "deploy_nonce",
+      "ledger_time_ms",
+      "observed_block_hash",
+      "observed_block_height",
+      "previous_contract_address"
+    ]
+    and .deployment_state.authority == .authority
+    and .deployment_state.contract_alias == .contract_alias
+    and (.deployment_state.deploy_nonce | decimal_string)
+    and (.deployment_state.deploy_nonce | tonumber) == .deploy_nonce
+    and (.deployment_state.dataspace_alias | nonempty_string)
+    and .deployment_state.dataspace_id == .dataspace
+    and .deployment_state.previous_contract_address == .expected_previous_contract_address
+    and (.deployment_state.observed_block_height | decimal_string)
+    and (.deployment_state.observed_block_hash | lower_hash)
+    and (.deployment_state.ledger_time_ms | decimal_string)
+    and (.deployment_state.chain_discriminant | decimal_string)
+    and (.deployment_state.chain_discriminant | tonumber) == .chain_discriminant
+    and ((.operation_receipt | type) == "object")
+    and (.operation_receipt | keys) == [
+      "abi_hash_hex",
+      "authority",
+      "chain_discriminant",
+      "chain_id",
+      "code_hash_hex",
+      "contract_address",
+      "contract_alias",
+      "contract_subject_account",
+      "dataspace",
+      "deployment_state",
+      "entrypoint",
+      "entrypoint_hash_hex",
+      "fee_payment",
+      "fee_quotes",
+      "gas_limit",
+      "gas_used",
+      "operation_kind",
+      "payload_digest_hex",
+      "status",
+      "torii_url",
+      "transport",
+      "tx_hash_hex"
+    ]
+    and .operation_receipt.operation_kind == "contract_deploy"
+    and .operation_receipt.status == "committed"
+    and .operation_receipt.transport == "ivm-contract-deploy-helper"
+    and .operation_receipt.torii_url == .torii_url
+    and .operation_receipt.chain_id == .chain_id
+    and .operation_receipt.authority == .authority
+    and .operation_receipt.chain_discriminant == .chain_discriminant
+    and .operation_receipt.dataspace == .dataspace
+    and .operation_receipt.contract_alias == .contract_alias
+    and .operation_receipt.contract_address == .contract_address
+    and .operation_receipt.contract_subject_account == .contract_subject_account
+    and .operation_receipt.code_hash_hex == .code_hash_hex
+    and .operation_receipt.abi_hash_hex == null
+    and (.operation_receipt.tx_hash_hex | lower_hash)
+    and .operation_receipt.tx_hash_hex == (.commit_deployment_tx_hash | current_hash_body)
+    and .operation_receipt.entrypoint == null
+    and .operation_receipt.entrypoint_hash_hex == null
+    and (.operation_receipt.gas_limit | positive_uint)
+    and .operation_receipt.gas_used == null
+    and (.operation_receipt.fee_payment | authority_fee_intent)
+    and .operation_receipt.fee_payment == .fee_quotes[-1].intent
+    and .operation_receipt.fee_quotes == .fee_quotes
+    and (.operation_receipt.payload_digest_hex | lower_hash)
+    and .operation_receipt.deployment_state == .deployment_state
+  ' <<<"$response_json" >/dev/null 2>&1
 }
 
 normalize_contract_deploy_response_json() {
   local response_json="$1"
 
-  jq -c '
-    if (.ok == true and (.contract_address | type) == "string" and (.contract_address | length) > 0) then
-      .
-    elif (.ok == true and ((.contracts // []) | length) == 1) then
-      . as $root
-      | ($root.contracts[0] // {}) as $contract
-      | ($root.operation_receipt // {}) as $receipt
-      | {
-          ok: true,
-          contract_address: ($contract.contract_address // $receipt.contract_address // ""),
-          contract_alias: ($contract.contract_alias // $receipt.contract_alias // $contract.name // ""),
-          dataspace: ($contract.dataspace // $receipt.dataspace // "universal"),
-          deploy_nonce: ($contract.deploy_nonce // 0),
-          tx_hash_hex: ($contract.tx_hash_hex // $receipt.tx_hash_hex // ""),
-          code_hash_hex: (($contract.code_hash_hex // $receipt.code_hash_hex // $receipt.payload_digest_hex // "") | ascii_downcase),
-          abi_hash_hex: (($contract.abi_hash_hex // $receipt.abi_hash_hex // "") | ascii_downcase),
-          status: ($contract.status // $receipt.status // ""),
-          upgraded: ($contract.upgraded // false),
-          previous_contract_address: ($contract.previous_contract_address // ""),
-          pipeline_status: ($contract.pipeline_status // null),
-          raw_response: $root
-        }
-      | if .pipeline_status == null then del(.pipeline_status) else . end
-    else
-      .
-    end
-  ' <<<"$response_json"
+  native_contract_deploy_response_matches_current_schema_json "$response_json" || {
+    echo "invalid exact current ivm_contract_deploy response" >&2
+    return 1
+  }
+  jq -c . <<<"$response_json"
 }
 
 derive_contract_address_for_deploy() {
@@ -8044,7 +7801,13 @@ derive_contract_address_for_deploy() {
 
 contract_view_result_json() {
   local response_json="$1"
-  jq -c 'if .ok == true then .result else error("contract view response did not succeed") end' <<<"$response_json"
+  jq -c '
+    if .ok == true and has("normalized_result") then
+      .normalized_result
+    else
+      error("current normalized contract view result is missing")
+    end
+  ' <<<"$response_json"
 }
 
 contract_view_report_result_json() {
@@ -8059,8 +7822,15 @@ contract_view_report_result_json() {
 
   if response_compact="$(jq -c . <<<"$response_json" 2>/dev/null)"; then
     jq -c '
-      if .ok == true then
-        .result
+      if .ok == true and has("normalized_result") then
+        .normalized_result
+      elif .ok == true then
+        {
+          status: "invalid_contract_view_response",
+          ok: false,
+          error: "current normalized contract view result is missing",
+          response: .
+        }
       else
         {
           status: "contract_view_failed",
@@ -8102,16 +7872,11 @@ contract_liveness_probe_entrypoint_for_key() {
     dlmm.dlmm_router) echo "router_config" ;;
     farms.farm) echo "farm_config" ;;
     launchpad.liquidity_executor) echo "executor_config" ;;
-    launchpad.sale_factory) echo "factory_binding_details" ;;
+    launchpad.sale_factory) echo "factory_config" ;;
     n3x.n3x_hub) echo "hub_config" ;;
     options.factory) echo "factory_config" ;;
-    options.manager) echo "manager_config" ;;
-    options.outperformance_option) echo "series_state" ;;
-    options.shout_option) echo "series_state" ;;
-    options.vault) echo "vault_state" ;;
     perps.perps_engine) echo "engine_config" ;;
     referral.registry) echo "registry_config" ;;
-    risk.risk_vault) echo "risk_state" ;;
     *)
       return 1
       ;;
@@ -8124,9 +7889,6 @@ contract_liveness_probe_payload_for_key() {
   case "$contract_key" in
     automation.job_queue)
       jq -cn --arg job "deploy-probe" '{job: $job}'
-      ;;
-    options.outperformance_option|options.shout_option|options.vault)
-      echo '{"series_id":1}'
       ;;
     *)
       echo "null"
@@ -8147,8 +7909,7 @@ contract_instance_liveness_json() {
   payload_json="$(contract_liveness_probe_payload_for_key "$contract_key")"
   gas_limit="${SORASWAP_DEPLOY_LIVENESS_GAS_LIMIT:-${SORASWAP_SMOKE_GAS_LIMIT:-100000}}"
 
-  SORASWAP_CONTRACT_VIEW_ALLOWED_HTTP_CODES="200 422" \
-    submit_contract_view "$config" "$contract_address" "$entrypoint" "$gas_limit" "$payload_json"
+  submit_contract_view "$config" "$contract_address" "$entrypoint" "$gas_limit" "$payload_json"
 }
 
 wait_for_contract_instance_liveness() {
@@ -8201,10 +7962,17 @@ contract_view_result_object() {
 pipeline_transaction_status_json() {
   local config="$1"
   local tx_hash="$2"
-  local scope="${3:-auto}"
+  local scope="${3:-global}"
   local torii_base response http_code body
 
   soraswap_validate_torii_read_max_time || return 1
+  case "$scope" in
+    local|global) ;;
+    *)
+      echo "pipeline status scope must be local or global; got '$scope'" >&2
+      return 1
+      ;;
+  esac
   torii_base="$(torii_base_from_config "$config")"
   response="$(soraswap_curl_for_config "$config" -sS \
     --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
@@ -8217,7 +7985,26 @@ pipeline_transaction_status_json() {
 
   case "$http_code" in
     200)
-      printf '%s\n' "$body"
+      jq -ce '
+        select(
+          type == "object"
+          and (keys == ["hash", "resolved_from", "scope", "status"])
+          and (.hash | type) == "string"
+          and (.hash | test("^[0-9a-f]{64}$"))
+          and (.scope == "local" or .scope == "global")
+          and (.resolved_from == "cache" or .resolved_from == "queue" or .resolved_from == "state")
+          and (.status | type) == "object"
+          and ((.status | keys) == ["kind"] or (.status | keys) == ["block_height", "kind"])
+          and (.status.kind == "Queued" or .status.kind == "Approved" or .status.kind == "Committed" or .status.kind == "Applied" or .status.kind == "Rejected" or .status.kind == "Expired")
+          and (
+            (.status | has("block_height") | not)
+            or ((.status.block_height | type) == "number" and (.status.block_height | floor) == .status.block_height and .status.block_height >= 0)
+          )
+        )
+      ' <<<"$body" || {
+        echo "pipeline status for $tx_hash did not match the current public status DTO" >&2
+        return 1
+      }
       ;;
     404)
       return 2
@@ -8231,12 +8018,11 @@ pipeline_transaction_status_json() {
 
 pipeline_status_kind_from_json() {
   local response_json="$1"
-  jq -r '.status.kind // .content.status.kind // empty' <<<"$response_json"
-}
-
-pipeline_status_content_from_json() {
-  local response_json="$1"
-  jq -c '.status.rejection_reason // .content.status.content // .content.status // null' <<<"$response_json"
+  jq -er '
+    select(type == "object" and (.status | type) == "object")
+    | .status.kind
+    | select(type == "string" and length > 0)
+  ' <<<"$response_json"
 }
 
 wait_for_transaction_commit() {
@@ -8266,7 +8052,7 @@ wait_for_transaction_terminal_status() {
   local tx_hash="$2"
   local attempts="${3:-60}"
   local sleep_seconds="${4:-1}"
-  local scope="${5:-auto}"
+  local scope="${5:-global}"
   local queued_stall_max_ms="${6:-0}"
   local attempt=1
   local response kind latest_kind="" health_snapshot health_summary
@@ -8327,7 +8113,7 @@ wait_for_transaction_terminal_or_committed() {
   local tx_hash="$2"
   local attempts="${3:-60}"
   local sleep_seconds="${4:-1}"
-  local scope="${5:-auto}"
+  local scope="${5:-global}"
   local committed_hash="${6:-$tx_hash}"
   local queued_stall_max_ms="${7:-0}"
   local attempt=1
@@ -8584,12 +8370,10 @@ call_contract_and_wait() {
   local entrypoint="$3"
   local payload_json="${4:-null}"
   local gas_limit="${5:-$SORASWAP_SMOKE_GAS_LIMIT}"
-  local response redacted_response tx_hash committed_hash terminal_json terminal_status terminal_source tx_result pipeline_json pipeline_kind pipeline_content
+  local response redacted_response tx_hash committed_hash terminal_json terminal_status terminal_source tx_result pipeline_json pipeline_kind
   local accept_setting_status invisible_retry_count submit_attempt tx_committed_wait_secs queued_stall_max_ms health_status
-  local creation_time_ms
   local accept_pipeline_only=0 committed_verify_attempts
 
-  creation_time_ms=""
   tx_committed_wait_secs="$(soraswap_contract_call_tx_committed_wait_secs "$config")" || return 1
   queued_stall_max_ms="$(soraswap_public_tx_wait_queued_stall_max_ms_for_config "$config")" || return 1
   committed_verify_attempts="$tx_committed_wait_secs"
@@ -8609,17 +8393,21 @@ call_contract_and_wait() {
     soraswap_require_public_submit_health_ready_for_config \
       "$config" \
       "$contract_id.$entrypoint submit" || return $?
-    if [[ -z "$creation_time_ms" ]]; then
-      creation_time_ms="$(soraswap_next_contract_call_creation_time_ms)" || return 1
-    fi
-    if ! response="$(submit_contract_call "$config" "$contract_id" "$entrypoint" "$gas_limit" "$payload_json" "$creation_time_ms")"; then
+    if ! response="$(submit_contract_call "$config" "$contract_id" "$entrypoint" "$gas_limit" "$payload_json")"; then
       return 1
     fi
     if ! echo "$response" \
-      | jq -e '.ok == true and .submitted == true and (.tx_hash_hex | type == "string") and (.tx_hash_hex | length > 0)' \
+      | jq -e '
+          .ok == true
+          and .submitted == true
+          and (.tx_hash_hex | type) == "string"
+          and (.tx_hash_hex | length) > 0
+          and (.entrypoint_hash_hex | type) == "string"
+          and (.entrypoint_hash_hex | length) > 0
+        ' \
       >/dev/null; then
       redacted_response="$(soraswap_redact_sensitive_text "$response")"
-      echo "$contract_id.$entrypoint did not return a submitted transaction hash: $redacted_response" >&2
+      echo "$contract_id.$entrypoint did not return the current submitted transaction and entrypoint hashes: $redacted_response" >&2
       return 1
     fi
     tx_hash="$(echo "$response" | jq -r '.tx_hash_hex')"
@@ -8628,9 +8416,9 @@ call_contract_and_wait() {
       "$config" \
       "$contract_id.$entrypoint accepted" \
       "$tx_hash" || return $?
-    committed_hash="$(echo "$response" | jq -r '.entrypoint_hash_hex // .transaction_entrypoint_hash_hex // .entrypoint_hash // .tx_hash_hex')"
+    committed_hash="$(echo "$response" | jq -r '.entrypoint_hash_hex')"
     soraswap_record_contract_call_trace "$config" "$contract_id" "$entrypoint" "$tx_hash" "$committed_hash" "$submit_attempt"
-    if terminal_json="$(wait_for_transaction_terminal_or_committed "$config" "$tx_hash" "$tx_committed_wait_secs" 1 auto "$committed_hash" "$queued_stall_max_ms")"; then
+    if terminal_json="$(wait_for_transaction_terminal_or_committed "$config" "$tx_hash" "$tx_committed_wait_secs" 1 global "$committed_hash" "$queued_stall_max_ms")"; then
       break
     else
       terminal_status=$?
@@ -8667,7 +8455,6 @@ call_contract_and_wait() {
           fi
           ;;
         Rejected|Expired)
-          pipeline_content="$(pipeline_status_content_from_json "$pipeline_json")"
           if [[ "$pipeline_kind" == "Expired" ]]; then
             soraswap_require_public_write_health_ready_for_config \
               "$config" \
@@ -8677,7 +8464,7 @@ call_contract_and_wait() {
                 return "$health_status"
               }
           fi
-          echo "$contract_id.$entrypoint failed for transaction $tx_hash: $pipeline_content" >&2
+          echo "$contract_id.$entrypoint reached public pipeline status $pipeline_kind for transaction $tx_hash" >&2
           return 1
           ;;
         *)
@@ -8718,6 +8505,7 @@ foundation_contract_ids() {
     dlmm.dlmm_pool \
     dlmm.dlmm_router \
     batch_amm.epoch_auction \
+    launchpad.liquidity_executor \
     escrow.conditional_escrow
 }
 
@@ -8926,15 +8714,6 @@ contract_alias_for() {
   echo "${name}::${domain}.universal"
 }
 
-contract_app_manifest_path() {
-  echo "$SORASWAP_ROOT/${SORASWAP_CONTRACTS_MANIFEST:-iroha.contracts.toml}"
-}
-
-contract_bundle_receipt_path_for_env() {
-  local env="$1"
-  echo "$SORASWAP_ROOT/deployments/${env}/soraswap.bundle.deploy.json"
-}
-
 contract_source_for_key() {
   local contract_key="$1"
   local contract_path
@@ -8949,258 +8728,6 @@ contract_source_for_key() {
   return 1
 }
 
-submit_contract_app_bundle() {
-  local config="$1"
-  local action="${2:-deploy}"
-  local manifest_path="${3:-$(contract_app_manifest_path)}"
-  local timeout_secs timeout_ms process_timeout_secs transaction_ttl_ms cli_config="" private_key_file="" metadata_file=""
-  local output exit_code stdout_file stderr_file stderr_output combined_error redacted_output redacted_stderr_output
-  local attempt max_attempts current_action timed_out iroha_bin gas_asset_id gas_limit
-  local -a app_args
-
-  timeout_secs="${SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS:-${SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS:-45}}"
-  soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS" "$timeout_secs" || return 1
-  timeout_ms="$(( timeout_secs * 1000 ))"
-  process_timeout_secs="${SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS:-}"
-  if [[ -z "$process_timeout_secs" ]]; then
-    if (( timeout_secs > 0 )); then
-      process_timeout_secs=$(( timeout_secs + 120 ))
-    else
-      process_timeout_secs=0
-    fi
-  fi
-  soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS" "$process_timeout_secs" || return 1
-  transaction_ttl_ms="${SORASWAP_CONTRACT_DEPLOY_TRANSACTION_TTL_MS:-${SORASWAP_CONTRACT_CALL_TRANSACTION_TTL_MS:-900000}}"
-  soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_DEPLOY_TRANSACTION_TTL_MS" "$transaction_ttl_ms" || return 1
-  max_attempts="${SORASWAP_CONTRACT_APP_DEPLOY_ATTEMPTS:-3}"
-  soraswap_require_positive_integer_setting "SORASWAP_CONTRACT_APP_DEPLOY_ATTEMPTS" "$max_attempts" || return 1
-  ensure_iroha_cli_bin || return 1
-  iroha_bin="${SORASWAP_ACTIVE_IROHA_CLI_BIN:-$SORASWAP_IROHA_ROOT/target/debug/iroha}"
-  cli_config="$(SORASWAP_MATERIALIZE_TORII_REQUEST_TIMEOUT_MS="$timeout_ms" \
-    materialize_cli_compatible_config "$config")" || return 1
-  if [[ "$action" != "plan" ]]; then
-    private_key_file="$(soraswap_config_private_key_temp_file "$config" contract-app-key)" || {
-      soraswap_secure_unlink_owned_file "$cli_config" || true
-      return 1
-    }
-  fi
-  gas_asset_id="$(gas_metadata_asset_id_for_config "$config")"
-  gas_limit="${SORASWAP_LEDGER_GAS_LIMIT:-2000000}"
-  soraswap_require_positive_integer_setting "SORASWAP_LEDGER_GAS_LIMIT" "$gas_limit" || {
-    soraswap_secure_unlink_owned_files "$cli_config" "$private_key_file" || true
-    return 1
-  }
-  metadata_file="$(jq -cn \
-    --arg gas_asset_id "$gas_asset_id" \
-    --argjson gas_limit "$gas_limit" \
-    '{gas_asset_id: $gas_asset_id, gas_limit: $gas_limit}' \
-    | soraswap_secret_temp_from_stdin contract-app-metadata)" || {
-      soraswap_secure_unlink_owned_files "$cli_config" "$private_key_file" || true
-      return 1
-    }
-
-  current_action="$action"
-  attempt=1
-  {
-    while (( attempt <= max_attempts )); do
-      stdout_file="$(soraswap_secure_temp_file contract-app-stdout)" || return 1
-      stderr_file="$(soraswap_secure_temp_file contract-app-stderr)" || return 1
-      timed_out=0
-      app_args=(
-        --manifest "$manifest_path"
-        --authority "$SORASWAP_AUTHORITY"
-      )
-      if [[ "$current_action" != "plan" ]]; then
-        [[ -n "$private_key_file" ]] || {
-          echo "contract app $current_action requires a file-backed signing key" >&2
-          return 1
-        }
-        app_args+=(--private-key-file "$private_key_file")
-      fi
-      if (( transaction_ttl_ms > 0 )); then
-        app_args+=(--transaction-ttl-ms "$transaction_ttl_ms")
-      fi
-      if soraswap_run_external_with_timeout \
-        "$process_timeout_secs" \
-        "$iroha_bin" \
-        --machine \
-        --config "$cli_config" \
-        --metadata "$metadata_file" \
-        --output-format json \
-        contract app "$current_action" \
-        "${app_args[@]}" >"$stdout_file" 2>"$stderr_file"; then
-        exit_code=0
-      else
-        exit_code=$?
-      fi
-      case "$exit_code" in
-        124|137|142|143) timed_out=1 ;;
-      esac
-      output="$(command cat "$stdout_file" 2>/dev/null || true)"
-      stderr_output="$(command cat "$stderr_file" 2>/dev/null || true)"
-      if (( timed_out == 1 )); then
-        stderr_output="$stderr_output"$'\n'"contract app $current_action process timed out after ${process_timeout_secs}s"
-      fi
-      if ! printf '%s\n%s' "$output" "$stderr_output" \
-        | soraswap_assert_client_output_clean "$config" "$private_key_file"; then
-        output=""
-        stderr_output="contract app credential echo was suppressed"
-        exit_code=1
-      fi
-      if ! soraswap_secure_unlink_owned_files "$stdout_file" "$stderr_file"; then
-        return 1
-      fi
-      stdout_file=""
-      stderr_file=""
-      redacted_output="$(soraswap_redact_sensitive_text "$output")"
-      redacted_stderr_output="$(soraswap_redact_sensitive_text "$stderr_output")"
-
-      if (( exit_code == 0 )); then
-        [[ -z "$redacted_stderr_output" ]] || printf '%s\n' "$redacted_stderr_output" >&2
-        printf '%s\n' "$redacted_output"
-        return 0
-      fi
-
-      combined_error="$stderr_output"$'\n'"$output"
-      if [[ "$combined_error" == *"unexpected argument '--private-key-file'"* \
-        || "$combined_error" == *"unknown option --private-key-file"* ]]; then
-        echo "contract app requires Iroha support for --private-key-file; refusing inline private key fallback" >&2
-        return 1
-      fi
-      if (( attempt < max_attempts )) \
-        && [[ "$action" != "plan" ]] \
-        && { (( timed_out == 1 )) || soraswap_contract_app_deploy_retryable_error "$combined_error"; }; then
-        if (( timed_out == 1 )); then
-          printf 'contract app %s timed out after %ss; resuming bundle deployment (attempt %s/%s)\n' \
-            "$current_action" "$process_timeout_secs" "$(( attempt + 1 ))" "$max_attempts" >&2
-        else
-          printf 'contract app %s transport failed; resuming bundle deployment (attempt %s/%s)\n' \
-            "$current_action" "$(( attempt + 1 ))" "$max_attempts" >&2
-        fi
-        current_action="resume"
-        attempt=$(( attempt + 1 ))
-        continue
-      fi
-
-      [[ -z "$redacted_stderr_output" ]] || printf '%s\n' "$redacted_stderr_output" >&2
-      printf '%s\n' "$redacted_output" >&2
-      return "$exit_code"
-    done
-    return 1
-  } always {
-    if ! soraswap_secure_unlink_owned_files "$stdout_file" "$stderr_file" "$cli_config" "$private_key_file" "$metadata_file"; then
-      return 1
-    fi
-  }
-}
-
-contract_app_manifest_contract_names() {
-  local manifest_path="$1"
-
-  python3 - "$manifest_path" <<'PY'
-import sys
-from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-
-data = tomllib.loads(Path(sys.argv[1]).read_text())
-for contract in data.get("contracts", []):
-    name = contract.get("name")
-    if name:
-        print(name)
-PY
-}
-
-write_contract_app_manifest_subset() {
-  local source_manifest="$1"
-  local target_manifest="$2"
-  shift 2
-
-  python3 - "$source_manifest" "$target_manifest" "$@" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-
-source = Path(sys.argv[1])
-target = Path(sys.argv[2])
-source_root = source.parent.resolve()
-selected = list(sys.argv[3:])
-selected_set = set(selected)
-data = tomllib.loads(source.read_text())
-
-def toml_value(value):
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return repr(value)
-    if isinstance(value, str):
-        return json.dumps(value)
-    if isinstance(value, list):
-        return "[" + ", ".join(toml_value(item) for item in value) + "]"
-    raise TypeError(f"unsupported TOML value {value!r}")
-
-def contract_value(key, value):
-    if key in {"source", "artifact"} and isinstance(value, str):
-        path = Path(value)
-        if not path.is_absolute():
-            return str((source_root / path).resolve())
-    return value
-
-lines = []
-for key, value in data.items():
-    if key in {"contracts", "profiles", "tests", "smoke"}:
-        continue
-    if isinstance(value, dict):
-        continue
-    lines.append(f"{key} = {toml_value(value)}")
-if lines:
-    lines.append("")
-
-found = set()
-for contract in data.get("contracts", []):
-    name = contract.get("name")
-    if name not in selected_set:
-        continue
-    found.add(name)
-    lines.append("[[contracts]]")
-    for key, value in contract.items():
-        value = contract_value(key, value)
-        lines.append(f"{key} = {toml_value(value)}")
-    lines.append("")
-
-missing = [name for name in selected if name not in found]
-if missing:
-    raise SystemExit(f"manifest does not contain selected contracts: {', '.join(missing)}")
-
-for profile_name, profile in data.get("profiles", {}).items():
-    lines.append(f"[profiles.{profile_name}]")
-    for key, value in profile.items():
-        lines.append(f"{key} = {toml_value(value)}")
-    lines.append("")
-
-target.write_text("\n".join(lines), encoding="utf-8")
-PY
-}
-
-soraswap_contract_app_deploy_retryable_error() {
-  local output="${1:-}"
-
-  soraswap_public_transport_error_needs_health_gate "$output" && return 0
-  grep -qiE \
-    'timed out|timeout|deadline|failed to send http|connection closed|connection reset|connection refused|broken pipe|unexpected eof|end of file before message completed' \
-    <<<"$output"
-}
-
 json_array_from_lines() {
   jq -Rsc 'split("\n") | map(select(length > 0))'
 }
@@ -9209,238 +8736,33 @@ json_sha256() {
   python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
 }
 
-contract_bundle_receipt_with_metadata() {
-  local env="$1"
-  local receipt_json="$2"
-  local generated_at="${3:-$(utc_timestamp)}"
-  local chain_fingerprint_json
-
-  chain_fingerprint_json="$(contract_bundle_receipt_chain_fingerprint_json_for_env "$env")" || return 1
-  jq -c \
-    --arg generated_at "$generated_at" \
-    --arg environment "$env" \
-    --argjson chain_fingerprint "$chain_fingerprint_json" \
-    '. + {
-      generated_at: $generated_at,
-      environment: $environment,
-      chain_fingerprint: $chain_fingerprint
-    }' <<<"$receipt_json"
-}
-
-submit_contract_app_manifest_for_env() {
-  local env="$1"
-  local config="$2"
-  local manifest_path="${3:-$(contract_app_manifest_path)}"
-  local default_chunk_size chunk_size
-  local default_chunk_block_wait_attempts chunk_block_wait_attempts
-  local default_chunk_queued_stall_max_ms chunk_queued_stall_max_ms
-  local chunk_wait_blocks="${SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS:-1}"
-  local receipt_json receipt_path aggregate_contracts_json chunks_json aggregate_json
-  local chunk_manifest chunk_receipt chunk_names_json chunk_digest aggregate_digest
-  local aggregate_chain_fingerprint_json submission_chain_fingerprint_json
-  local receipt_generated_at aggregate_generated_at
-  local chunk_count index offset end i current_height target_height
-  local -a contract_names chunk_names chunk_manifest_paths
-
-  case "$env" in
-    testnet|production)
-      default_chunk_size=1
-      default_chunk_block_wait_attempts=300
-      default_chunk_queued_stall_max_ms=180000
-      ;;
-    *)
-      default_chunk_size=0
-      default_chunk_block_wait_attempts=120
-      default_chunk_queued_stall_max_ms=0
-      ;;
-  esac
-  chunk_size="${SORASWAP_CONTRACT_APP_CHUNK_SIZE:-$default_chunk_size}"
-  chunk_block_wait_attempts="${SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS:-$default_chunk_block_wait_attempts}"
-  chunk_queued_stall_max_ms="${SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS:-$default_chunk_queued_stall_max_ms}"
-  soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_APP_CHUNK_SIZE" "$chunk_size" || return 1
-  soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS" "$chunk_wait_blocks" || return 1
-  soraswap_require_positive_integer_setting \
-    "SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS" \
-    "$chunk_block_wait_attempts" || return 1
-  soraswap_require_nonnegative_integer_setting \
-    "SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS" \
-    "$chunk_queued_stall_max_ms" || return 1
-  case "${SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS:-1}" in
-    0|1|true|false|yes|no|on|off)
-      ;;
-    *)
-      echo "SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS must be 0, 1, true, false, yes, no, on, or off; got '${SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS}'" >&2
-      return 1
-      ;;
-  esac
-
-  contract_names=("${(@f)$(contract_app_manifest_contract_names "$manifest_path")}")
-  if (( ${#contract_names[@]} == 0 )); then
-    echo "contract app manifest contains no contracts: $(soraswap_display_path "$manifest_path")" >&2
-    return 1
-  fi
-  case "$env" in
-    testnet|production)
-      submission_chain_fingerprint_json="$(current_or_saved_chain_fingerprint_json_for_env "$env")" || return 1
-      require_deployment_evidence_chain_fingerprint "$env" "$submission_chain_fingerprint_json" "contract app bundle submission" || return 1
-      ;;
-  esac
-
-  if (( chunk_size <= 0 || ${#contract_names[@]} <= chunk_size )); then
-    receipt_json="$(submit_contract_app_bundle "$config" deploy "$manifest_path")" || return 1
-    receipt_generated_at="$(utc_timestamp)"
-    receipt_json="$(contract_bundle_receipt_with_metadata "$env" "$receipt_json" "$receipt_generated_at")" || return 1
-    materialize_contract_bundle_records_for_env "$env" "$receipt_json" "$config" "$receipt_generated_at"
-    ensure_contract_deploy_nonce_after_bundle "$config" "$receipt_json" || return 1
-    printf '%s\n' "$receipt_json"
-    return 0
-  fi
-
-  receipt_path="$(contract_bundle_receipt_path_for_env "$env")"
-  aggregate_contracts_json='[]'
-  chunks_json='[]'
-  chunk_manifest_paths=()
-  mkdir -p "$SORASWAP_ROOT/tmp" || return 1
-
-  {
-  index=1
-  chunk_count=$(( (${#contract_names[@]} + chunk_size - 1) / chunk_size ))
-
-  for (( offset = 1; offset <= ${#contract_names[@]}; offset += chunk_size )); do
-    end=$(( offset + chunk_size - 1 ))
-    if (( end > ${#contract_names[@]} )); then
-      end=${#contract_names[@]}
-    fi
-    chunk_names=()
-    for (( i = offset; i <= end; i++ )); do
-      chunk_names+=("${contract_names[$i]}")
-    done
-
-    chunk_manifest="$(mktemp "$SORASWAP_ROOT/tmp/soraswap-contract-app-chunk-${index}.XXXXXX")"
-    chunk_manifest_paths+=("$chunk_manifest")
-    write_contract_app_manifest_subset "$manifest_path" "$chunk_manifest" "${chunk_names[@]}" || {
-      rm -f "${chunk_manifest_paths[@]}"
-      return 1
-    }
-    printf 'deploying contract app chunk %s/%s (%s contracts): %s\n' \
-      "$index" "$chunk_count" "${#chunk_names[@]}" "${(j:, :)chunk_names}" >&2
-
-    chunk_receipt="$(submit_contract_app_bundle "$config" deploy "$chunk_manifest")" || {
-      rm -f "${chunk_manifest_paths[@]}"
-      return 1
-    }
-    materialize_contract_bundle_records_for_env "$env" "$chunk_receipt" "$config" || {
-      rm -f "${chunk_manifest_paths[@]}"
-      return 1
-    }
-    ensure_contract_deploy_nonce_after_bundle "$config" "$chunk_receipt" || {
-      rm -f "${chunk_manifest_paths[@]}"
-      return 1
-    }
-
-    chunk_names_json="$(printf '%s\n' "${chunk_names[@]}" | json_array_from_lines)"
-    chunk_digest="$(jq -r '.bundle_digest // empty' <<<"$chunk_receipt")"
-    chunks_json="$(jq -cn \
-      --argjson chunks "$chunks_json" \
-      --argjson names "$chunk_names_json" \
-      --argjson receipt "$chunk_receipt" \
-      --argjson index "$index" \
-      --arg digest "$chunk_digest" \
-      '$chunks + [{
-        index: $index,
-        bundle_digest: $digest,
-        contract_count: ($names | length),
-        contracts: $names,
-        receipt: $receipt
-      }]')"
-    aggregate_contracts_json="$(jq -cn \
-      --argjson existing "$aggregate_contracts_json" \
-      --argjson receipt "$chunk_receipt" \
-      '$existing + ($receipt.contracts // [])')"
-
-    if (( index < chunk_count && chunk_wait_blocks > 0 )); then
-      current_height="$(soraswap_current_block_height "$config")"
-      if [[ -z "$current_height" || "$current_height" == "null" || "$current_height" != <-> ]]; then
-        current_height=0
-      fi
-      target_height=$(( current_height + chunk_wait_blocks ))
-      soraswap_wait_for_block_height_at_least \
-        "$config" \
-        "$target_height" \
-        "contract-app-chunk-${index}" \
-        "$chunk_block_wait_attempts" \
-        "${SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS:-1}" \
-        "$chunk_queued_stall_max_ms" || {
-          local wait_status="$?"
-          rm -f "${chunk_manifest_paths[@]}"
-          return "$wait_status"
-        }
-    fi
-    index=$(( index + 1 ))
-  done
-
-  aggregate_digest="$(jq -S -c --argjson chunks "$chunks_json" '$chunks' <<<"{}" | json_sha256)"
-  aggregate_generated_at="$(utc_timestamp)"
-  aggregate_chain_fingerprint_json="$(contract_bundle_receipt_chain_fingerprint_json_for_env "$env")" || {
-    rm -f "${chunk_manifest_paths[@]}"
-    return 1
-  }
-  aggregate_json="$(jq -cn \
-    --arg generated_at "$aggregate_generated_at" \
-    --arg environment "$env" \
-    --arg bundle_digest "$aggregate_digest" \
-    --argjson chain_fingerprint "$aggregate_chain_fingerprint_json" \
-    --argjson chunks "$chunks_json" \
-    --argjson contracts "$aggregate_contracts_json" \
-    '{
-      ok: true,
-      generated_at: $generated_at,
-      chunked: true,
-      environment: $environment,
-      chain_fingerprint: $chain_fingerprint,
-      bundle_digest: $bundle_digest,
-      chunk_count: ($chunks | length),
-      chunks: $chunks,
-      contracts: $contracts
-  }')"
-  soraswap_write_json_file_atomic "$aggregate_json" "$receipt_path" || {
-    rm -f "${chunk_manifest_paths[@]}"
-    return 1
-  }
-  rm -f "${chunk_manifest_paths[@]}"
-  printf '%s\n' "$aggregate_json"
-  } always {
-    rm -f "${chunk_manifest_paths[@]}" 2>/dev/null || true
-  }
-}
-
 wait_for_contract_alias_activation() {
   local config="$1"
   local contract_alias="$2"
   local expected_contract_address="$3"
   local deploy_tx_hash="${4:-}"
-  local timeout_secs="${SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS:-180}"
+  local timeout_secs="${SORASWAP_CONTRACT_ACTIVATION_MAX_TIME_SECS:-180}"
   local deadline now resolved_response resolved_address resolve_status tick_blocks tick_default tick_interval last_tick_at
   local pipeline_response pipeline_kind pipeline_summary
 
-  soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS" "$timeout_secs" || return 1
+  soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_ACTIVATION_MAX_TIME_SECS" "$timeout_secs" || return 1
 
   if public_env_for_config "$config" >/dev/null 2>&1; then
     tick_default=0
   else
     tick_default=1
   fi
-  tick_blocks="${SORASWAP_CONTRACT_APP_ACTIVATION_TICK_BLOCKS:-$tick_default}"
-  tick_interval="${SORASWAP_CONTRACT_APP_ACTIVATION_TICK_INTERVAL_SECS:-10}"
+  tick_blocks="${SORASWAP_CONTRACT_ACTIVATION_TICK_BLOCKS:-$tick_default}"
+  tick_interval="${SORASWAP_CONTRACT_ACTIVATION_TICK_INTERVAL_SECS:-10}"
   case "$tick_blocks" in
     0|1|true|false|yes|no|on|off)
       ;;
     *)
-      echo "SORASWAP_CONTRACT_APP_ACTIVATION_TICK_BLOCKS must be 0, 1, true, false, yes, no, on, or off; got '$tick_blocks'" >&2
+      echo "SORASWAP_CONTRACT_ACTIVATION_TICK_BLOCKS must be 0, 1, true, false, yes, no, on, or off; got '$tick_blocks'" >&2
       return 1
       ;;
   esac
-  soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_APP_ACTIVATION_TICK_INTERVAL_SECS" "$tick_interval" || return 1
+  soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_ACTIVATION_TICK_INTERVAL_SECS" "$tick_interval" || return 1
   last_tick_at=0
   deadline=$(( $(date +%s) + timeout_secs ))
   while true; do
@@ -9459,15 +8781,11 @@ wait_for_contract_alias_activation() {
     fi
 
     if [[ -n "$deploy_tx_hash" ]] \
-      && pipeline_response="$(pipeline_transaction_status_json "$config" "$deploy_tx_hash" auto 2>/dev/null)"; then
+      && pipeline_response="$(pipeline_transaction_status_json "$config" "$deploy_tx_hash" global 2>/dev/null)"; then
       pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_response")"
       case "$pipeline_kind" in
         Rejected|Expired)
-          pipeline_summary="$(jq -c '{
-            summary: (.summary // null),
-            status: (.status // .content.status // null),
-            diagnostics: (.diagnostics // [])
-          }' <<<"$pipeline_response")"
+          pipeline_summary="$(jq -c '.status' <<<"$pipeline_response")"
           echo "contract deploy transaction $deploy_tx_hash for $contract_alias reached $pipeline_kind before alias activation: $pipeline_summary" >&2
           return 1
           ;;
@@ -9488,184 +8806,6 @@ wait_for_contract_alias_activation() {
   done
 }
 
-materialize_contract_bundle_records_for_env() {
-  local env="$1"
-  local receipt_json="$2"
-  local config="${3:-$(client_config_or_default "$env")}"
-  local generated_at="${4:-}"
-  local report_dir receipt_path chain_fingerprint_json contract_entry contract_key contract_source
-  local contract_alias contract_address previous_contract_address upgraded dataspace deploy_nonce
-  local contract_status pipeline_kind pipeline_final activation_response activation_address
-  local code_hash_hex abi_hash_hex tx_hash_hex response_json instance_json record_json
-  local record_path manifest_out compiled_manifest detail_json
-
-  if ! jq -e '.ok == true' <<<"$receipt_json" >/dev/null; then
-    echo "contract bundle receipt is not successful" >&2
-    return 1
-  fi
-
-  report_dir="$SORASWAP_ROOT/deployments/${env}"
-  receipt_path="$(contract_bundle_receipt_path_for_env "$env")"
-  chain_fingerprint_json="$(current_or_saved_chain_fingerprint_json_for_env "$env")" || return 1
-  require_deployment_evidence_chain_fingerprint "$env" "$chain_fingerprint_json" "contract bundle materialization" || return 1
-  if [[ -z "$generated_at" ]]; then
-    generated_at="$(jq -r '.generated_at // empty' <<<"$receipt_json" 2>/dev/null || true)"
-  fi
-  if [[ -z "$generated_at" ]]; then
-    generated_at="$(utc_timestamp)"
-  fi
-  receipt_json="$(contract_bundle_receipt_with_metadata "$env" "$receipt_json" "$generated_at")" || return 1
-  mkdir -p "$report_dir"
-  soraswap_write_json_file_atomic "$receipt_json" "$receipt_path" || return 1
-
-  while IFS= read -r contract_entry; do
-    contract_key="$(jq -r '.name' <<<"$contract_entry")"
-    if [[ -z "$contract_key" || "$contract_key" == "null" ]]; then
-      echo "bundle receipt contained a contract without a name" >&2
-      return 1
-    fi
-    contract_alias="$(jq -r '.contract_alias' <<<"$contract_entry")"
-    contract_address="$(jq -r '.contract_address' <<<"$contract_entry")"
-    contract_status="$(jq -r '.status // empty' <<<"$contract_entry")"
-    tx_hash_hex="$(jq -r '.tx_hash_hex // empty' <<<"$contract_entry")"
-    pipeline_kind="$(jq -r '.pipeline_status.status.kind // .pipeline_status.content.status.kind // .pipeline_status.kind // empty' <<<"$contract_entry")"
-    case "$pipeline_kind" in
-      ""|Applied|Committed)
-        pipeline_final=1
-        ;;
-      *)
-        pipeline_final=0
-        ;;
-    esac
-
-    contract_source="$(contract_source_for_key "$contract_key")" || {
-      echo "unable to map bundle receipt contract ${contract_key} to a repo source file" >&2
-      return 1
-    }
-    compiled_manifest="$(manifest_path_for "$contract_source")"
-    if [[ ! -f "$compiled_manifest" ]]; then
-      echo "missing compiled manifest for ${contract_key}: ${compiled_manifest}" >&2
-      return 1
-    fi
-
-    if [[ "$contract_status" != "deployed" || "$pipeline_final" != "1" ]]; then
-      activation_response="$(wait_for_contract_alias_activation "$config" "$contract_alias" "$contract_address" "$tx_hash_hex")" || {
-        echo "bundle receipt contract ${contract_key} is not fully deployed" >&2
-        return 1
-      }
-      activation_address="$(jq -r '.contract_address // empty' <<<"$activation_response")"
-      if [[ "$activation_address" != "$contract_address" ]]; then
-        echo "bundle receipt contract ${contract_key} resolved to $activation_address, expected $contract_address" >&2
-        return 1
-      fi
-      contract_entry="$(jq '
-        .status = "deployed"
-        | if ((.pipeline_status // null) | type) == "object" then
-            .pipeline_status.status.kind = "Committed"
-          else
-            .
-          end
-      ' <<<"$contract_entry")"
-      receipt_json="$(jq --arg contract_key "$contract_key" '
-        (.contracts[] | select(.name == $contract_key)) |= (
-          .status = "deployed"
-          | if ((.pipeline_status // null) | type) == "object" then
-              .pipeline_status.status.kind = "Committed"
-            else
-              .
-            end
-        )
-      ' <<<"$receipt_json")"
-      contract_status="deployed"
-    fi
-
-    previous_contract_address="$(jq -r '.previous_contract_address // empty' <<<"$contract_entry")"
-    upgraded="$(jq -r '.upgraded // false' <<<"$contract_entry")"
-    dataspace="$(jq -r '.dataspace // "universal"' <<<"$contract_entry")"
-    deploy_nonce="$(jq -r '.deploy_nonce // 0' <<<"$contract_entry")"
-    code_hash_hex="$(jq -r '.code_hash_hex // empty' <<<"$contract_entry")"
-    abi_hash_hex="$(jq -r '.abi_hash_hex // empty' <<<"$contract_entry")"
-
-    response_json="$(jq -cn \
-      --arg contract_alias "$contract_alias" \
-      --arg contract_address "$contract_address" \
-      --arg previous_contract_address "$previous_contract_address" \
-      --argjson upgraded "$upgraded" \
-      --arg dataspace "$dataspace" \
-      --argjson deploy_nonce "$deploy_nonce" \
-      --arg tx_hash_hex "$tx_hash_hex" \
-      --arg code_hash_hex "$code_hash_hex" \
-      --arg abi_hash_hex "$abi_hash_hex" \
-      '{
-        ok: true,
-        contract_alias: $contract_alias,
-        contract_address: $contract_address,
-        upgraded: $upgraded,
-        dataspace: $dataspace,
-        deploy_nonce: $deploy_nonce,
-        tx_hash_hex: $tx_hash_hex,
-        code_hash_hex: $code_hash_hex,
-        abi_hash_hex: $abi_hash_hex
-      } + (if ($previous_contract_address | length) > 0 then {
-        previous_contract_address: $previous_contract_address
-      } else {} end)')"
-    instance_json="$(synthetic_contract_instance_json_from_response "$response_json")"
-    record_json="$(jq -cn \
-      --arg contract_key "$contract_key" \
-      --arg generated_at "$generated_at" \
-      --arg environment "$env" \
-      --arg contract_source "$(soraswap_display_path "$contract_source")" \
-      --arg contract_alias "$contract_alias" \
-      --arg dataspace "$dataspace" \
-      --arg contract_address "$contract_address" \
-      --argjson deploy_nonce "$deploy_nonce" \
-      --arg code_hash_hex "$code_hash_hex" \
-      --arg abi_hash_hex "$abi_hash_hex" \
-      --argjson chain_fingerprint "$chain_fingerprint_json" \
-      --argjson bundle_receipt "$contract_entry" \
-      --argjson response "$response_json" \
-      --argjson instance "$instance_json" \
-      '{
-        contract_key: $contract_key,
-        generated_at: $generated_at,
-        environment: $environment,
-        contract_source: $contract_source,
-        contract_alias: $contract_alias,
-        dataspace: $dataspace,
-        contract_address: $contract_address,
-        deploy_nonce: $deploy_nonce,
-        code_hash_hex: $code_hash_hex,
-        abi_hash_hex: $abi_hash_hex,
-        deploy_strategy: "bundle",
-        chain_fingerprint: $chain_fingerprint,
-        bundle_receipt: $bundle_receipt,
-        response: $response,
-        instance: $instance
-      }')"
-    record_path="$(deployment_record_path_for_env "$env" "$contract_key")"
-    manifest_out="$report_dir/${contract_key}.manifest.json"
-    soraswap_write_json_file_atomic "$record_json" "$record_path" || return 1
-    write_deployment_manifest \
-      "$compiled_manifest" \
-      "$manifest_out" \
-      "$env" \
-      "$contract_key" \
-      "$generated_at" \
-      "$contract_source" \
-      "$config" \
-      "$code_hash_hex" \
-      "$abi_hash_hex"
-
-    detail_json="$(jq -cn \
-      --arg record_path "$(soraswap_display_path "$record_path")" \
-      --argjson receipt "$contract_entry" \
-      '{record_path: $record_path, receipt: $receipt}')"
-    deploy_report_set_contract "$env" "$contract_key" "completed" "$detail_json"
-  done < <(jq -c '.contracts[]' <<<"$receipt_json")
-
-  soraswap_write_json_file_atomic "$receipt_json" "$receipt_path"
-}
-
 deployment_record_path_for_env() {
   local env="$1"
   local contract_key="$2"
@@ -9674,32 +8814,23 @@ deployment_record_path_for_env() {
 
 deployment_records_json_for_env() {
   local env="$1"
-  local contract_key
   local deploy_scope="${SORASWAP_DEPLOY_SCOPE:-full}"
-  local record_paths=()
-  local record_path
-  local -A expected_contract_key_map
+  local contract_key record_path
+  local -a record_paths=()
 
   for contract_key in "${(@f)$(expected_contract_ids_for_deploy_scope "$deploy_scope")}"; do
-    expected_contract_key_map[$contract_key]=1
-  done
-
-  for record_path in "$SORASWAP_ROOT/deployments/${env}"/*.deploy.json(N); do
-    if [[ "${record_path:t}" == "soraswap.bundle.deploy.json" \
-      || "${record_path:t}" == "soraswap.foundation.bundle.deploy.json" ]]; then
-      continue
-    fi
-
-    contract_key="$(jq -r '.contract_key // empty' "$record_path" 2>/dev/null || true)"
     [[ -n "$contract_key" ]] || continue
-    [[ -n "${expected_contract_key_map[$contract_key]:-}" ]] || continue
-    deployment_record_matches_current_evidence "$record_path" "$env" "$contract_key" || continue
+    record_path="$(deployment_record_path_for_env "$env" "$contract_key")"
+    if ! deployment_record_matches_current_evidence "$record_path" "$env" "$contract_key"; then
+      echo "missing or invalid current deployment record for $env/$contract_key" >&2
+      return 1
+    fi
     record_paths+=("$record_path")
   done
 
   if (( ${#record_paths[@]} == 0 )); then
-    echo '[]'
-    return 0
+    echo "deployment scope $deploy_scope does not contain any contracts" >&2
+    return 1
   fi
 
   jq -sc 'sort_by(.contract_key)' "${record_paths[@]}"
@@ -9719,11 +8850,6 @@ cleanup_stale_deployment_records_for_env() {
   done
 
   for record_path in "$report_dir"/*.deploy.json(N); do
-    if [[ "${record_path:t}" == "soraswap.bundle.deploy.json" \
-      || "${record_path:t}" == "soraswap.foundation.bundle.deploy.json" ]]; then
-      continue
-    fi
-
     contract_key="$(jq -r '.contract_key // empty' "$record_path" 2>/dev/null || true)"
     if [[ -n "$contract_key" ]] \
       && [[ -n "${expected_contract_key_map[$contract_key]:-}" ]] \
@@ -9751,355 +8877,135 @@ cleanup_stale_deployment_records_for_env() {
 deployment_snapshot_record_json_for_env() {
   local env="$1"
   local contract_key="$2"
-  local snapshot
-  local chain_fingerprint_json
+  local snapshot chain_fingerprint_json snapshot_record
 
   snapshot="$(contracts_snapshot_latest_path_for_env "$env")"
-  if [[ ! -f "$snapshot" ]]; then
-    return 1
-  fi
+  deployment_records_snapshot_matches_current_schema "$snapshot" "$env" || return 1
 
   chain_fingerprint_json="$(current_or_saved_chain_fingerprint_json_for_env "$env")" || return 1
-
-  jq -cer --arg key "$contract_key" --arg env "$env" --argjson current_chain "$chain_fingerprint_json" '
-    def named_record:
-      select((.name? // .contract_key? // .key? // "") == $key)
-      | select((.environment // "") == $env);
-    def current_chain_match:
-      $current_chain == null
-      or (
-        (.chain_fingerprint // {}) as $stored
-        | (($stored.torii_url // "") | type == "string" and length > 0)
-        and $stored.torii_url == $current_chain.torii_url
-        and $stored.chain == $current_chain.chain
-        and $stored.block_1_hash == $current_chain.block_1_hash
-      );
-    def records:
-      (.contracts? // empty) as $contracts
-      | if ($contracts | type) == "array" then
-          $contracts[] | (., (.contracts[]?))
-        elif ($contracts | type) == "object" then
-          $contracts[]? | (., (.contracts[]?))
-        else
-          empty
-        end;
-    select((.environment // "") == $env)
-    | select(current_chain_match)
-    | records | named_record
-  ' "$snapshot" | tail -n 1
+  [[ "$chain_fingerprint_json" != "null" ]] || return 1
+  if ! snapshot_record="$(jq -ce \
+    --arg key "$contract_key" \
+    --argjson current_chain "$chain_fingerprint_json" \
+    '
+      select(.chain_fingerprint == $current_chain)
+      | [.contracts[] | select(.contract_key == $key)]
+      | select(length == 1)
+      | .[0]
+    ' "$snapshot")"; then
+    return 1
+  fi
+  deployment_record_json_matches_current_schema "$snapshot_record" "$env" "$contract_key" || return 1
+  printf '%s\n' "$snapshot_record"
 }
 
 deployed_contract_id_for_env() {
   local env="$1"
   local contract_key="$2"
-  local record snapshot_record
+  local record
 
   record="$(deployment_record_path_for_env "$env" "$contract_key")"
-  if deployment_record_matches_current_evidence "$record" "$env" "$contract_key"; then
-    jq -r '.contract_address // .contract_id // empty' "$record"
-    return 0
-  fi
-  if snapshot_record="$(deployment_snapshot_record_json_for_env "$env" "$contract_key" 2>/dev/null)"; then
-    jq -r '.contract_address // .contract_id // .instance.contract_address // empty' <<<"$snapshot_record"
-    return 0
-  fi
-
-  echo "$contract_key"
+  deployment_record_matches_current_evidence "$record" "$env" "$contract_key" || {
+    echo "current deployment record is required for $env/$contract_key" >&2
+    return 1
+  }
+  jq -er '.contract_address' "$record"
 }
 
-deployed_contract_dataspace_for_env() {
+deployed_contract_dataspace_alias_for_env() {
   local env="$1"
   local contract_key="$2"
-  local record snapshot_record
+  local record
 
   record="$(deployment_record_path_for_env "$env" "$contract_key")"
-  if deployment_record_matches_current_evidence "$record" "$env" "$contract_key"; then
-    jq -r '.dataspace // .namespace // "universal"' "$record"
-    return 0
-  fi
-  if snapshot_record="$(deployment_snapshot_record_json_for_env "$env" "$contract_key" 2>/dev/null)"; then
-    jq -r '.dataspace // .namespace // .instance.dataspace // "universal"' <<<"$snapshot_record"
-    return 0
-  fi
+  deployment_record_matches_current_evidence "$record" "$env" "$contract_key" || {
+    echo "current deployment record is required for $env/$contract_key" >&2
+    return 1
+  }
+  jq -er '.dataspace_alias' "$record"
+}
 
-  echo "universal"
+deployed_contract_dataspace_id_for_env() {
+  local env="$1"
+  local contract_key="$2"
+  local record
+
+  record="$(deployment_record_path_for_env "$env" "$contract_key")"
+  deployment_record_matches_current_evidence "$record" "$env" "$contract_key" || {
+    echo "current deployment record is required for $env/$contract_key" >&2
+    return 1
+  }
+  jq -er '.dataspace_id' "$record"
 }
 
 contract_alias_resolve_json() {
   local config="$1"
   local contract_alias="$2"
-  local torii_base request response http_code body attempt=1 retry_after_failure=0
-  local last_http_code="" last_body=""
+  local output attempt=1
 
-  soraswap_validate_torii_read_max_time || return 1
   soraswap_validate_contract_alias_resolve_retry_settings || return 1
-  torii_base="$(torii_base_from_config "$config")"
-  torii_base="${torii_base%/}"
-  request="$(jq -cn --arg contract_alias "$contract_alias" '{contract_alias: $contract_alias}')"
 
   while (( attempt <= SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_COUNT )); do
-    retry_after_failure=0
-    if response="$(
-      soraswap_curl_for_config "$config" -sS \
-        --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-        -H 'Content-Type: application/json' \
-        -H 'Accept: application/json' \
-        -w $'\n%{http_code}' \
-        -X POST \
-        "$torii_base/v1/contracts/aliases/resolve" \
-        -d "$request" 2>/dev/null
-    )"; then
-      http_code="${response##*$'\n'}"
-      body="${response%$'\n'*}"
-      last_http_code="$http_code"
-      last_body="$body"
-      case "$http_code" in
-        200)
-          printf '%s\n' "$body"
-          return 0
-          ;;
-        404)
-          return 2
-          ;;
-      esac
-      if soraswap_contract_alias_resolve_retryable_http_code "$http_code"; then
-        retry_after_failure=1
-      else
-        break
+    if output="$(iroha_cli_json --config "$config" contract alias resolve "$contract_alias" 2>&1)"; then
+      if jq -ce --arg contract_alias "$contract_alias" '
+        select(
+          type == "object"
+          and (keys == ["contract_address", "contract_alias", "contract_alias_binding", "contract_subject_account", "dataspace", "source"])
+          and .contract_alias == $contract_alias
+          and (.contract_address | type) == "string" and (.contract_address | length) > 0
+          and (.contract_subject_account | type) == "string" and (.contract_subject_account | length) > 0
+          and (.dataspace | type) == "string" and (.dataspace | length) > 0
+          and (.source | type) == "string" and (.source | length) > 0
+          and (.contract_alias_binding | type) == "object"
+          and (
+            (.contract_alias_binding | keys) as $binding_keys
+            | ($binding_keys - ["grace_until_ms", "lease_expiry_ms"])
+              == ["alias", "bound_at_ms", "status"]
+          )
+          and .contract_alias_binding.alias == $contract_alias
+          and (.contract_alias_binding.status == "permanent" or .contract_alias_binding.status == "leased_active" or .contract_alias_binding.status == "leased_grace" or .contract_alias_binding.status == "expired_pending_cleanup")
+          and (.contract_alias_binding.bound_at_ms | type) == "number"
+          and (.contract_alias_binding.bound_at_ms | floor) == .contract_alias_binding.bound_at_ms
+          and .contract_alias_binding.bound_at_ms >= 0
+          and ((.contract_alias_binding | has("lease_expiry_ms") | not) or ((.contract_alias_binding.lease_expiry_ms | type) == "number" and (.contract_alias_binding.lease_expiry_ms | floor) == .contract_alias_binding.lease_expiry_ms and .contract_alias_binding.lease_expiry_ms >= 0))
+          and ((.contract_alias_binding | has("grace_until_ms") | not) or ((.contract_alias_binding.grace_until_ms | type) == "number" and (.contract_alias_binding.grace_until_ms | floor) == .contract_alias_binding.grace_until_ms and .contract_alias_binding.grace_until_ms >= 0))
+          and (
+            if .contract_alias_binding.status == "permanent" then
+              (.contract_alias_binding | has("lease_expiry_ms") | not)
+              and (.contract_alias_binding | has("grace_until_ms") | not)
+            elif .contract_alias_binding.status == "leased_grace" then
+              (.contract_alias_binding | has("lease_expiry_ms"))
+              and (.contract_alias_binding | has("grace_until_ms"))
+              and .contract_alias_binding.grace_until_ms >= .contract_alias_binding.lease_expiry_ms
+            else
+              (.contract_alias_binding | has("lease_expiry_ms"))
+              and (
+                (.contract_alias_binding | has("grace_until_ms") | not)
+                or .contract_alias_binding.grace_until_ms >= .contract_alias_binding.lease_expiry_ms
+              )
+            end
+          )
+          and (
+            (.contract_alias_binding | has("lease_expiry_ms") | not)
+            or .contract_alias_binding.lease_expiry_ms >= .contract_alias_binding.bound_at_ms
+          )
+        )
+      ' <<<"$output"; then
+        return 0
       fi
-    else
-      last_http_code="000"
-      last_body="transport failure"
-      retry_after_failure=1
+      echo "contract alias resolve output did not match the current DTO for $contract_alias" >&2
+      return 1
     fi
-
-    if (( retry_after_failure == 0 || attempt >= SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_COUNT )); then
-      break
+    if [[ "$output" == *"contract alias"*"not found"* ]]; then
+      return 2
     fi
+    (( attempt >= SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_COUNT )) && break
     sleep "$SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_DELAY_SECS"
     attempt=$(( attempt + 1 ))
   done
 
-  if [[ -n "$last_http_code" ]]; then
-    echo "contract alias resolve request failed for $contract_alias: HTTP $last_http_code: $(soraswap_redact_sensitive_text "$last_body")" >&2
-  else
-    echo "failed to reach $torii_base/v1/contracts/aliases/resolve for $contract_alias" >&2
-  fi
+  echo "contract alias resolve CLI request failed for $contract_alias: $(soraswap_redact_sensitive_text "$output")" >&2
   return 1
-}
-
-recent_contract_aliases_from_explorer() {
-  local config="$1"
-  local max_aliases="${2:-8}"
-  local max_pages="${3:-5}"
-  local torii_base response hash encoded alias page=1
-  local -a aliases=() page_hashes
-
-  soraswap_validate_torii_read_max_time || return 1
-  torii_base="$(torii_base_from_config "$config")"
-  torii_base="${torii_base%/}"
-
-  while (( page <= max_pages && ${#aliases[@]} < max_aliases )); do
-    if ! response="$(
-      soraswap_curl_for_config "$config" -fsS \
-        --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-        "$torii_base/v1/explorer/transactions?page=$page&per_page=10" 2>/dev/null
-    )"; then
-      break
-    fi
-
-    page_hashes=("${(@f)$(jq -r '.items[] | select(.executable == "Instructions" and .status == "Committed") | .hash' <<<"$response")}")
-    for hash in "${page_hashes[@]}"; do
-      [[ -z "$hash" ]] && continue
-      encoded="$(
-        soraswap_curl_for_config "$config" -fsS \
-          --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-          "$torii_base/v1/explorer/instructions/$hash/3" 2>/dev/null \
-          | jq -r '."r#box".json.payload.value.encoded // empty' 2>/dev/null || true
-      )"
-      [[ -z "$encoded" || "$encoded" == "null" ]] && continue
-      alias="$(
-        printf '%s' "$encoded" \
-          | xxd -r -p 2>/dev/null \
-          | LC_ALL=C strings \
-          | LC_ALL=C awk '/::/ { value = $0 } END { print value }'
-      )"
-      [[ -z "$alias" ]] && continue
-      if (( ${aliases[(Ie)$alias]} == 0 )); then
-        aliases+=("$alias")
-      fi
-      if (( ${#aliases[@]} >= max_aliases )); then
-        break
-      fi
-    done
-
-    page=$(( page + 1 ))
-  done
-
-  if (( ${#aliases[@]} == 0 )); then
-    return 1
-  fi
-
-  printf '%s\n' "${aliases[@]}"
-}
-
-recover_deployment_records_from_live_aliases() {
-  local env="$1"
-  local config="$2"
-  local contract_path contract_key contract_alias record_path manifest_out compiled_manifest
-  local expected_code_hash expected_abi_hash resolved_response contract_address dataspace
-  local bundle_receipt_path bundle_contract_json bundle_contract_address
-  local response_json instance_json record_json recent_aliases recovered=0 resolve_status
-  local report_dir="$SORASWAP_ROOT/deployments/${env}"
-  local chain_fingerprint_json generated_at
-  local -a contract_paths
-  local -a missing_aliases=()
-  local -a missing_manifests=()
-
-  mkdir -p "$report_dir"
-  chain_fingerprint_json="$(current_or_saved_chain_fingerprint_json_for_env "$env")" || return 1
-  require_deployment_evidence_chain_fingerprint "$env" "$chain_fingerprint_json" "deployment record recovery" || return 1
-  generated_at="$(utc_timestamp)"
-
-  contract_paths=("${(@f)$(list_contracts)}")
-  for contract_path in "${contract_paths[@]}"; do
-    contract_key="$(contract_id_for "$contract_path")"
-    contract_alias="$(contract_alias_for "$contract_path")"
-    record_path="$(deployment_record_path_for_env "$env" "$contract_key")"
-    manifest_out="$report_dir/${contract_key}.manifest.json"
-    compiled_manifest="$(manifest_path_for "$contract_path")"
-
-    if resolved_response="$(contract_alias_resolve_json "$config" "$contract_alias")"; then
-      resolve_status=0
-    else
-      resolve_status=$?
-    fi
-    case "$resolve_status" in
-      0)
-        ;;
-      2)
-        missing_aliases+=("$contract_alias")
-        continue
-        ;;
-      *)
-        return 1
-        ;;
-    esac
-
-    if [[ ! -f "$compiled_manifest" ]]; then
-      missing_manifests+=("$contract_key")
-      continue
-    fi
-
-    if artifact_hashes_json="$(contract_artifact_manifest_hashes_json "$config" "$(compiled_path_for "$contract_path")" 2>/dev/null)"; then
-      expected_code_hash="$(jq -r '.code_hash' <<<"$artifact_hashes_json")"
-      expected_abi_hash="$(jq -r '.abi_hash' <<<"$artifact_hashes_json")"
-    else
-      expected_code_hash="$(manifest_code_hash_hex "$compiled_manifest")"
-      expected_abi_hash="$(manifest_abi_hash_hex "$compiled_manifest")"
-    fi
-    contract_address="$(jq -r '.contract_address // empty' <<<"$resolved_response")"
-    dataspace="$(jq -r '.dataspace // "universal"' <<<"$resolved_response")"
-    if [[ -z "$contract_address" ]]; then
-      echo "contract alias resolve response for $contract_alias did not include a contract address" >&2
-      return 1
-    fi
-
-    bundle_receipt_path="$(contract_bundle_receipt_path_for_env "$env")"
-    if [[ -f "$bundle_receipt_path" ]]; then
-      bundle_contract_json="$(jq -c --arg contract_key "$contract_key" '.contracts[]? | select(.name == $contract_key)' "$bundle_receipt_path" 2>/dev/null || true)"
-      if [[ -n "$bundle_contract_json" ]]; then
-        bundle_contract_address="$(jq -r '.contract_address // empty' <<<"$bundle_contract_json")"
-        if [[ "$bundle_contract_address" == "$contract_address" ]]; then
-          expected_code_hash="$(jq -r '.code_hash_hex // empty | ascii_downcase' <<<"$bundle_contract_json")"
-          expected_abi_hash="$(jq -r '.abi_hash_hex // empty | ascii_downcase' <<<"$bundle_contract_json")"
-        fi
-      fi
-    fi
-
-    response_json="$(jq -cn \
-      --arg contract_address "$contract_address" \
-      --arg dataspace "$dataspace" \
-      --arg code_hash_hex "$expected_code_hash" \
-      --arg abi_hash_hex "$expected_abi_hash" \
-      '{
-        ok: true,
-        contract_address: $contract_address,
-        dataspace: $dataspace,
-        deploy_nonce: 0,
-        tx_hash_hex: "",
-        code_hash_hex: $code_hash_hex,
-        abi_hash_hex: $abi_hash_hex
-      }')"
-    instance_json="$(synthetic_contract_instance_json_from_response "$response_json")"
-    record_json="$(jq -cn \
-	      --arg contract_key "$contract_key" \
-	      --arg generated_at "$generated_at" \
-	      --arg environment "$env" \
-      --arg contract_source "$(soraswap_display_path "$contract_path")" \
-      --arg contract_alias "$contract_alias" \
-      --arg dataspace "$dataspace" \
-      --arg contract_address "$contract_address" \
-      --arg code_hash_hex "$expected_code_hash" \
-      --arg abi_hash_hex "$expected_abi_hash" \
-      --argjson chain_fingerprint "$chain_fingerprint_json" \
-      --argjson alias_resolution "$resolved_response" \
-      --argjson response "$response_json" \
-      --argjson instance "$instance_json" \
-      '{
-	        contract_key: $contract_key,
-	        generated_at: $generated_at,
-	        environment: $environment,
-        contract_source: $contract_source,
-        contract_alias: $contract_alias,
-        dataspace: $dataspace,
-        contract_address: $contract_address,
-        deploy_nonce: 0,
-        code_hash_hex: $code_hash_hex,
-        abi_hash_hex: $abi_hash_hex,
-        deploy_strategy: "recovered_from_alias_resolve",
-        chain_fingerprint: $chain_fingerprint,
-        alias_resolution: $alias_resolution,
-        response: $response,
-        instance: $instance
-      }')"
-
-    soraswap_write_json_file_atomic "$record_json" "$record_path" || return 1
-    write_deployment_manifest \
-      "$compiled_manifest" \
-      "$manifest_out" \
-      "$env" \
-      "$contract_key" \
-      "$generated_at" \
-      "$contract_path" \
-      "$config" \
-      "$expected_code_hash" \
-      "$expected_abi_hash"
-    recovered=$(( recovered + 1 ))
-  done
-
-  if (( ${#missing_manifests[@]} > 0 )); then
-    echo "cannot recover ${env} deployment records: missing compiled manifests for ${missing_manifests[*]}" >&2
-    return 1
-  fi
-
-  if (( ${#missing_aliases[@]} > 0 )); then
-    echo "could not recover ${env} deployment records from current chain; missing SoraSwap aliases:" >&2
-    printf '  %s\n' "${missing_aliases[@]}" >&2
-    if recent_aliases="$(recent_contract_aliases_from_explorer "$config" 8 2>/dev/null)"; then
-      echo "recent live contract aliases on current chain:" >&2
-      while IFS= read -r alias; do
-        [[ -n "$alias" ]] && echo "  $alias" >&2
-      done <<<"$recent_aliases"
-    fi
-    return 1
-  fi
-
-  if (( recovered > 0 )); then
-    echo "recovered $recovered ${env} deployment record(s) from live contract aliases" >&2
-  fi
-
-  return 0
 }
 
 is_contract_address_literal() {
@@ -10121,20 +9027,8 @@ contract_subject_account_for_literal() {
   fi
 
   chain_discriminant="$(network_prefix_for_config "$config")" || return 1
-  helper_bin="${SORASWAP_ACCOUNT_LITERAL_REENCODE_BIN:-}"
-  if [[ -z "$helper_bin" ]]; then
-    if [[ -x "$SORASWAP_IROHA_ROOT/target/release/account_literal_reencode" ]]; then
-      helper_bin="$SORASWAP_IROHA_ROOT/target/release/account_literal_reencode"
-    elif [[ -x "$SORASWAP_IROHA_ROOT/target/debug/account_literal_reencode" ]]; then
-      helper_bin="$SORASWAP_IROHA_ROOT/target/debug/account_literal_reencode"
-    elif (( $+commands[account_literal_reencode] )); then
-      helper_bin="$commands[account_literal_reencode]"
-    fi
-  fi
-  if [[ -z "$helper_bin" || ! -x "$helper_bin" ]]; then
-    echo "account_literal_reencode is required to derive non-signable contract subjects" >&2
-    return 1
-  fi
+  ensure_account_literal_reencode_bin || return 1
+  helper_bin="$SORASWAP_ACTIVE_ACCOUNT_LITERAL_REENCODE_BIN"
 
   "$helper_bin" \
     --contract-address "$literal" \
@@ -10200,15 +9094,138 @@ lint_one() {
   )
 }
 
+deployment_record_json_matches_current_schema() {
+  local record_json="$1"
+  local expected_env="${2:-}"
+  local expected_contract_key="${3:-}"
+  local response_json
+
+  if ! jq -e \
+    --arg expected_env "$expected_env" \
+    --arg expected_contract_key "$expected_contract_key" \
+    --arg expected_dataspace_alias "$SORASWAP_DEPLOYMENT_DATASPACE_ALIAS" \
+    --arg expected_dataspace_id "$SORASWAP_DEPLOYMENT_DATASPACE_ID" \
+    '
+      def uint: type == "number" and floor == . and . >= 0;
+      def nonempty_string: type == "string" and length > 0;
+      def decimal_string: type == "string" and test("^(0|[1-9][0-9]*)$");
+      def lower_hash: type == "string" and test("^[0-9a-f]{64}$");
+      type == "object"
+      and keys == [
+        "abi_hash_hex",
+        "chain_fingerprint",
+        "code_hash_hex",
+        "contract_address",
+        "contract_alias",
+        "contract_key",
+        "contract_source",
+        "dataspace_alias",
+        "dataspace_id",
+        "deploy_nonce",
+        "deploy_strategy",
+        "environment",
+        "generated_at",
+        "response"
+      ]
+      and (.contract_key | nonempty_string)
+      and ($expected_contract_key == "" or .contract_key == $expected_contract_key)
+      and (.generated_at | nonempty_string)
+      and (.environment == "local" or .environment == "testnet" or .environment == "production")
+      and ($expected_env == "" or .environment == $expected_env)
+      and (.contract_source | nonempty_string)
+      and (.contract_alias | nonempty_string)
+      and .dataspace_alias == $expected_dataspace_alias
+      and .dataspace_id == $expected_dataspace_id
+      and (.dataspace_id | decimal_string)
+      and (
+        .contract_alias | endswith("." + $expected_dataspace_alias)
+          or endswith("::" + $expected_dataspace_alias)
+      )
+      and (.contract_address | nonempty_string)
+      and (.deploy_nonce | uint)
+      and (.code_hash_hex | lower_hash)
+      and (.abi_hash_hex | lower_hash)
+      and .deploy_strategy == "ivm_contract_deploy"
+      and ((.chain_fingerprint | type) == "object")
+      and (.chain_fingerprint | keys) == ["block_1_hash", "chain", "torii_url"]
+      and (.chain_fingerprint.torii_url | nonempty_string)
+      and (.chain_fingerprint.chain | nonempty_string)
+      and (.chain_fingerprint.block_1_hash | nonempty_string)
+      and ((.response | type) == "object")
+      and .response.torii_url == .chain_fingerprint.torii_url
+      and .response.chain_id == .chain_fingerprint.chain
+      and .response.contract_alias == .contract_alias
+      and .response.dataspace == .dataspace_id
+      and .response.deployment_state.dataspace_alias == .dataspace_alias
+      and .response.deployment_state.dataspace_id == .dataspace_id
+      and .response.contract_address == .contract_address
+      and .response.deploy_nonce == .deploy_nonce
+      and .response.code_hash_hex == .code_hash_hex
+    ' <<<"$record_json" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  response_json="$(jq -ce '.response' <<<"$record_json")" || return 1
+  native_contract_deploy_response_matches_current_schema_json "$response_json"
+}
+
+deployment_record_matches_current_schema() {
+  local record_path="$1"
+  local expected_env="${2:-}"
+  local expected_contract_key="${3:-}"
+  local record_json
+
+  [[ -f "$record_path" ]] || return 1
+  record_json="$(jq -ce . "$record_path" 2>/dev/null)" || return 1
+  deployment_record_json_matches_current_schema \
+    "$record_json" \
+    "$expected_env" \
+    "$expected_contract_key"
+}
+
+deployment_records_snapshot_matches_current_schema() {
+  local snapshot_path="$1"
+  local expected_env="${2:-}"
+  local snapshot_json record_json snapshot_chain
+
+  [[ -f "$snapshot_path" ]] || return 1
+  snapshot_json="$(jq -ce . "$snapshot_path" 2>/dev/null)" || return 1
+  if ! jq -e --arg expected_env "$expected_env" '
+    def nonempty_string: type == "string" and length > 0;
+    type == "object"
+    and keys == ["chain_fingerprint", "contracts", "environment", "generated_at", "status"]
+    and (.generated_at | nonempty_string)
+    and (.environment == "local" or .environment == "testnet" or .environment == "production")
+    and ($expected_env == "" or .environment == $expected_env)
+    and .status == "completed"
+    and ((.chain_fingerprint | type) == "object")
+    and (.chain_fingerprint | keys) == ["block_1_hash", "chain", "torii_url"]
+    and (.chain_fingerprint.torii_url | nonempty_string)
+    and (.chain_fingerprint.chain | nonempty_string)
+    and (.chain_fingerprint.block_1_hash | nonempty_string)
+    and ((.contracts | type) == "array")
+    and (.contracts | length) > 0
+    and ([.contracts[].contract_key] | length == (unique | length))
+  ' <<<"$snapshot_json" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  snapshot_chain="$(jq -ce '.chain_fingerprint' <<<"$snapshot_json")" || return 1
+  while IFS= read -r record_json; do
+    [[ -n "$record_json" ]] || return 1
+    deployment_record_json_matches_current_schema "$record_json" "$expected_env" || return 1
+    jq -e --argjson snapshot_chain "$snapshot_chain" \
+      '.chain_fingerprint == $snapshot_chain' <<<"$record_json" >/dev/null 2>&1 || return 1
+  done < <(jq -c '.contracts[]' <<<"$snapshot_json")
+}
+
 deployment_record_matches_current_chain() {
   local record_path="$1"
   local fingerprint_json="$2"
   local expected_env="${3:-}"
   local normalized_fingerprint_json
 
-  if [[ ! -f "$record_path" ]]; then
-    return 1
-  fi
+  deployment_record_matches_current_schema "$record_path" "$expected_env" || return 1
 
   normalized_fingerprint_json="$(normalize_json_or_null "$fingerprint_json")" || return 1
   if [[ "$normalized_fingerprint_json" == "null" ]]; then
@@ -10219,18 +9236,8 @@ deployment_record_matches_current_chain() {
     --argjson current "$normalized_fingerprint_json" \
     --arg expected_env "$expected_env" \
     '
-      ((.generated_at // "") | type == "string" and length > 0)
-      and (
-        ($expected_env == "")
-        or (((.environment // "") | type == "string") and .environment == $expected_env)
-      )
-      and (
-        (.chain_fingerprint // {}) as $stored
-        | (($stored.torii_url // "") | type == "string" and length > 0)
-        and $stored.torii_url == $current.torii_url
-        and $stored.chain == $current.chain
-        and $stored.block_1_hash == $current.block_1_hash
-      )
+
+      .chain_fingerprint == $current
 	    ' "$record_path" >/dev/null
 }
 
@@ -10238,10 +9245,7 @@ deployment_record_matches_environment() {
   local record_path="$1"
   local env="$2"
 
-  [[ -f "$record_path" ]] || return 1
-  jq -e --arg env "$env" \
-    '((.environment // "") | type == "string") and .environment == $env' \
-    "$record_path" >/dev/null
+  deployment_record_matches_current_schema "$record_path" "$env"
 }
 
 deployment_record_hashes_match_manifest() {
@@ -10259,14 +9263,8 @@ deployment_record_hashes_match_manifest() {
     --arg manifest_code_hash "$manifest_code_hash" \
     --arg manifest_abi_hash "$manifest_abi_hash" \
     '
-      def normalized_hash:
-        tostring
-        | ascii_downcase
-        | sub("^hash:"; "")
-        | split("#")[0]
-        | sub("^0x"; "");
-      ((.code_hash_hex // .code_hash // .instance.code_hash_hex // .instance.code_hash // .response.code_hash_hex // .response.code_hash // "") | normalized_hash) == $manifest_code_hash
-      and ((.abi_hash_hex // .abi_hash // .instance.abi_hash_hex // .instance.abi_hash // .response.abi_hash_hex // .response.abi_hash // "") | normalized_hash) == $manifest_abi_hash
+      .code_hash_hex == $manifest_code_hash
+      and .abi_hash_hex == $manifest_abi_hash
     ' "$record_path" >/dev/null
 }
 
@@ -10276,17 +9274,11 @@ deployment_record_matches_current_evidence() {
   local contract_key="${3:-}"
   local chain_fingerprint_json manifest_path
 
-  [[ -f "$record_path" ]] || return 1
   if [[ -z "$contract_key" ]]; then
     contract_key="$(jq -r '.contract_key // empty' "$record_path" 2>/dev/null || true)"
   fi
   [[ -n "$contract_key" ]] || return 1
-  jq -e --arg contract_key "$contract_key" \
-    '(.contract_key // "") == $contract_key
-      and ((.generated_at // "") | type == "string")
-      and ((.generated_at // "") != "")' \
-    "$record_path" >/dev/null || return 1
-  deployment_record_matches_environment "$record_path" "$env" || return 1
+  deployment_record_matches_current_schema "$record_path" "$env" "$contract_key" || return 1
 
   chain_fingerprint_json="$(current_or_saved_chain_fingerprint_json_for_env "$env")" || return 1
   if [[ "$chain_fingerprint_json" != "null" ]] \
@@ -10302,7 +9294,6 @@ deployment_record_matches_current_evidence() {
 ensure_deployment_records_current() {
   local env="$1"
   local config="$2"
-  local needs_record_recovery=0
   local record_path contract_key manifest_path expected_code_hash
   local -a expected_contract_keys
 
@@ -10318,34 +9309,12 @@ ensure_deployment_records_current() {
       || [[ -z "$expected_code_hash" ]] \
       || ! deployment_record_matches_current_evidence "$record_path" "$env" "$contract_key" \
       || ! live_contract_deployment_from_record "$config" "$record_path" "$expected_code_hash" "$env" >/dev/null 2>&1; then
-      needs_record_recovery=1
-      break
+      echo "current $env deployment evidence is missing or invalid for $contract_key; run the exact ivm_contract_deploy workflow" >&2
+      return 1
     fi
   done
 
-  if (( needs_record_recovery )); then
-    zsh "$SORASWAP_ROOT/scripts/compile_contracts.sh"
-    recover_deployment_records_from_live_aliases "$env" "$config"
-  fi
-
   refresh_deployment_records_snapshot_latest_for_env "$env" >/dev/null
-}
-
-synthetic_contract_instance_json_from_response() {
-  local response_json="$1"
-
-  jq -cn \
-    --argjson response "$response_json" \
-    '{
-      contract_id: $response.contract_address,
-      contract_address: $response.contract_address,
-      dataspace: ($response.dataspace // "universal"),
-      code_hash_hex: ($response.code_hash_hex // ""),
-      abi_hash_hex: ($response.abi_hash_hex // ""),
-      deploy_nonce: ($response.deploy_nonce // 0),
-      tx_hash_hex: ($response.tx_hash_hex // $response.commit_tx_hash // ""),
-      verification: "transaction_and_manifest"
-    }'
 }
 
 confirm_contract_deploy_response() {
@@ -10353,45 +9322,40 @@ confirm_contract_deploy_response() {
   local response_json="$2"
   local contract_key="$3"
   local expected_code_hash="$4"
-  local normalized_response_json tx_hash pipeline_json pipeline_kind pipeline_content tx_json contract_address
+  local tx_hash pipeline_json pipeline_kind tx_json contract_address
   local deploy_nonce next_deploy_nonce deploy_nonce_wait_secs
   local code_bytes_visible=0
 
-  if normalized_response_json="$(normalize_contract_deploy_response_json "$response_json" 2>/dev/null)" \
-    && [[ -n "$normalized_response_json" ]]; then
-    response_json="$normalized_response_json"
-  fi
-
-  contract_address="$(jq -r '.contract_address // empty' <<<"$response_json")"
-  if [[ -z "$contract_address" ]]; then
-    echo "$contract_key.deploy confirmation response did not include a contract address" >&2
+  response_json="$(normalize_contract_deploy_response_json "$response_json")" || return 1
+  if ! jq -e --arg expected_code_hash "$expected_code_hash" \
+    '.code_hash_hex == $expected_code_hash' <<<"$response_json" >/dev/null 2>&1; then
+    echo "$contract_key.deploy response code hash does not match the compiled artifact" >&2
     return 1
   fi
 
-  tx_hash="$(jq -r '.tx_hash_hex // .commit_tx_hash // empty' <<<"$response_json")"
-  if [[ -n "$tx_hash" ]]; then
-    deploy_progress_note "$contract_key" "wait pipeline" "$tx_hash"
-    if pipeline_json="$(wait_for_transaction_terminal_status "$config" "$tx_hash" "$SORASWAP_DEPLOY_PIPELINE_WAIT_SECS" 1 auto)"; then
-      pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_json")"
-      deploy_progress_note "$contract_key" "pipeline" "$pipeline_kind"
-      case "$pipeline_kind" in
-        Applied|Committed)
-          :
-          ;;
-        Rejected|Expired)
-          pipeline_content="$(pipeline_status_content_from_json "$pipeline_json")"
-          echo "$contract_key.deploy failed for transaction $tx_hash: $pipeline_content" >&2
-          return 1
-          ;;
-        *)
-          echo "$contract_key.deploy reached unexpected pipeline status for transaction $tx_hash: $pipeline_kind" >&2
-          return 1
-          ;;
-      esac
-    else
-      tx_json="$(committed_transaction_json "$config" "$tx_hash" "$SORASWAP_DEPLOY_COMMITTED_WAIT_SECS" 1)" || return 1
-      assert_transaction_ok "$tx_json" "$tx_hash" "$contract_key.deploy" || return 1
-    fi
+  contract_address="$(jq -r '.contract_address' <<<"$response_json")"
+
+  tx_hash="$(jq -r '.operation_receipt.tx_hash_hex' <<<"$response_json")"
+  deploy_progress_note "$contract_key" "wait pipeline" "$tx_hash"
+  if pipeline_json="$(wait_for_transaction_terminal_status "$config" "$tx_hash" "$SORASWAP_DEPLOY_PIPELINE_WAIT_SECS" 1 global)"; then
+    pipeline_kind="$(pipeline_status_kind_from_json "$pipeline_json")"
+    deploy_progress_note "$contract_key" "pipeline" "$pipeline_kind"
+    case "$pipeline_kind" in
+      Applied|Committed)
+        :
+        ;;
+      Rejected|Expired)
+        echo "$contract_key.deploy reached public pipeline status $pipeline_kind for transaction $tx_hash" >&2
+        return 1
+        ;;
+      *)
+        echo "$contract_key.deploy reached unexpected pipeline status for transaction $tx_hash: $pipeline_kind" >&2
+        return 1
+        ;;
+    esac
+  else
+    tx_json="$(committed_transaction_json "$config" "$tx_hash" "$SORASWAP_DEPLOY_COMMITTED_WAIT_SECS" 1)" || return 1
+    assert_transaction_ok "$tx_json" "$tx_hash" "$contract_key.deploy" || return 1
   fi
 
   if contract_code_bytes_visible_by_code_hash "$config" "$expected_code_hash"; then
@@ -10408,18 +9372,16 @@ confirm_contract_deploy_response() {
     deploy_progress_note "$contract_key" "code-bytes visible" "$expected_code_hash"
   fi
 
-  deploy_nonce="$(jq -r '.deploy_nonce // empty' <<<"$response_json")"
-  if [[ "$deploy_nonce" =~ '^[0-9]+$' ]]; then
-    next_deploy_nonce=$(( deploy_nonce + 1 ))
-    deploy_nonce_wait_secs="${SORASWAP_DEPLOY_NONCE_WAIT_SECS:-120}"
-    soraswap_require_nonnegative_integer_setting "SORASWAP_DEPLOY_NONCE_WAIT_SECS" "$deploy_nonce_wait_secs" || return 1
-    if (( deploy_nonce_wait_secs > 0 )); then
-      deploy_progress_note "$contract_key" "wait deploy nonce" "$next_deploy_nonce"
-      wait_for_contract_deploy_nonce_at_least "$config" "$next_deploy_nonce" "$deploy_nonce_wait_secs" 1 || return 1
-      deploy_progress_note "$contract_key" "deploy nonce visible" "$next_deploy_nonce"
-    else
-      deploy_progress_note "$contract_key" "skip deploy nonce wait" "$next_deploy_nonce"
-    fi
+  deploy_nonce="$(jq -r '.deploy_nonce' <<<"$response_json")"
+  next_deploy_nonce="$(jq -r '.next_deploy_nonce' <<<"$response_json")"
+  deploy_nonce_wait_secs="${SORASWAP_DEPLOY_NONCE_WAIT_SECS:-120}"
+  soraswap_require_nonnegative_integer_setting "SORASWAP_DEPLOY_NONCE_WAIT_SECS" "$deploy_nonce_wait_secs" || return 1
+  if (( deploy_nonce_wait_secs > 0 )); then
+    deploy_progress_note "$contract_key" "wait deploy nonce" "$next_deploy_nonce"
+    wait_for_contract_deploy_nonce_at_least "$config" "$next_deploy_nonce" "$deploy_nonce_wait_secs" 1 || return 1
+    deploy_progress_note "$contract_key" "deploy nonce visible" "$next_deploy_nonce"
+  else
+    deploy_progress_note "$contract_key" "skip deploy nonce wait" "$next_deploy_nonce"
   fi
 
   if contract_liveness_probe_entrypoint_for_key "$contract_key" >/dev/null 2>&1; then
@@ -10429,7 +9391,15 @@ confirm_contract_deploy_response() {
   else
     deploy_progress_note "$contract_key" "skip instance liveness" "no liveness probe configured"
   fi
-  synthetic_contract_instance_json_from_response "$response_json"
+  jq -c '{
+    contract_address,
+    dataspace,
+    deploy_nonce,
+    next_deploy_nonce,
+    code_hash_hex,
+    commit_deployment_tx_hash,
+    verification: "transaction_and_manifest"
+  }' <<<"$response_json"
 }
 
 capture_confirm_contract_deploy_response() {
@@ -10458,33 +9428,21 @@ live_contract_deployment_from_record() {
   local record_path="$2"
   local expected_code_hash="$3"
   local expected_env="${4:-}"
-  local response_json current_code_hash contract_alias contract_source resolved_response
-  local contract_key contract_address deploy_strategy chain_fingerprint_json
+  local response_json current_code_hash contract_alias resolved_response
+  local contract_key contract_address chain_fingerprint_json
   local liveness_error resolve_error
 
+  contract_key="$(jq -r '.contract_key // empty' "$record_path" 2>/dev/null || true)"
+  [[ -n "$contract_key" ]] || return 1
+  deployment_record_matches_current_schema "$record_path" "$expected_env" "$contract_key" || return 1
   chain_fingerprint_json="$(chain_fingerprint_json_or_null)" || return 1
   if [[ "$chain_fingerprint_json" != "null" ]]; then
     deployment_record_matches_current_chain "$record_path" "$chain_fingerprint_json" "$expected_env" || return 1
   fi
 
-  response_json="$(jq -c '
-    .response // {
-      contract_address: (.contract_address // .contract_id // empty),
-      dataspace: (.dataspace // .namespace // "universal"),
-      deploy_nonce: (.deploy_nonce // 0),
-      tx_hash_hex: (.tx_hash_hex // ""),
-      code_hash_hex: (.code_hash_hex // ""),
-      abi_hash_hex: (.abi_hash_hex // "")
-    }' "$record_path")"
-  current_code_hash="$(jq -r '.code_hash_hex // empty | ascii_downcase' <<<"$response_json")"
-  if [[ -z "$current_code_hash" ]]; then
-    return 1
-  fi
-  deploy_strategy="$(jq -r '.deploy_strategy // empty' "$record_path")"
-  if [[ -n "$expected_code_hash" \
-    && "$current_code_hash" != "$expected_code_hash" \
-    && "$deploy_strategy" != "bundle" \
-    && "$deploy_strategy" != "recovered_from_alias_resolve" ]]; then
+  response_json="$(jq -ce '.response' "$record_path")" || return 1
+  current_code_hash="$(jq -r '.code_hash_hex' <<<"$response_json")"
+  if [[ -n "$expected_code_hash" && "$current_code_hash" != "$expected_code_hash" ]]; then
     return 1
   fi
 
@@ -10492,11 +9450,7 @@ live_contract_deployment_from_record() {
     return 1
   fi
 
-  contract_key="$(jq -r '.contract_key // "contract"' "$record_path")"
-  contract_address="$(jq -r '.contract_address // .response.contract_address // empty' "$record_path")"
-  if [[ -z "$contract_address" ]]; then
-    return 1
-  fi
+  contract_address="$(jq -r '.contract_address' "$record_path")"
   if contract_liveness_probe_entrypoint_for_key "$contract_key" >/dev/null 2>&1; then
     if ! liveness_error="$(wait_for_contract_instance_liveness "$config" "$contract_key" "$contract_address" 8 1 2>&1 >/dev/null)"; then
       [[ -n "$liveness_error" ]] && printf '%s\n' "$liveness_error" >&2
@@ -10504,52 +9458,49 @@ live_contract_deployment_from_record() {
     fi
   fi
 
-  contract_alias="$(jq -r '.contract_alias // .response.contract_alias // empty' "$record_path")"
-  if [[ -z "$contract_alias" ]]; then
-    contract_source="$(jq -r '.contract_source // empty' "$record_path")"
-    if [[ -n "$contract_source" && "$contract_source" != "null" ]]; then
-      contract_alias="$(contract_alias_for "$contract_source")"
-    fi
+  contract_alias="$(jq -r '.contract_alias' "$record_path")"
+  if ! resolved_response="$(contract_alias_resolve_json "$config" "$contract_alias" 2>&1)"; then
+    resolve_error="$resolved_response"
+    [[ -n "$resolve_error" ]] && printf '%s\n' "$resolve_error" >&2
+    return 1
   fi
-  if [[ -n "$contract_alias" ]]; then
-    if ! resolved_response="$(contract_alias_resolve_json "$config" "$contract_alias" 2>&1)"; then
-      resolve_error="$resolved_response"
-      [[ -n "$resolve_error" ]] && printf '%s\n' "$resolve_error" >&2
-      return 1
-    fi
-    if ! jq -e \
-      --argjson recorded "$response_json" \
-      '
-        (.contract_address // empty) == ($recorded.contract_address // "")
-        and (.dataspace // "universal") == ($recorded.dataspace // "universal")
-      ' <<<"$resolved_response" >/dev/null; then
-      return 1
-    else
-      synthetic_contract_instance_json_from_response "$response_json"
-      return 0
-    fi
+  if ! jq -e \
+    --arg contract_address "$contract_address" \
+    --arg dataspace_id "$(jq -r '.dataspace_id' "$record_path")" \
+    '
+      .contract_address == $contract_address
+      and .dataspace == $dataspace_id
+    ' <<<"$resolved_response" >/dev/null; then
+    return 1
   fi
 
-  synthetic_contract_instance_json_from_response "$response_json"
+  jq -c '{
+    contract_address,
+    dataspace,
+    deploy_nonce,
+    next_deploy_nonce,
+    code_hash_hex,
+    commit_deployment_tx_hash,
+    verification: "transaction_and_manifest"
+  }' <<<"$response_json"
 }
 
 deploy_one() {
   local config="$1"
   local src="$2"
   local env="$3"
-  local contract_key contract_alias manifest_out deploy_out code_file compiled_manifest dataspace
-  local expected_code_hash expected_abi_hash artifact_hashes_json instance_json record_json existing_instance
-  local current_nonce deploy_nonce post_nonce predicted_address predicted_subject response_json normal_output normal_error redacted_output
-  local recorded_nonce
-  local split_output split_output_raw deploy_strategy detail_json confirm_output chain_discriminant
-  local expected_chain_id
-  local private_key_file fee_payment_file gas_limit
-  local chain_fingerprint_json chain_fingerprint_json_compact response_json_compact instance_json_compact generated_at
-  local normal_status split_status health_status
+  local contract_key contract_alias manifest_out deploy_out code_file compiled_manifest
+  local dataspace_alias dataspace_id
+  local expected_code_hash expected_abi_hash artifact_hashes_json record_json existing_confirmation
+  local deploy_output response_json redacted_output confirm_output deploy_strategy detail_json
+  local chain_discriminant expected_chain_id
+  local chain_fingerprint_json chain_fingerprint_json_compact response_json_compact generated_at
+  local deploy_status
 
   contract_key="$(contract_id_for "$src")"
   contract_alias="$(contract_alias_for "$src")"
-  dataspace="universal"
+  dataspace_alias="$SORASWAP_DEPLOYMENT_DATASPACE_ALIAS"
+  dataspace_id="$SORASWAP_DEPLOYMENT_DATASPACE_ID"
   manifest_out="$SORASWAP_ROOT/deployments/${env}/${contract_key}.manifest.json"
   deploy_out="$(deployment_record_path_for_env "$env" "$contract_key")"
   code_file="$(compiled_path_for "$src")"
@@ -10570,12 +9521,12 @@ deploy_one() {
 
   if deployment_record_matches_current_chain "$deploy_out" "$chain_fingerprint_json" "$env" \
     && deployment_record_matches_environment "$deploy_out" "$env"; then
-    if existing_instance="$(live_contract_deployment_from_record "$config" "$deploy_out" "$expected_code_hash" "$env")"; then
+    if existing_confirmation="$(live_contract_deployment_from_record "$config" "$deploy_out" "$expected_code_hash" "$env")"; then
       generated_at="$(jq -r '.generated_at // empty' "$deploy_out" 2>/dev/null || true)"
       if [[ -z "$generated_at" ]]; then
         generated_at="$(utc_timestamp)"
       fi
-      existing_instance="$(compact_json_or_fail "$contract_key.existing_instance" "$existing_instance")"
+      existing_confirmation="$(compact_json_or_fail "$contract_key.existing_confirmation" "$existing_confirmation")"
       write_deployment_manifest \
         "$compiled_manifest" \
         "$manifest_out" \
@@ -10589,324 +9540,88 @@ deploy_one() {
       detail_json="$(jq -cn \
         --arg contract_key "$contract_key" \
         --argjson record "$(cat "$deploy_out")" \
-        --argjson instance "$existing_instance" \
+        --argjson confirmation "$existing_confirmation" \
         '{
           contract_key: $contract_key,
           reason: "matching live deployment record",
           record: $record,
-          instance: $instance
+          confirmation: $confirmation
         }')"
       deploy_report_set_contract "$env" "$contract_key" "skipped" "$detail_json"
       return 0
     fi
   fi
 
-  current_nonce="$(account_contract_deploy_nonce "$config" "$SORASWAP_AUTHORITY")"
-  deploy_nonce="$current_nonce"
-  if [[ "$chain_fingerprint_json" != "null" ]]; then
-    recorded_nonce="$(max_deploy_nonce_for_env_records "$env" "$chain_fingerprint_json")"
-    if [[ "$recorded_nonce" =~ '^[0-9]+$' ]] && (( recorded_nonce >= deploy_nonce )); then
-      deploy_nonce=$(( recorded_nonce + 1 ))
-    fi
-  fi
-  predicted_address="$(derive_contract_address_for_deploy "$config" "$SORASWAP_AUTHORITY" "$deploy_nonce" "$dataspace" "$env" 2>/dev/null || true)"
-  response_json=""
-  normal_error=""
-  deploy_strategy=""
   detail_json="$(jq -cn \
     --arg contract_key "$contract_key" \
     --arg contract_alias "$contract_alias" \
-    --arg predicted_address "$predicted_address" \
-    --argjson deploy_nonce "$deploy_nonce" \
-    '{
-      contract_key: $contract_key,
-      contract_alias: $contract_alias,
-      predicted_address: ($predicted_address // ""),
-      deploy_nonce: $deploy_nonce
-    }')"
+    '{contract_key: $contract_key, contract_alias: $contract_alias}')"
   deploy_report_set_contract "$env" "$contract_key" "running" "$detail_json"
 
-  if normal_output="$(submit_contract_deploy_file "$config" "$code_file" "$contract_alias" 2>&1)"; then
-    normal_output="$(normalize_contract_deploy_response_json "$normal_output")" || {
-      redacted_output="$(soraswap_redact_sensitive_text "$normal_output")"
-      deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-        --arg contract_key "$contract_key" \
-        --arg response "$redacted_output" \
-        '{contract_key: $contract_key, stage: "normal_deploy_normalize", response: $response}')"
-      echo "unable to normalize deploy response for $contract_key: $redacted_output" >&2
-      return 1
-    }
-    if [[ -z "$predicted_address" ]]; then
-      predicted_address="$(jq -r '.contract_address // empty' <<<"$normal_output")"
-    fi
-    if ! jq -e \
-      --arg dataspace "$dataspace" \
-      --arg code_hash_hex "$expected_code_hash" \
-      '
-        .ok == true
-        and .dataspace == $dataspace
-        and (.contract_address | type == "string" and length > 0)
-        and ((.code_hash_hex | ascii_downcase) == $code_hash_hex)
-      ' <<<"$normal_output" >/dev/null; then
-      redacted_output="$(soraswap_redact_sensitive_text "$normal_output")"
-      deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-        --arg contract_key "$contract_key" \
-        --arg response "$redacted_output" \
-        '{contract_key: $contract_key, stage: "normal_deploy_validate", response: $response}')"
-      echo "unexpected deploy response for $contract_key: $redacted_output" >&2
-      return 1
-    fi
-    response_json="$normal_output"
-    if confirm_output="$(capture_confirm_contract_deploy_response "$config" "$response_json" "$contract_key" "$expected_code_hash")"; then
-      instance_json="$confirm_output"
-      deploy_strategy="normal"
-    else
-      redacted_output="$(soraswap_redact_sensitive_text "$confirm_output")"
-      if [[ "$redacted_output" == *"pipeline: Rejected"* \
-        || "$redacted_output" == *"deploy failed for transaction"* ]]; then
-        normal_error="$redacted_output"
-        response_json=""
-        deploy_report_set_contract "$env" "$contract_key" "running" "$(jq -cn \
-          --arg contract_key "$contract_key" \
-          --arg contract_address "$predicted_address" \
-          --arg error "$redacted_output" \
-          '{
-            contract_key: $contract_key,
-            stage: "normal_deploy_confirm_rejected_retry_split",
-            contract_address: $contract_address,
-            normal_deploy_error: $error
-          }')"
-        echo "normal deploy for $contract_key was rejected; retrying with split deploy fallback: $redacted_output" >&2
-      else
-        deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-        --arg contract_key "$contract_key" \
-        --arg contract_address "$predicted_address" \
-        --arg response "$response_json" \
-        --arg error "$redacted_output" \
-        '{
-          contract_key: $contract_key,
-          stage: "normal_deploy_confirm",
-          contract_address: $contract_address,
-          response: $response,
-          error: $error
-        }')"
-        echo "normal deploy completed for $contract_key but confirmation failed: $redacted_output" >&2
-        return 1
-      fi
-    fi
+  if deploy_output="$(submit_contract_deploy_file "$config" "$code_file" "$contract_alias" 2>&1)"; then
+    deploy_status=0
   else
-    normal_status="$?"
-    normal_error="$(soraswap_redact_sensitive_text "$normal_output")"
-    if (( normal_status == 75 )); then
-      deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-        --arg contract_key "$contract_key" \
-        --arg error "$normal_error" \
-        '{contract_key: $contract_key, stage: "normal_deploy_public_health", error: $error}')"
-      echo "$normal_error" >&2
-      return "$normal_status"
-    fi
-    health_status=0
-    soraswap_stop_if_public_transport_health_degraded \
-      "$config" \
-      "contract deploy $contract_key transport" \
-      "$normal_output" || health_status=$?
-    if (( health_status != 0 )); then
-      deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-        --arg contract_key "$contract_key" \
-        --arg error "$normal_error" \
-        '{contract_key: $contract_key, stage: "normal_deploy_public_health", error: $error}')"
-      echo "$normal_error" >&2
-      return "$health_status"
-    fi
+    deploy_status=$?
+    redacted_output="$(soraswap_redact_sensitive_text "$deploy_output")"
+    deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
+      --arg contract_key "$contract_key" \
+      --arg error "$redacted_output" \
+      '{contract_key: $contract_key, stage: "ivm_contract_deploy", error: $error}')"
+    [[ -z "$redacted_output" ]] || printf '%s\n' "$redacted_output" >&2
+    return "$deploy_status"
   fi
 
-  if [[ -z "$instance_json" && -z "$response_json" ]]; then
-    post_nonce="$(account_contract_deploy_nonce "$config" "$SORASWAP_AUTHORITY")"
-    if (( post_nonce > deploy_nonce )) && [[ -n "$predicted_address" ]]; then
-      response_json="$(jq -cn \
-        --arg contract_address "$predicted_address" \
-        --arg dataspace "$dataspace" \
-        --arg code_hash_hex "$expected_code_hash" \
-        --arg abi_hash_hex "$expected_abi_hash" \
-        --arg normal_error "$normal_error" \
-        --argjson deploy_nonce "$deploy_nonce" \
-        '{
-          ok: true,
-          contract_address: $contract_address,
-          dataspace: $dataspace,
-          deploy_nonce: $deploy_nonce,
-          tx_hash_hex: "",
-          code_hash_hex: $code_hash_hex,
-          abi_hash_hex: $abi_hash_hex
-        } + (if ($normal_error | length) > 0 then {normal_deploy_error: $normal_error} else {} end)')"
-      if confirm_output="$(capture_confirm_contract_deploy_response "$config" "$response_json" "$contract_key" "$expected_code_hash")"; then
-        instance_json="$confirm_output"
-        deploy_strategy="adopted_committed"
-      else
-        redacted_output="$(soraswap_redact_sensitive_text "$confirm_output")"
-        deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-          --arg contract_key "$contract_key" \
-          --arg contract_address "$predicted_address" \
-          --argjson current_nonce "$current_nonce" \
-          --argjson deploy_nonce "$deploy_nonce" \
-          --argjson post_nonce "$post_nonce" \
-          --arg normal_error "$normal_error" \
-          --arg error "$redacted_output" \
-          '{
-            contract_key: $contract_key,
-            stage: "adopt_committed_confirm",
-            contract_address: $contract_address,
-            current_nonce: $current_nonce,
-            deploy_nonce: $deploy_nonce,
-            post_nonce: $post_nonce,
-            error: $error
-          } + (if ($normal_error | length) > 0 then {normal_deploy_error: $normal_error} else {} end)')"
-        echo "deploy nonce advanced for $contract_key but confirmation failed: $redacted_output" >&2
-        return 1
-      fi
-    fi
+  if ! response_json="$(normalize_contract_deploy_response_json "$deploy_output")"; then
+    redacted_output="$(soraswap_redact_sensitive_text "$deploy_output")"
+    deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
+      --arg contract_key "$contract_key" \
+      --arg response "$redacted_output" \
+      '{contract_key: $contract_key, stage: "ivm_contract_deploy_normalize", response: $response}')"
+    echo "unable to normalize ivm_contract_deploy response for $contract_key: $redacted_output" >&2
+    return 1
+  fi
+  if ! jq -e \
+    --arg chain_id "$expected_chain_id" \
+    --argjson chain_discriminant "$chain_discriminant" \
+    --arg dataspace_alias "$dataspace_alias" \
+    --arg dataspace_id "$dataspace_id" \
+    --arg contract_alias "$contract_alias" \
+    --arg code_hash_hex "$expected_code_hash" \
+    '
+      .ok == true
+      and .submitted == true
+      and .chain_id == $chain_id
+      and .chain_discriminant == $chain_discriminant
+      and .dataspace == $dataspace_id
+      and .deployment_state.dataspace_alias == $dataspace_alias
+      and .deployment_state.dataspace_id == $dataspace_id
+      and .contract_alias == $contract_alias
+      and .code_hash_hex == $code_hash_hex
+    ' <<<"$response_json" >/dev/null; then
+    redacted_output="$(soraswap_redact_sensitive_text "$response_json")"
+    deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
+      --arg contract_key "$contract_key" \
+      --arg response "$redacted_output" \
+      '{contract_key: $contract_key, stage: "ivm_contract_deploy_validate", response: $response}')"
+    echo "unexpected ivm_contract_deploy response for $contract_key: $redacted_output" >&2
+    return 1
   fi
 
-  if [[ -z "$instance_json" ]]; then
-    if [[ -z "$predicted_address" ]]; then
-      echo "cannot use native split deploy for $contract_key without a derived contract address" >&2
-      return 1
-    fi
-    predicted_subject="$(contract_subject_account_for_literal "$config" "$predicted_address")" || return 1
-    private_key_file="$(soraswap_config_private_key_temp_file "$config" split-contract-deploy-key)" || return 1
-    gas_limit="${SORASWAP_LEDGER_GAS_LIMIT:-2000000}"
-    soraswap_require_positive_integer_setting "SORASWAP_LEDGER_GAS_LIMIT" "$gas_limit" || {
-      soraswap_secure_unlink_owned_file "$private_key_file" || true
-      return 1
-    }
-    fee_payment_file="$(jq -cn \
-      --argjson gas_limit "$gas_limit" \
-      '{payer: "authority", value: {charge_limits: [], gas_limit: $gas_limit}}' \
-      | soraswap_secret_temp_from_stdin split-contract-deploy-fee-payment)" || {
-        soraswap_secure_unlink_owned_file "$private_key_file" || true
-        return 1
-      }
-    split_status=0
-    {
-      if split_output_raw="$(split_contract_deploy_cli \
-        --config "$config" \
-        --authority "$SORASWAP_AUTHORITY" \
-        --private-key-file "$private_key_file" \
-        --code-file "$code_file" \
-        --contract-address "$predicted_address" \
-        --contract-alias "$contract_alias" \
-        --dataspace "$dataspace" \
-        --chain-discriminant "$chain_discriminant" \
-        --deploy-nonce "$deploy_nonce" \
-        --fee-payment-json "$fee_payment_file" 2>&1)"; then
-        split_status=0
-      else
-        split_status=$?
-      fi
-    } always {
-      if ! soraswap_secure_unlink_owned_files "$private_key_file" "$fee_payment_file"; then
-        split_status=1
-      fi
-      private_key_file=""
-      fee_payment_file=""
-    }
-    if (( split_status != 0 )); then
-        redacted_output="$(soraswap_redact_sensitive_text "$split_output_raw")"
-        if [[ "$split_output_raw" == *"--private-key-file"* && "$split_output_raw" == *("unexpected argument"|"unknown option"|"unrecognised option")* ]]; then
-          redacted_output="$redacted_output
-split_contract_deploy lacks required --private-key-file support; refusing inline private key fallback"
-        fi
-        if [[ "$split_output_raw" == *"--fee-payment-json"* && "$split_output_raw" == *("unexpected argument"|"unknown option"|"unrecognised option")* ]]; then
-          redacted_output="$redacted_output
-split_contract_deploy lacks required --fee-payment-json support; refusing an unsigned fee-selection fallback"
-        fi
-        health_status=0
-        if (( split_status == 75 )); then
-          health_status="$split_status"
-        else
-          soraswap_stop_if_public_transport_health_degraded \
-            "$config" \
-            "contract deploy $contract_key split fallback transport" \
-            "$split_output_raw" || health_status=$?
-        fi
-        if (( health_status != 0 )); then
-          deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-            --arg contract_key "$contract_key" \
-            --arg predicted_address "$predicted_address" \
-            --arg error "$redacted_output" \
-            '{contract_key: $contract_key, stage: "split_fallback_public_health", contract_address: $predicted_address, error: $error}')"
-          echo "$redacted_output" >&2
-          return "$health_status"
-        fi
-        deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-          --arg contract_key "$contract_key" \
-          --arg predicted_address "$predicted_address" \
-          --arg error "$redacted_output" \
-          '{contract_key: $contract_key, stage: "split_fallback", contract_address: $predicted_address, error: $error}')"
-        echo "$redacted_output" >&2
-        return 1
-    fi
-    if ! split_output="$(extract_last_json_object <<<"$split_output_raw")"; then
-      redacted_output="$(soraswap_redact_sensitive_text "$split_output_raw")"
-      deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-        --arg contract_key "$contract_key" \
-        --arg contract_address "$predicted_address" \
-        --arg output "$redacted_output" \
-        '{contract_key: $contract_key, stage: "split_fallback_parse", contract_address: $contract_address, output: $output}')"
-      echo "split deploy output for $contract_key did not end in JSON: $redacted_output" >&2
-      return 1
-    fi
-    if ! jq -e \
-      --arg chain_id "$expected_chain_id" \
-      --argjson chain_discriminant "$chain_discriminant" \
-      --arg dataspace "$dataspace" \
-      --arg contract_address "$predicted_address" \
-      --arg contract_alias "$contract_alias" \
-      --arg contract_subject "$predicted_subject" \
-      --arg code_hash_hex "$expected_code_hash" \
-      --argjson deploy_nonce "$deploy_nonce" \
-      '
-        .ok == true
-        and .submitted == true
-        and .chain_id == $chain_id
-        and .chain_discriminant == $chain_discriminant
-        and .dataspace == $dataspace
-        and .contract_address == $contract_address
-        and .contract_alias == $contract_alias
-        and .contract_subject_account == $contract_subject
-        and .deploy_nonce == $deploy_nonce
-        and .next_deploy_nonce == ($deploy_nonce + 1)
-        and .expected_previous_contract_address == null
-        and ((.code_hash_hex | ascii_downcase) == $code_hash_hex)
-        and (.commit_tx_hash | type == "string" and test("^(0x)?[0-9A-Fa-f]{64}$"))
-      ' <<<"$split_output" >/dev/null; then
-      redacted_output="$(soraswap_redact_sensitive_text "$split_output")"
-      deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-        --arg contract_key "$contract_key" \
-        --arg response "$redacted_output" \
-        '{contract_key: $contract_key, stage: "split_fallback_validate", response: $response}')"
-      echo "unexpected split deploy response for $contract_key: $redacted_output" >&2
-      return 1
-    fi
-    response_json="$split_output"
-    if confirm_output="$(capture_confirm_contract_deploy_response "$config" "$response_json" "$contract_key" "$expected_code_hash")"; then
-      instance_json="$confirm_output"
-      deploy_strategy="split_fallback"
-    else
-      redacted_output="$(soraswap_redact_sensitive_text "$confirm_output")"
-      deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
-        --arg contract_key "$contract_key" \
-        --arg contract_address "$predicted_address" \
-        --arg response "$split_output" \
-        --arg error "$redacted_output" \
-        '{contract_key: $contract_key, stage: "split_fallback_confirm", contract_address: $contract_address, response: $response, error: $error}')"
-      echo "split deploy completed for $contract_key but confirmation failed: $redacted_output" >&2
-      return 1
-    fi
+  if confirm_output="$(capture_confirm_contract_deploy_response "$config" "$response_json" "$contract_key" "$expected_code_hash")"; then
+    :
+  else
+    redacted_output="$(soraswap_redact_sensitive_text "$confirm_output")"
+    deploy_report_set_contract "$env" "$contract_key" "failed" "$(jq -cn \
+      --arg contract_key "$contract_key" \
+      --arg response "$response_json" \
+      --arg error "$redacted_output" \
+      '{contract_key: $contract_key, stage: "ivm_contract_deploy_confirm", response: $response, error: $error}')"
+    echo "ivm_contract_deploy completed for $contract_key but confirmation failed: $redacted_output" >&2
+    return 1
   fi
 
+  deploy_strategy="ivm_contract_deploy"
   response_json_compact="$(compact_json_or_fail "$contract_key.response_json" "$response_json")"
-  instance_json_compact="$(compact_json_or_fail "$contract_key.instance_json" "$instance_json")"
   generated_at="$(utc_timestamp)"
   record_json="$(jq -cn \
     --arg contract_key "$contract_key" \
@@ -10914,10 +9629,12 @@ split_contract_deploy lacks required --fee-payment-json support; refusing an uns
     --arg environment "$env" \
     --arg contract_source "$(soraswap_display_path "$src")" \
     --arg contract_alias "$contract_alias" \
-    --arg dataspace "$dataspace" \
+    --arg dataspace_alias "$dataspace_alias" \
+    --arg dataspace_id "$dataspace_id" \
+    --arg code_hash_hex "$expected_code_hash" \
+    --arg abi_hash_hex "$expected_abi_hash" \
     --arg deploy_strategy "$deploy_strategy" \
     --argjson response "$response_json_compact" \
-    --argjson instance "$instance_json_compact" \
     --argjson chain_fingerprint "$chain_fingerprint_json_compact" \
     '{
       contract_key: $contract_key,
@@ -10925,16 +9642,20 @@ split_contract_deploy lacks required --fee-payment-json support; refusing an uns
       environment: $environment,
       contract_source: $contract_source,
       contract_alias: $contract_alias,
-      dataspace: $dataspace,
-      contract_address: ($response.contract_address // $instance.contract_id),
-      deploy_nonce: ($response.deploy_nonce // 0),
-      code_hash_hex: ($response.code_hash_hex // $instance.code_hash_hex),
-      abi_hash_hex: ($response.abi_hash_hex // ""),
+      dataspace_alias: $dataspace_alias,
+      dataspace_id: $dataspace_id,
+      contract_address: $response.contract_address,
+      deploy_nonce: $response.deploy_nonce,
+      code_hash_hex: $code_hash_hex,
+      abi_hash_hex: $abi_hash_hex,
       deploy_strategy: $deploy_strategy,
       chain_fingerprint: $chain_fingerprint,
-      response: $response,
-      instance: $instance
+      response: $response
     }')"
+  if ! deployment_record_json_matches_current_schema "$record_json" "$env" "$contract_key"; then
+    echo "refusing to write deployment record that does not match the closed current schema: $contract_key" >&2
+    return 1
+  fi
   soraswap_write_json_file_atomic "$record_json" "$deploy_out" || return 1
   write_deployment_manifest \
     "$compiled_manifest" \
@@ -10944,8 +9665,8 @@ split_contract_deploy lacks required --fee-payment-json support; refusing an uns
     "$generated_at" \
     "$src" \
     "$config" \
-    "$(jq -r '.code_hash_hex // empty' <<<"$response_json_compact")" \
-    "$(jq -r '.abi_hash_hex // empty' <<<"$response_json_compact")"
+    "$expected_code_hash" \
+    "$expected_abi_hash"
   deploy_report_set_contract "$env" "$contract_key" "$deploy_strategy" "$record_json"
 }
 
@@ -10984,7 +9705,6 @@ ensure_public_signer_ready() {
   local positive_assets_json='[]'
   local assets_json
   local skip_ready_check="${SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK:-0}"
-  local onboard_alias=""
   local public_env required_minimum="0"
 
   soraswap_require_binary_integer_setting "SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK" "$skip_ready_check" || return 1
@@ -11022,28 +9742,25 @@ ensure_public_signer_ready() {
   fi
 
   if [[ "$mode" == "autofund" ]] && is_taira_public_config "$config"; then
-    if ! account_exists "$config" "$account_id"; then
-      try_public_self_register_account "$config" "$account_id" >/dev/null 2>&1 || true
-      wait_for_account_exists "$config" "$account_id" 5 1 >/dev/null 2>&1 || true
-      if ! account_exists "$config" "$account_id"; then
-        onboard_alias="$(public_onboard_alias_for_account "$account_id")"
-        try_public_onboard_account "$config" "$account_id" "$onboard_alias" >/dev/null 2>&1 || true
-        wait_for_account_exists "$config" "$account_id" 5 1 >/dev/null 2>&1 || true
-      fi
-    fi
-    echo "claim faucet funding for testnet signer: $account_id"
-    claim_public_testnet_faucet "$config" "$account_id" >/dev/null
-    wait_for_account_exists "$config" "$account_id" 15 1 >/dev/null || true
-    if balance="$(wait_for_positive_asset_balance_id "$config" "$fee_asset_id" "$account_id" 15 1)"; then
-      echo "testnet signer funded: $account_id -> $balance $fee_label ($fee_asset_id)"
-      return 0
-    fi
-    positive_assets_json="$(account_positive_asset_balances_json "$config" "$account_id" || true)"
-    if jq -e 'length > 0' >/dev/null <<<"$positive_assets_json"; then
-      echo "testnet signer faucet funding produced unexpected live assets; expected $fee_label ($fee_asset_id): $positive_assets_json" >&2
+    echo "run current Iroha Taira write canary for testnet signer: $account_id"
+    if ! iroha_taira_write_canary_with_config_signer "$config" "$account_id" >/dev/null; then
       return 1
     fi
-    echo "testnet signer faucet claim committed but $fee_label ($fee_asset_id) did not become query-visible" >&2
+    wait_for_account_exists "$config" "$account_id" 15 1 >/dev/null || true
+    if balance="$(wait_for_positive_asset_balance_id "$config" "$fee_asset_id" "$account_id" 15 1)"; then
+      echo "Taira write canary funded and verified signer: $account_id -> $balance $fee_label ($fee_asset_id)"
+      return 0
+    fi
+    if assets_json="$(account_assets_json "$config" "$account_id" 200 2>/dev/null)"; then
+      positive_assets_json="$(positive_asset_balances_from_account_assets_json "$assets_json")"
+    else
+      positive_assets_json='[]'
+    fi
+    if jq -e 'length > 0' >/dev/null <<<"$positive_assets_json"; then
+      echo "Taira write canary completed but the signer holds unexpected live assets; expected $fee_label ($fee_asset_id): $positive_assets_json" >&2
+      return 1
+    fi
+    echo "Taira write-canary receipt was successful but $fee_label ($fee_asset_id) did not become query-visible" >&2
     return 1
   fi
 
@@ -11052,12 +9769,9 @@ ensure_public_signer_ready() {
   fi
 
   if is_taira_public_config "$config"; then
-    probe_public_faucet "$config" || true
     echo "testnet signer is not funded for public deploy/smoke: $account_id" >&2
-    if [[ -n "${SORASWAP_LAST_FAUCET_STATUS:-}" ]]; then
-      echo "faucet endpoint response: HTTP ${SORASWAP_LAST_FAUCET_STATUS}${SORASWAP_LAST_FAUCET_ERROR:+ - ${SORASWAP_LAST_FAUCET_ERROR}}" >&2
-    fi
-    echo "run from repo root: SORASWAP_ALLOW_TESTNET_MUTATIONS=1 SORASWAP_CLIENT_CONFIG=\"$(soraswap_display_path "$config")\" scripts/fund_testnet_signer.sh" >&2
+    echo "run from repo root with SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE set to the owner-only token file:" >&2
+    echo "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 SORASWAP_CLIENT_CONFIG=\"$(soraswap_display_path "$config")\" scripts/fund_testnet_signer.sh" >&2
     return 1
   fi
 
@@ -11068,10 +9782,6 @@ ensure_public_signer_ready() {
     echo "fund the configured signer with $fee_label ($fee_asset_id) before running this public environment" >&2
   fi
   return 1
-}
-
-ensure_public_testnet_signer_ready() {
-  ensure_public_signer_ready "$@"
 }
 
 account_has_unit_permission() {
@@ -11122,7 +9832,7 @@ ensure_exact_account_permission_json() {
 
   attempt=1
   while (( attempt <= max_attempts )); do
-    if grant_output="$(printf '%s' "$permission_json" | iroha_cli_with_gas_metadata "$config" account permission grant --id "$account_id" 2>&1)"; then
+    if grant_output="$(printf '%s' "$permission_json" | iroha_cli_with_authority_fee "$config" account permission grant --id "$account_id" 2>&1)"; then
       if account_has_exact_permission_json "$config" "$account_id" "$permission_json"; then
         return 0
       fi
@@ -11166,7 +9876,7 @@ revoke_exact_account_permission_json() {
     >/dev/null <<<"$permissions_json"; then
     return 0
   fi
-  if ! revoke_output="$(printf '%s' "$permission_json" | iroha_cli_with_gas_metadata "$config" account permission revoke --id "$account_id" 2>&1)"; then
+  if ! revoke_output="$(printf '%s' "$permission_json" | iroha_cli_with_authority_fee "$config" account permission revoke --id "$account_id" 2>&1)"; then
     echo "failed to revoke exact $permission_name from $account_id" >&2
     printf '%s\n' "$(soraswap_redact_sensitive_text "$revoke_output")" >&2
     return 1
@@ -11324,7 +10034,7 @@ ensure_unit_account_permission() {
   permission_json="$(jq -cn --arg permission_name "$permission_name" '{name: $permission_name, payload: null}')"
   attempt=1
   while (( attempt <= max_attempts )); do
-    if grant_output="$(printf '%s' "$permission_json" | iroha_cli_with_gas_metadata "$config" account permission grant --id "$account_id" 2>&1)"; then
+    if grant_output="$(printf '%s' "$permission_json" | iroha_cli_with_authority_fee "$config" account permission grant --id "$account_id" 2>&1)"; then
       if account_has_unit_permission "$config" "$account_id" "$permission_name"; then
         return 0
       fi
@@ -11392,7 +10102,7 @@ ensure_can_register_trigger_permission() {
     '{name: "CanRegisterTrigger", payload: {authority: $authority}}')"
   attempt=1
   while (( attempt <= max_attempts )); do
-    if grant_output="$(printf '%s' "$permission_json" | iroha_cli_with_gas_metadata "$config" account permission grant --id "$account_id" 2>&1)"; then
+    if grant_output="$(printf '%s' "$permission_json" | iroha_cli_with_authority_fee "$config" account permission grant --id "$account_id" 2>&1)"; then
       if account_has_can_register_trigger_permission "$config" "$account_id"; then
         return 0
       fi
@@ -11462,7 +10172,7 @@ ensure_can_execute_trigger_permission() {
     '{name: "CanExecuteTrigger", payload: {trigger: $trigger}}')"
   attempt=1
   while (( attempt <= max_attempts )); do
-    if grant_output="$(printf '%s' "$permission_json" | iroha_cli_with_gas_metadata "$config" account permission grant --id "$account_id" 2>&1)"; then
+    if grant_output="$(printf '%s' "$permission_json" | iroha_cli_with_authority_fee "$config" account permission grant --id "$account_id" 2>&1)"; then
       if account_has_can_execute_trigger_permission "$config" "$account_id" "$trigger_id"; then
         return 0
       fi
@@ -11514,7 +10224,7 @@ soraswap_set_trigger_enabled() {
       ;;
   esac
 
-  iroha_cli_with_gas_metadata "$config" trigger "$command" "$trigger_id"
+  iroha_cli_with_authority_fee "$config" trigger "$command" "$trigger_id"
 }
 
 soraswap_enable_trigger() {
@@ -11541,7 +10251,6 @@ soraswap_expected_trigger_ids_json() {
         "soraswap_epoch_auction_close",
         "soraswap_twamm_tick",
         "soraswap_range_governor_tick",
-        "soraswap_options_lifecycle_tick",
         "soraswap_options_factory_lifecycle_tick",
         "soraswap_cover_lifecycle_tick",
         "soraswap_launchpad_lifecycle_tick",
@@ -11769,19 +10478,19 @@ soraswap_execute_trigger() {
   poll_interval_ms="${SORASWAP_TRIGGER_EXECUTE_POLL_INTERVAL_MS:-1000}"
   soraswap_require_nonnegative_integer_setting "SORASWAP_TRIGGER_EXECUTE_TIMEOUT_MS" "$timeout_ms" || return 1
   soraswap_require_positive_integer_setting "SORASWAP_TRIGGER_EXECUTE_POLL_INTERVAL_MS" "$poll_interval_ms" || return 1
-  if ! output="$(iroha_cli_with_gas_metadata "$config" trigger execute "$trigger_id" \
+  if ! output="$(iroha_cli_with_authority_fee "$config" trigger execute "$trigger_id" \
     --args-json "$args_json" \
     --timeout-ms "$timeout_ms" \
     --poll-interval-ms "$poll_interval_ms")"; then
     printf '%s\n' "$(soraswap_redact_sensitive_text "$output")" >&2
     return 1
   fi
-  tx_hash="$(jq -er '.hash // .submit.tx_hash_hex // .tx_hash_hex // empty' <<<"$output" 2>/dev/null || true)"
+  tx_hash="$(jq -er '.hash | select(type == "string" and length > 0)' <<<"$output" 2>/dev/null || true)"
   if [[ -z "$tx_hash" ]]; then
-    printf '%s\n' "$output"
-  else
-    printf '%s\n' "$tx_hash"
+    echo "trigger execute output did not contain the current top-level hash field: $(soraswap_redact_sensitive_text "$output")" >&2
+    return 1
   fi
+  printf '%s\n' "$tx_hash"
 }
 
 soraswap_collect_trigger_completions() {
@@ -11927,25 +10636,10 @@ soraswap_trigger_completion_capture_warmup_seconds() {
   printf '%s\n' "$value"
 }
 
-account_address_canonical_hex() {
-  local config="$1"
-  local account_literal="$2"
-  local network_prefix
-
-  network_prefix="$(network_prefix_for_config "$config")"
-
-  iroha_cli --config "$config" --output-format text tools address convert \
-    --expect-prefix "$network_prefix" \
-    --format canonical-hex \
-    "$account_literal" 2>/dev/null \
-    | tail -n 1 \
-    | tr -d '\r\n'
-}
-
 ensure_domain_sns_lease() {
   local config="$1"
   local domain_label="$2"
-  local selector_literal policy_json payment_asset_id payment_gross output owner_hex
+  local selector_literal policy_json payment_asset_id payment_gross output
 
   selector_literal="${domain_label}.universal"
   if iroha_cli_json --config "$config" app sns registration --selector "$selector_literal" \
@@ -11984,7 +10678,7 @@ PY
   fi
 
   if output="$(
-    iroha_cli_with_gas_metadata "$config" app sns register \
+    iroha_cli_with_authority_fee "$config" app sns register \
       --label "$selector_literal" \
       --suffix-id "$SORASWAP_SNS_DOMAIN_SUFFIX_ID" \
       --term-years 1 \
@@ -11998,71 +10692,6 @@ PY
   fi
   if [[ "$output" == *"selector \`${selector_literal}\` is already registered"* ]]; then
     return 0
-  fi
-  if [[ "$output" == *"ERR_UNEXPECTED_NETWORK_PREFIX"* ]]; then
-    local torii_base payload_json tmp http_code
-
-    torii_base="$(torii_base_from_config "$config")"
-    owner_hex="$(account_address_canonical_hex "$config" "$SORASWAP_AUTHORITY")"
-    if [[ -z "$owner_hex" ]]; then
-      echo "failed to derive canonical account address for SNS fallback owner $SORASWAP_AUTHORITY" >&2
-      return 1
-    fi
-    payload_json="$(jq -cn \
-      --arg owner "$SORASWAP_AUTHORITY" \
-      --arg owner_hex "$owner_hex" \
-      --arg payer "$SORASWAP_AUTHORITY" \
-      --arg label "$selector_literal" \
-      --arg asset_id "$payment_asset_id" \
-      --argjson payment_gross "$payment_gross" \
-      --argjson suffix_id "$SORASWAP_SNS_DOMAIN_SUFFIX_ID" \
-      '{
-        selector: {
-          version: 1,
-          suffix_id: $suffix_id,
-          label: $label
-        },
-        owner: $owner,
-        controllers: [{
-          controller_type: {
-            kind: "Account"
-          },
-          account_address: $owner_hex,
-          resolver_template_id: null,
-          payload: {}
-        }],
-        term_years: 1,
-        payment: {
-          asset_id: $asset_id,
-          gross_amount: $payment_gross,
-          net_amount: $payment_gross,
-          settlement_tx: "soraswap-bootstrap",
-          payer: $payer,
-          signature: "soraswap-bootstrap"
-        },
-        governance: null,
-        metadata: {}
-      }')"
-    tmp="$(mktemp "${TMPDIR:-/tmp}/soraswap-sns-register.XXXXXX")"
-    http_code="$(soraswap_curl_for_config "$config" -sS -o "$tmp" -w '%{http_code}' \
-      --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-      -H 'Accept: application/json' \
-      -H 'Content-Type: application/json' \
-      -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION" \
-      -X POST \
-      "$torii_base/v1/sns/names" \
-      -d "$payload_json" || true)"
-    if [[ "$http_code" == "201" ]]; then
-      rm -f "$tmp"
-      return 0
-    fi
-    if [[ "$http_code" == "409" ]]; then
-      rm -f "$tmp"
-      return 0
-    fi
-    echo "sns register fallback failed for ${selector_literal}: HTTP ${http_code}: $(soraswap_redact_sensitive_text "$(cat "$tmp" 2>/dev/null || true)")" >&2
-    rm -f "$tmp"
-    return 1
   fi
 
   printf '%s\n' "$(soraswap_redact_sensitive_text "$output")" >&2

@@ -155,19 +155,22 @@ request_json() {
     : >"$tmp"
     : >"$err_tmp"
     if [[ "$method" == "POST" ]]; then
-      if http_code="$(soraswap_curl_for_config "$config" -sS \
-        --max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
-        -o "$tmp" \
-        -w '%{http_code}' \
-        -H 'Accept: application/json' \
-        -H 'Content-Type: application/json' \
-        -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION" \
-        -X POST \
-        "$torii_base$request_path" \
-        -d "$body" 2>"$err_tmp")"; then
+      if [[ "$request_path" != "/v1/contracts/view/batch" ]]; then
+        echo "unsupported authenticated trader POST route: $request_path" >"$err_tmp"
+        curl_status=2
+        http_code=0
+      elif printf '%s' "$body" | python3 "$SORASWAP_ROOT/scripts/current_torii_contract.py" \
+        --config "$config" \
+        --environment "$public_env" \
+        --authority "$SORASWAP_AUTHORITY" \
+        --torii-url "$torii_base" \
+        --timeout "$SORASWAP_TORII_READ_MAX_TIME_SECS" \
+        view-batch >"$tmp" 2>"$err_tmp"; then
         curl_status=0
+        http_code=200
       else
         curl_status="$?"
+        http_code=0
       fi
     else
       if http_code="$(soraswap_curl_for_config "$config" -sS \
@@ -175,7 +178,6 @@ request_json() {
         -o "$tmp" \
         -w '%{http_code}' \
         -H 'Accept: application/json' \
-        -H "X-Iroha-API-Version: $SORASWAP_TORII_API_VERSION" \
         "$torii_base$request_path" 2>"$err_tmp")"; then
         curl_status=0
       else
@@ -268,7 +270,7 @@ required_routes_json="$(
     }'
 )"
 
-legacy_routes_before_json="$(
+generic_routes_before_json="$(
   jq -cn \
     --argjson activity "$(request_json GET "/v1/contracts/activity?authority=${encoded_authority}&limit=5")" \
     --argjson events "$(request_json GET "/v1/contracts/events?authority=${encoded_authority}&limit=5")" \
@@ -289,7 +291,7 @@ signer_ready_json='null'
 swap_json='null'
 required_routes_after_json='null'
 required_routes_after_missing_json='null'
-legacy_routes_after_json='null'
+generic_routes_after_json='null'
 submitted_calls_json='[]'
 public_write_health_json='null'
 
@@ -329,9 +331,9 @@ if [[ "$mode" == "mutating" && "$report_status" == "completed" ]]; then
     usdt_before="$(asset_value_for_account_id "$config" "$usdt_id" "$SORASWAP_AUTHORITY")"
     if swap_output="$(call_contract_and_wait "$config" "$router_contract" route_swap "$(
       jq -cn \
-        --argjson amount_in "$swap_amount_in" \
-        --argjson input_is_base 1 \
-        --argjson min_out 0 \
+        --arg amount_in "$swap_amount_in" \
+        --arg input_is_base "1" \
+        --arg min_out "0" \
         '{
           amount_in: $amount_in,
           input_is_base: $input_is_base,
@@ -448,7 +450,7 @@ if [[ "$mode" == "mutating" && "$report_status" == "completed" ]]; then
         blocked_reason="public ${public_env} Torii trader routes returned non-200 responses after mutation: $(jq -r 'join(", ")' <<<"$required_routes_after_missing_json")"
       fi
     fi
-    legacy_routes_after_json="$(
+    generic_routes_after_json="$(
       jq -cn \
         --argjson activity "$(request_json GET "/v1/contracts/activity?authority=${encoded_authority}&limit=10")" \
         --argjson events "$(request_json GET "/v1/contracts/events?authority=${encoded_authority}&limit=10")" \
@@ -512,10 +514,10 @@ report_json="$(jq -n \
   --slurpfile deploy_snapshot_file "$deploy_snapshot_json_path" \
   --argjson required_routes "$required_routes_json" \
   --argjson required_routes_missing "$required_routes_missing_json" \
-  --argjson legacy_routes_before "$legacy_routes_before_json" \
+  --argjson generic_routes_before "$generic_routes_before_json" \
   --argjson required_routes_after "$required_routes_after_json" \
   --argjson required_routes_after_missing "$required_routes_after_missing_json" \
-  --argjson legacy_routes_after "$legacy_routes_after_json" \
+  --argjson generic_routes_after "$generic_routes_after_json" \
   --argjson signer_ready "$signer_ready_json" \
   --argjson swap "$swap_json" \
   --argjson submitted_calls "$submitted_calls_json" \
@@ -565,10 +567,10 @@ report_json="$(jq -n \
     route_probes: {
       required_before: $required_routes,
       required_missing: $required_routes_missing,
-      legacy_before: $legacy_routes_before,
+      generic_before: $generic_routes_before,
       required_after: (if $required_routes_after == null then null else $required_routes_after end),
       required_after_missing: (if $required_routes_after_missing == null then null else $required_routes_after_missing end),
-      legacy_after: (if $legacy_routes_after == null then null else $legacy_routes_after end)
+      generic_after: (if $generic_routes_after == null then null else $generic_routes_after end)
     },
     mutation: {
       signer_ready: (if $signer_ready == null then null else $signer_ready end),

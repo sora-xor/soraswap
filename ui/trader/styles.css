@@ -619,8 +619,7 @@ button:disabled {
 .status-chip.watch,
 .product-pill.n3x,
 .product-pill.launchpad,
-.product-pill.optionsManager,
-.product-pill.optionsFactory {
+.product-pill.options {
   color: #8b6904;
   background: rgba(244, 201, 93, 0.18);
 }

@@ -1,31 +1,55 @@
-koto_test { target: "../../contracts/bridge/sccp_bridge.ko" }
+module BridgeGovernanceRegressions {
+  koto_test { target: "../../contracts/bridge/sccp_bridge.ko" }
 
-fixture bridge_actors {
-  actor("owner", AccountId::parse("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
-}
+  fixture bridge_actors {
+    actor(
+      "owner",
+      AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX")
+    );
+    grant_permission("owner", "AssetOps");
+  }
 
-fn seed_bridge(AccountId owner) {
-  let asset_key = Name::parse("asset");
-  BridgeInitialized = 1;
-  BridgeOwner = owner;
-  BridgeProofAuthority = owner;
-  RegistryEnabled = 1;
-  RegisteredAsset[asset_key] = asset_definition("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
-  AssetHomeDomain[asset_key] = 0;
-  AssetDecimals[asset_key] = 18;
-  AssetVaultAccount[asset_key] = owner;
-}
+  fn seed_bridge(AccountId owner) {
+    let asset_key = Name::parse("asset");
+    BridgeInitialized = 1;
+    BridgeOwner = owner;
+    BridgeProofAuthority = owner;
+    RegistryEnabled = 1;
+    ListingFeeAsset = AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+    TreasuryAccount = owner;
+    ListingFeeAmount = 0;
+    RegisteredAsset[asset_key] = AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+    AssetRegistrant[asset_key] = owner;
+    AssetHomeDomain[asset_key] = 0;
+    AssetDecimals[asset_key] = 18;
+    AssetVaultAccount[asset_key] = owner;
+  }
 
-#[test(fixture="bridge_actors")]
-fn governed_route_cannot_rewrite_governance_message() {
-  let owner = actor_account("owner");
-  let route = Name::parse("route");
-  seed_bridge(owner);
+  #[test(fixture = "bridge_actors")]
+  fn governed_route_cannot_rewrite_governance_message() {
+    let owner = test::actor_account("owner");
+    let route = Name::parse("route");
+    seed_bridge(owner: owner);
 
-  invoke_entrypoint_as("owner", "activate_route_governed", json("{\"message_id\":\"msgone\",\"route\":\"route\",\"asset_key\":\"asset\",\"remote_domain\":1}"));
-  invoke_entrypoint_as("owner", "activate_route_governed", json("{\"message_id\":\"msgone\",\"route\":\"route\",\"asset_key\":\"asset\",\"remote_domain\":1}"));
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "activate_route_governed",
+      arguments: Json::parse("{\"message_id\":\"msgone\",\"route\":\"route\",\"asset_key\":\"asset\",\"remote_domain\":\"1\"}")
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "activate_route_governed",
+      arguments: Json::parse("{\"message_id\":\"msgone\",\"route\":\"route\",\"asset_key\":\"asset\",\"remote_domain\":\"1\"}")
+    );
 
-  assert(RouteGoverned[route] == 1, "route governed");
-  assert(RouteGovernanceMessage[route] == Name::parse("msgone"), "governance message");
-  expect_reject_as("owner", "activate_route_governed", json("{\"message_id\":\"msgtwo\",\"route\":\"route\",\"asset_key\":\"asset\",\"remote_domain\":1}"));
+    test::assert(RouteGoverned.get(route).unwrap_or(0) == 1);
+    test::assert(
+      RouteGovernanceMessage.get(route).unwrap_or(Name::parse("missing")) == Name::parse("msgone")
+    );
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "activate_route_governed",
+      arguments: Json::parse("{\"message_id\":\"msgtwo\",\"route\":\"route\",\"asset_key\":\"asset\",\"remote_domain\":\"1\"}")
+    );
+  }
 }

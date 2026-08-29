@@ -1,7 +1,15 @@
+module OptionsFactoryAdminRegressions {
 koto_test { target: "../../contracts/options/factory.ko" }
 
 fixture options_factory_actors {
-  actor("owner", AccountId::parse("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
+  actor(
+    "owner",
+    AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX")
+  );
+  actor(
+    "oracle",
+    AccountId::parse("sorauﾛ1PaQｽGh1ｴ6pAﾜnqｸfJuｿMﾑVqﾏvQﾐﾚｼｾﾋaﾈｳﾊc1ｺﾊ1GGM2D")
+  );
 }
 
 fn seed_options_factory(AccountId owner) {
@@ -13,21 +21,49 @@ fn seed_options_factory(AccountId owner) {
 
 #[test(fixture="options_factory_actors")]
 fn factory_oracle_stale_slots_are_owner_configured() {
-  let owner = actor_account("owner");
+  let owner = test::actor_account("owner");
   seed_options_factory(owner);
 
-  invoke_entrypoint_as("owner", "configure_oracle_stale_slots", json("{\"oracle_stale_slots\":8}"));
+  test::invoke_kotoage_as(actor: "owner", kotoage: "configure_oracle_stale_slots", arguments: Json::parse("{\"stale_slots\":\"8\"}"));
 
-  assert(OptFactoryOracleStaleSlots == 8, "factory stale slots");
-  expect_reject_as("owner", "configure_oracle_stale_slots", json("{\"oracle_stale_slots\":-1}"));
+  test::assert(OptFactoryOracleStaleSlots == 8);
+  test::expect_reject_as(actor: "owner", kotoage: "configure_oracle_stale_slots", arguments: Json::parse("{\"stale_slots\":\"-1\"}"));
 }
 
 #[test(fixture="options_factory_actors")]
 fn utilisation_guard_rejects_impossible_bps_thresholds() {
-  let owner = actor_account("owner");
+  let owner = test::actor_account("owner");
   seed_options_factory(owner);
 
-  expect_reject_as("owner", "configure_utilisation_guard", json("{\"series_id\":1,\"bump_activate_bps\":10001,\"bump_deactivate_bps\":6000,\"pause_threshold_bps\":9500,\"bump_percent_bps\":1500}"));
-  expect_reject_as("owner", "configure_utilisation_guard", json("{\"series_id\":1,\"bump_activate_bps\":8000,\"bump_deactivate_bps\":10001,\"pause_threshold_bps\":9500,\"bump_percent_bps\":1500}"));
-  expect_reject_as("owner", "configure_utilisation_guard", json("{\"series_id\":1,\"bump_activate_bps\":8000,\"bump_deactivate_bps\":6000,\"pause_threshold_bps\":10001,\"bump_percent_bps\":1500}"));
+  test::expect_reject_as(actor: "owner", kotoage: "configure_utilisation_guard", arguments: Json::parse("{\"series_id\":\"1\",\"bump_activate_bps\":\"10001\",\"bump_deactivate_bps\":\"6000\",\"pause_threshold_bps\":\"9500\",\"bump_percent_bps\":\"1500\"}"));
+  test::expect_reject_as(actor: "owner", kotoage: "configure_utilisation_guard", arguments: Json::parse("{\"series_id\":\"1\",\"bump_activate_bps\":\"8000\",\"bump_deactivate_bps\":\"10001\",\"pause_threshold_bps\":\"9500\",\"bump_percent_bps\":\"1500\"}"));
+  test::expect_reject_as(actor: "owner", kotoage: "configure_utilisation_guard", arguments: Json::parse("{\"series_id\":\"1\",\"bump_activate_bps\":\"8000\",\"bump_deactivate_bps\":\"6000\",\"pause_threshold_bps\":\"10001\",\"bump_percent_bps\":\"1500\"}"));
+}
+
+#[test(fixture="options_factory_actors")]
+fn series_terms_expose_factory_owned_expiry_and_strike() {
+  let owner = test::actor_account("owner");
+  seed_options_factory(owner);
+  OptFactorySeriesExpirySlot[1] = 42;
+  OptFactorySeriesStrikeBps[1] = 10_500;
+
+  let terms = test::invoke_kotoage_as(actor: "owner", kotoage: "series_terms", arguments: Json::parse("{\"series_id\":\"1\"}"));
+
+  test::assert(terms.0 == 42);
+  test::assert(terms.1 == 10_500);
+}
+
+#[test(fixture="options_factory_actors")]
+fn oracle_publication_and_owner_exercise_are_separate_authorities() {
+  let owner = test::actor_account("owner");
+  let oracle = test::actor_account("oracle");
+  seed_options_factory(owner);
+  OptFactoryOracleAuthority = oracle;
+  OptFactoryPositionOwner[7] = owner;
+  OptFactoryPositionKind[7] = 1;
+  OptFactoryPositionStatus[7] = 1;
+
+  test::expect_reject_as(actor: "owner", kotoage: "publish_shout_mark", arguments: Json::parse("{\"position_id\":\"7\",\"mark_price_bps\":\"10500\",\"oracle_slot\":\"0\",\"attestation_hash\":\"1\"}"));
+  test::expect_reject_as(actor: "oracle", kotoage: "exercise_shout_position", arguments: Json::parse("{\"position_id\":\"7\"}"));
+}
 }

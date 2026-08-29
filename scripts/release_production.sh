@@ -7,6 +7,15 @@ production_dir="$ROOT/deployments/production"
 source "$ROOT/scripts/common.sh"
 source "$ROOT/scripts/release_phase_guards.sh"
 
+if [[ -n "${SORASWAP_TESTNET_CHAIN_ID+x}" ]]; then
+  echo "release-production: retired environment variable is not supported: SORASWAP_TESTNET_CHAIN_ID" >&2
+  exit 1
+fi
+if [[ -n "${SORASWAP_TESTNET_CHAIN_DISCRIMINANT+x}" ]]; then
+  echo "release-production: retired environment variable is not supported: SORASWAP_TESTNET_CHAIN_DISCRIMINANT" >&2
+  exit 1
+fi
+
 local_acceptance_pin_setting_count=0
 [[ -n "${SORASWAP_LOCAL_ACCEPTANCE_IROHA_ROOT+x}" ]] && local_acceptance_pin_setting_count=$(( local_acceptance_pin_setting_count + 1 ))
 [[ -n "${SORASWAP_LOCAL_ACCEPTANCE_BUNDLE_DIR+x}" ]] && local_acceptance_pin_setting_count=$(( local_acceptance_pin_setting_count + 1 ))
@@ -53,9 +62,10 @@ Required setup:
   # The real trust policy is tracked in the signed RC; the approval is mode 0600 and ignored.
   cp config/production/cutover-approval.example.json config/production/cutover-approval.json
   # Replace every placeholder, then collect distinct security + operations sshsig signatures.
-  # Optional: override the default oracle provider, which is the client config signer.
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX=<public oracle key>
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX=<private oracle key>
+  cp config/production/production.client.toml.example config/production/oracle.client.toml
+  # edit this second config with a distinct oracle signer on the same production chain and Torii endpoint
+  chmod 600 config/production/oracle.client.toml
+  export SORASWAP_ORACLE_CLIENT_CONFIG=config/production/oracle.client.toml
   # Required only when SORASWAP_ENABLE_RWA_RELEASE=1.
   export SORASWAP_ENABLE_RWA_RELEASE=1
   export SORASWAP_RWA_ISSUER_APPROVAL_REF=<external approval id or URL>
@@ -65,7 +75,7 @@ Required setup:
   export SORASWAP_RWA_REDEMPTION_TERMS_REF=<external redemption terms id or URL>
   SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make release-production
 
-The client config and optional oracle private key are runtime-only secrets. RWA documents stay outside this repo; only their release references are recorded.
+Both client configs are runtime-only secrets. RWA documents stay outside this repo; only their release references are recorded.
 EOF
 }
 
@@ -148,20 +158,15 @@ require_taira_release_gate() {
     unset RELEASE_CHECKLIST_INTERNAL_CLOSEOUT_TOKEN RELEASE_CHECKLIST_INTERNAL_CLOSEOUT_JOURNAL
     unset SORASWAP_TORII_URL SORASWAP_TORII_API_TOKEN CHAIN
     unset ACCOUNT_CHAIN_DISCRIMINANT IROHA_ACCOUNT_CHAIN_DISCRIMINANT
-    unset SORASWAP_TORII_API_VERSION
     unset SORASWAP_ALLOW_TESTNET_MUTATIONS SORASWAP_ALLOW_PRODUCTION_MUTATIONS
     unset SORASWAP_PROFILE SORASWAP_CONTRACTS_MANIFEST
     unset SORASWAP_IROHA_ROOT SORASWAP_IROHA_CLI_BIN SORASWAP_SORAFS_CLI_BIN
     unset SORASWAP_KOTO_COMPILE_BIN SORASWAP_KOTO_LINT_BIN SORASWAP_KOTO_TEST_BIN
-    unset SORASWAP_ACTIVE_IROHA_CLI_BIN SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN
+    unset SORASWAP_ACTIVE_IROHA_CLI_BIN SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN
     unset SORASWAP_ACTIVE_GOV_INSTRUCTION_BIN SORASWAP_ACTIVE_SORAFS_CLI_BIN
     unset SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD SORASWAP_SKIP_IROHA_CLI_BUILD
     unset SORASWAP_SKIP_KOTO_TOOL_BUILD SORASWAP_SKIP_LOCALNET_TOOL_BUILD SORASWAP_FORCE_COMPILE
     unset SORASWAP_KOTO_COMPILE_BIN_READY SORASWAP_KOTO_LINT_BIN_READY
-    unset SORASWAP_CONTRACT_APP_CHUNK_SIZE SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS
-    unset SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS
-    unset SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS
-    unset SORASWAP_TESTNET_CHAIN_ID SORASWAP_TESTNET_CHAIN_DISCRIMINANT
     unset SORASWAP_PRODUCTION_CHAIN_ID SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT SORASWAP_CHAIN_DISCRIMINANT
     unset SORASWAP_CHAIN_FINGERPRINT_JSON
     unset SORASWAP_CHAIN_FINGERPRINT_ATTEMPTS SORASWAP_CHAIN_FINGERPRINT_SLEEP_SECS
@@ -172,15 +177,12 @@ require_taira_release_gate() {
     unset SORASWAP_TAIRA_DIRECT_TORII_HOST SORASWAP_TAIRA_DIRECT_TORII_PORTS
     unset SORASWAP_ISOLATED_LOCAL_UP_TIMEOUT_SECS SORASWAP_ISOLATED_DEPLOY_TIMEOUT_SECS
     unset SORASWAP_ISOLATED_SMOKE_TIMEOUT_SECS SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS
-    unset SORASWAP_ISOLATED_DEPLOY_ARTIFACT_SNAPSHOT_DIR
     unset SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID SORASWAP_TESTNET_FEE_ASSET_LABEL
     unset SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID SORASWAP_PRODUCTION_FEE_ASSET_LABEL
     unset SORASWAP_TAIRA_REPAIR_DONOR_STORAGE SORASWAP_TAIRA_REPAIR_HEIGHT SORASWAP_TAIRA_REPAIR_OPERATOR
     unset SORASWAP_TAIRA_REPAIR_PARENT_ROOT SORASWAP_TAIRA_REPAIR_POST_ROOT SORASWAP_TAIRA_REPAIR_REASON
     unset SORASWAP_TAIRA_REPAIR_PLATFORM SORASWAP_TAIRA_REPAIR_REPORT_DIR SORASWAP_TAIRA_REPAIR_SNAPSHOT_POLICY
     unset SORASWAP_TAIRA_REPAIR_STATUS_JSON SORASWAP_TAIRA_REPAIR_TARGET_STORAGES SORASWAP_TAIRA_REPAIR_TRACE_CONFIG
-    unset SORASWAP_TAIRA_REPAIR_VOLATILE_DIST SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA
-    unset SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN SORASWAP_TAIRA_REPAIR_VOLATILE_TORII_PORTS
     unset SORASWAP_RELEASE_CHECKLIST_TAIRA_PREREQ_ONLY SORASWAP_RELEASE_CHECKLIST_INTERNAL_PRODUCTION_PREREQ
     unset SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK SORASWAP_INIT_CONTRACT_STATE
     unset SORASWAP_PREFLIGHT_SKIP_EXISTING_NESTED_PROBE_CHECK
@@ -221,9 +223,9 @@ require_taira_release_gate() {
     unset SORASWAP_PUBLIC_XOR_TOPUP_MAX_ATTEMPTS SORASWAP_PUBLIC_XOR_TOPUP_MAX_USDT_IN SORASWAP_PUBLIC_XOR_TOPUP_BUFFER
     unset SORASWAP_TESTNET_XOR_TOPUP_MAX_ATTEMPTS SORASWAP_TESTNET_XOR_TOPUP_MAX_USDT_IN SORASWAP_TESTNET_XOR_TOPUP_BUFFER
     unset SORASWAP_PRODUCTION_XOR_TOPUP_MAX_ATTEMPTS SORASWAP_PRODUCTION_XOR_TOPUP_MAX_USDT_IN SORASWAP_PRODUCTION_XOR_TOPUP_BUFFER
-    unset SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS
-    unset SORASWAP_ORACLE_PUBLIC_KEY_HEX SORASWAP_ORACLE_PRIVATE_KEY_HEX
-    unset SORASWAP_ORACLE_PYTHON_BIN SORASWAP_ORACLE_SCHEME SORASWAP_LAST_ORACLE_SLOT
+    unset SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE
+    unset SORASWAP_ORACLE_CLIENT_CONFIG SORASWAP_LAST_ORACLE_SLOT
+    unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED SORASWAP_ACTIVE_ORACLE_ACCOUNT
     unset SORASWAP_ENABLE_RWA_RELEASE
     unset SORASWAP_RWA_COMPLIANCE_CHAIN_JSON SORASWAP_RWA_COMPLIANCE_REPORT_DIR
     unset SORASWAP_RWA_COMPLIANCE_CHAIN_FILE SORASWAP_RWA_COMPLIANCE_PREFLIGHT_FILE
@@ -234,7 +236,7 @@ require_taira_release_gate() {
     unset SORASWAP_TRADER_API_PROBE_ROOT SORASWAP_TRADER_API_PROBE_ATTEMPTS
     unset SORASWAP_TRADER_API_PROBE_INTERVAL_SECS SORASWAP_TRADER_API_PROBE_BODY_MAX_CHARS
     unset SORASWAP_TRADER_API_REGISTRY_VISIBILITY_ATTEMPTS SORASWAP_TRADER_API_REGISTRY_VISIBILITY_RETRY_DELAY_SECS
-    unset SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_ATTEMPTS SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_RETRY_DELAY_SECS
+    unset SORASWAP_TRADER_API_GATEWAY_PROPAGATION_ATTEMPTS SORASWAP_TRADER_API_GATEWAY_PROPAGATION_RETRY_DELAY_SECS
     unset SORASWAP_TRADER_PUBLIC_RESPONSE_BODY_MAX_CHARS
     unset SORASWAP_TRADER_PUBLIC_ROUTE_PROBE_ATTEMPTS SORASWAP_TRADER_PUBLIC_ROUTE_PROBE_RETRY_DELAY_SECS
     unset SORASWAP_PUBLISH_TRADER_API_BINDING SORASWAP_TRADER_API_SERVICE_NAME
@@ -456,8 +458,7 @@ configure_production_cutover_inputs() {
       authority_from_config "$config_abs"
   )" || fail "could not derive the production signer authority with the pinned iroha CLI"
   [[ -n "$production_signer_authority" ]] || fail "derived production signer authority is empty"
-  production_oracle_authority="$(soraswap_required_oracle_public_key_hex "$config_abs")" || \
-    fail "could not derive the production oracle public authority"
+  [[ -n "$production_oracle_authority" ]] || fail "derived production oracle account is empty"
   production_admin_authority="$SORASWAP_PRODUCTION_ADMIN_AUTHORITY"
   production_treasury_authority="$SORASWAP_PRODUCTION_TREASURY_AUTHORITY"
   production_bridge_authority="$SORASWAP_PRODUCTION_BRIDGE_AUTHORITY"
@@ -604,24 +605,14 @@ fi
   fail "SORASWAP_INIT_CONTRACT_STATE=0 is a debug bypass and cannot be used for the production release gate"
 [[ "$skip_existing_nested_probe_check" != "1" ]] || \
   fail "SORASWAP_PREFLIGHT_SKIP_EXISTING_NESTED_PROBE_CHECK is managed by the release runner and cannot be exported for the production release gate"
-if soraswap_value_looks_placeholder "${SORASWAP_ORACLE_PUBLIC_KEY_HEX:-}"; then
-  fail "oracle public key is an example value"
+if soraswap_value_looks_placeholder "${SORASWAP_ORACLE_CLIENT_CONFIG:-}"; then
+  fail "SORASWAP_ORACLE_CLIENT_CONFIG is an example value"
 fi
-if soraswap_value_looks_placeholder "${SORASWAP_ORACLE_PRIVATE_KEY_HEX:-}"; then
-  fail "oracle private key is an example value"
+if ! soraswap_prepare_oracle_client_config "$config_abs" >/dev/null; then
+  fail_with_setup_hint "could not validate the separate typed-oracle client config"
 fi
-
-if ! soraswap_required_oracle_public_key_hex "$config_abs" >/dev/null; then
-  fail_with_setup_hint "could not derive oracle public key from SORASWAP_ORACLE_PUBLIC_KEY_HEX or the production client config signer"
-fi
-if [[ "$resume_closeout" != "1" ]]; then
-  if ! soraswap_oracle_private_key_hex_for_config "$config_abs" >/dev/null; then
-    fail_with_setup_hint "could not derive oracle private key from SORASWAP_ORACLE_PRIVATE_KEY_HEX or the production client config signer"
-  fi
-  if ! oracle_keypair_error="$(soraswap_oracle_keypair_matches_for_config "$config_abs" 2>&1 >/dev/null)"; then
-    fail_with_setup_hint "${oracle_keypair_error:-oracle private key does not match configured oracle public key}"
-  fi
-fi
+production_oracle_authority="$SORASWAP_ACTIVE_ORACLE_ACCOUNT"
+soraswap_cleanup_oracle_client_config || fail "could not clean up typed-oracle client state"
 
 require_production_rwa_refs_ready
 require_exact_candidate_pin_settings

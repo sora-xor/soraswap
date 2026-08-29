@@ -16,6 +16,15 @@ const STORAGE_KEYS = {
 };
 const SUCCESS_STATUSES = new Set(["Approved", "Committed", "Applied"]);
 const FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
+const TAIRA_XOR_ALIAS = "xor#universal";
+const TAIRA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const TAIRA_XOR_SCALE = 9;
+const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+const CURRENT_PIPELINE_STATUSES = new Set([
+  "Queued",
+  ...SUCCESS_STATUSES,
+  ...FAILURE_STATUSES,
+]);
 const PRODUCT_DEFINITIONS = [
   { key: "swaps", label: "Swaps", contractKey: "dlmm.dlmm_router" },
   { key: "batchAuction", label: "Batch Auction", contractKey: "batch_amm.epoch_auction" },
@@ -44,8 +53,8 @@ const ACTION_RAILS = {
         submitLabel: "Submit Buy",
         entrypoint: "route_swap",
         fields: [
-          { key: "amount_in", label: "Spend Base Amount", type: "number", min: 1, step: 1, defaultValue: 100 },
-          { key: "min_out", label: "Minimum Quote Out", type: "number", min: 0, step: 1, defaultValue: 95 },
+          { key: "amount_in", label: "Spend Base Amount", type: "number", min: 1, step: 1, defaultValue: 100, assetScale: "base" },
+          { key: "min_out", label: "Minimum Quote Out", type: "number", min: 0, step: 1, defaultValue: 95, assetScale: "quote" },
         ],
         buildPayload: (draft) => ({
           amount_in: normalizeInteger(draft.amount_in),
@@ -59,8 +68,8 @@ const ACTION_RAILS = {
         submitLabel: "Submit Sell",
         entrypoint: "route_swap",
         fields: [
-          { key: "amount_in", label: "Sell Quote Amount", type: "number", min: 1, step: 1, defaultValue: 60 },
-          { key: "min_out", label: "Minimum Base Out", type: "number", min: 0, step: 1, defaultValue: 64 },
+          { key: "amount_in", label: "Sell Quote Amount", type: "number", min: 1, step: 1, defaultValue: 60, assetScale: "quote" },
+          { key: "min_out", label: "Minimum Base Out", type: "number", min: 0, step: 1, defaultValue: 64, assetScale: "base" },
         ],
         buildPayload: (draft) => ({
           amount_in: normalizeInteger(draft.amount_in),
@@ -170,7 +179,7 @@ const ACTION_RAILS = {
   },
   perps: {
     title: "Perps Rails",
-    copy: "Open, modify, margin, and close perp positions without leaving the trader cockpit.",
+    copy: "Trade against the universal-dataspace collateral pool with account-authorized oracle pricing.",
     actions: [
       {
         key: "perps_open",
@@ -179,15 +188,15 @@ const ACTION_RAILS = {
         entrypoint: "open_position",
         fields: [
           { key: "market_id", label: "Market ID", type: "number", min: 1, step: 1, defaultValue: 1 },
-          { key: "position_id", label: "Position ID", type: "number", min: 1, step: 1, defaultValue: 8 },
-          { key: "size", label: "Size", type: "number", min: 1, step: 1, defaultValue: 520 },
+          { key: "size", label: "Signed Size", type: "number", signed: true, nonzero: true, step: 1, defaultValue: 520 },
           { key: "margin", label: "Margin", type: "number", min: 1, step: 1, defaultValue: 120 },
+          { key: "requested_leverage_bps", label: "Requested Leverage (bps)", type: "number", min: 0, step: 1, defaultValue: 40000 },
         ],
         buildPayload: (draft) => ({
           market_id: normalizeInteger(draft.market_id),
-          position_id: normalizeInteger(draft.position_id),
           size: normalizeInteger(draft.size),
           margin: normalizeInteger(draft.margin),
+          requested_leverage_bps: normalizeInteger(draft.requested_leverage_bps),
         }),
       },
       {
@@ -197,13 +206,15 @@ const ACTION_RAILS = {
         entrypoint: "modify_position",
         fields: [
           { key: "position_id", label: "Position ID", type: "number", min: 1, step: 1, defaultValue: 7 },
-          { key: "size_delta", label: "Size Delta", type: "number", min: 1, step: 1, defaultValue: 40 },
-          { key: "margin_delta", label: "Margin Delta", type: "number", min: 1, step: 1, defaultValue: 10 },
+          { key: "size_delta", label: "Signed Size Delta", type: "number", signed: true, step: 1, defaultValue: 40 },
+          { key: "margin_delta", label: "Signed Margin Delta", type: "number", signed: true, step: 1, defaultValue: 10 },
+          { key: "requested_leverage_bps", label: "Requested Leverage (bps)", type: "number", min: 0, step: 1, defaultValue: 40000 },
         ],
         buildPayload: (draft) => ({
           position_id: normalizeInteger(draft.position_id),
           size_delta: normalizeInteger(draft.size_delta),
           margin_delta: normalizeInteger(draft.margin_delta),
+          requested_leverage_bps: normalizeInteger(draft.requested_leverage_bps),
         }),
       },
       {
@@ -320,11 +331,9 @@ const ACTION_RAILS = {
         submitLabel: "Claim Allocation",
         entrypoint: "claim_allocation",
         fields: [
-          { key: "sale", label: "Sale", type: "text", defaultValue: "seed-alpha" },
           { key: "allocation", label: "Allocation", type: "text", defaultValue: "alloc-alpha" },
         ],
         buildPayload: (draft) => ({
-          sale: String(draft.sale || "").trim(),
           allocation: String(draft.allocation || "").trim(),
         }),
       },
@@ -334,11 +343,9 @@ const ACTION_RAILS = {
         submitLabel: "Refund Allocation",
         entrypoint: "refund_allocation",
         fields: [
-          { key: "sale", label: "Sale", type: "text", defaultValue: "seed-alpha" },
           { key: "allocation", label: "Allocation", type: "text", defaultValue: "alloc-alpha" },
         ],
         buildPayload: (draft) => ({
-          sale: String(draft.sale || "").trim(),
           allocation: String(draft.allocation || "").trim(),
         }),
       },
@@ -346,7 +353,7 @@ const ACTION_RAILS = {
   },
   options: {
     title: "Options Rails",
-    copy: "Buy, record shouts, and exercise from one public options surface.",
+    copy: "Buy and exercise from the self-contained options factory. Oracle marks are published by the configured oracle account.",
     actions: [
       {
         key: "options_buy_shout",
@@ -355,15 +362,11 @@ const ACTION_RAILS = {
         entrypoint: "buy_shout",
         fields: [
           { key: "series_id", label: "Series ID", type: "number", min: 1, step: 1, defaultValue: 12 },
-          { key: "position_id", label: "Position ID", type: "number", min: 1, step: 1, defaultValue: 79 },
           { key: "notional", label: "Notional", type: "number", min: 1, step: 1, defaultValue: 220 },
-          { key: "premium_paid", label: "Premium Paid", type: "number", min: 1, step: 1, defaultValue: 16 },
         ],
         buildPayload: (draft) => ({
           series_id: normalizeInteger(draft.series_id),
-          position_id: normalizeInteger(draft.position_id),
           notional: normalizeInteger(draft.notional),
-          premium_paid: normalizeInteger(draft.premium_paid),
         }),
       },
       {
@@ -373,31 +376,11 @@ const ACTION_RAILS = {
         entrypoint: "buy_outperformance",
         fields: [
           { key: "series_id", label: "Series ID", type: "number", min: 1, step: 1, defaultValue: 12 },
-          { key: "position_id", label: "Position ID", type: "number", min: 1, step: 1, defaultValue: 80 },
           { key: "notional", label: "Notional", type: "number", min: 1, step: 1, defaultValue: 240 },
-          { key: "premium_paid", label: "Premium Paid", type: "number", min: 1, step: 1, defaultValue: 19 },
         ],
         buildPayload: (draft) => ({
           series_id: normalizeInteger(draft.series_id),
-          position_id: normalizeInteger(draft.position_id),
           notional: normalizeInteger(draft.notional),
-          premium_paid: normalizeInteger(draft.premium_paid),
-        }),
-      },
-      {
-        key: "options_record_shout",
-        label: "Record Shout",
-        submitLabel: "Record Shout",
-        entrypoint: "record_shout",
-        fields: [
-          { key: "series_id", label: "Series ID", type: "number", min: 1, step: 1, defaultValue: 12 },
-          { key: "position_id", label: "Position ID", type: "number", min: 1, step: 1, defaultValue: 77 },
-          { key: "shout_price", label: "Shout Price", type: "number", min: 1, step: 1, defaultValue: 11350 },
-        ],
-        buildPayload: (draft) => ({
-          series_id: normalizeInteger(draft.series_id),
-          position_id: normalizeInteger(draft.position_id),
-          shout_price: normalizeInteger(draft.shout_price),
         }),
       },
       {
@@ -406,11 +389,9 @@ const ACTION_RAILS = {
         submitLabel: "Exercise Shout",
         entrypoint: "exercise_shout_position",
         fields: [
-          { key: "series_id", label: "Series ID", type: "number", min: 1, step: 1, defaultValue: 12 },
           { key: "position_id", label: "Position ID", type: "number", min: 1, step: 1, defaultValue: 77 },
         ],
         buildPayload: (draft) => ({
-          series_id: normalizeInteger(draft.series_id),
           position_id: normalizeInteger(draft.position_id),
         }),
       },
@@ -420,11 +401,9 @@ const ACTION_RAILS = {
         submitLabel: "Exercise Outperformance",
         entrypoint: "exercise_outperformance_position",
         fields: [
-          { key: "series_id", label: "Series ID", type: "number", min: 1, step: 1, defaultValue: 12 },
           { key: "position_id", label: "Position ID", type: "number", min: 1, step: 1, defaultValue: 80 },
         ],
         buildPayload: (draft) => ({
-          series_id: normalizeInteger(draft.series_id),
           position_id: normalizeInteger(draft.position_id),
         }),
       },
@@ -440,15 +419,21 @@ const ACTION_RAILS = {
         submitLabel: "Open Policy",
         entrypoint: "register_policy",
         fields: [
-          { key: "policy_id", label: "Policy ID", type: "number", min: 1, step: 1, defaultValue: 6 },
-          { key: "covered_notional", label: "Covered Notional", type: "number", min: 1, step: 1, defaultValue: 1100 },
+          { key: "lower_bound", label: "Lower Bound", type: "number", min: 0, step: 1, defaultValue: 9000 },
+          { key: "upper_bound", label: "Upper Bound", type: "number", min: 1, step: 1, defaultValue: 11000 },
           { key: "payout_amount", label: "Payout Amount", type: "number", min: 1, step: 1, defaultValue: 260 },
+          { key: "monitoring_window_slots", label: "Monitoring Window", type: "number", min: 1, step: 1, defaultValue: 3 },
+          { key: "required_observations", label: "Required Observations", type: "number", min: 1, step: 1, defaultValue: 2 },
+          { key: "covered_notional", label: "Covered Notional", type: "number", min: 1, step: 1, defaultValue: 1100 },
           { key: "premium_paid", label: "Premium Paid", type: "number", min: 1, step: 1, defaultValue: 32 },
         ],
         buildPayload: (draft) => ({
-          policy_id: normalizeInteger(draft.policy_id),
-          covered_notional: normalizeInteger(draft.covered_notional),
+          lower_bound: normalizeInteger(draft.lower_bound),
+          upper_bound: normalizeInteger(draft.upper_bound),
           payout_amount: normalizeInteger(draft.payout_amount),
+          monitoring_window_slots: normalizeInteger(draft.monitoring_window_slots),
+          required_observations: normalizeInteger(draft.required_observations),
+          covered_notional: normalizeInteger(draft.covered_notional),
           premium_paid: normalizeInteger(draft.premium_paid),
         }),
       },
@@ -459,11 +444,9 @@ const ACTION_RAILS = {
         entrypoint: "route_claim",
         fields: [
           { key: "policy_id", label: "Policy ID", type: "number", min: 1, step: 1, defaultValue: 5 },
-          { key: "payout_amount", label: "Payout Amount", type: "number", min: 1, step: 1, defaultValue: 180 },
         ],
         buildPayload: (draft) => ({
           policy_id: normalizeInteger(draft.policy_id),
-          payout_amount: normalizeInteger(draft.payout_amount),
         }),
       },
     ],
@@ -648,7 +631,6 @@ const ACTION_RAILS = {
           service: String(draft.service || "solver"),
           slot: 1,
           health_bps: normalizeInteger(draft.health_bps),
-          fees_accrued: 0,
         }),
       },
     ],
@@ -663,10 +645,12 @@ const ACTION_RAILS = {
         submitLabel: "Deposit Collateral",
         entrypoint: "deposit_collateral",
         fields: [
+          { key: "market_id", label: "Market ID", type: "text", defaultValue: "perps-btc" },
           { key: "account_key", label: "Account Key", type: "text", defaultValue: "alice" },
           { key: "amount", label: "Amount", type: "number", min: 1, step: 1, defaultValue: 500 },
         ],
         buildPayload: (draft) => ({
+          market_id: String(draft.market_id || "perps-btc"),
           account_key: String(draft.account_key || "alice"),
           amount: normalizeInteger(draft.amount),
         }),
@@ -751,7 +735,7 @@ const ACTION_RAILS = {
         key: "hook_twamm",
         label: "TWAMM",
         submitLabel: "Schedule TWAMM",
-        entrypoint: "schedule_twamm_v2",
+        entrypoint: "schedule_twamm",
         fields: [
           { key: "order_id", label: "Order ID", type: "text", defaultValue: "twamm-1" },
           { key: "input_is_base", label: "Input Is Base", type: "number", min: 0, step: 1, defaultValue: 1 },
@@ -1197,7 +1181,7 @@ function ensureLiveFollow() {
 }
 
 function requireProxySuccess(result, label) {
-  if (result?.ok === true) {
+  if (result?.ok === true && result?.incomplete !== true) {
     return result;
   }
   const message =
@@ -1228,6 +1212,68 @@ async function fetchProxyGet(path, params) {
   return requestJson(buildUrl(path, params));
 }
 
+function isCanonicalTairaEnvironment(environment) {
+  return environment?.chain_fingerprint?.chain === TAIRA_CHAIN_ID;
+}
+
+function validateAssetDefinitionScale(result, selector, label, options = {}) {
+  const definition = requireProxySuccess(result, `${label} asset definition`).response_json;
+  if (!definition || typeof definition !== "object" || Array.isArray(definition)) {
+    throw new Error(`${label} asset definition response_json must be an object.`);
+  }
+  const spec = definition.spec;
+  if (
+    !spec
+    || typeof spec !== "object"
+    || Array.isArray(spec)
+    || Object.keys(spec).length !== 1
+    || !Object.prototype.hasOwnProperty.call(spec, "scale")
+    || !Number.isInteger(spec.scale)
+    || spec.scale < 0
+    || spec.scale > 28
+  ) {
+    throw new Error(`${label} asset definition spec.scale must be the exact JSON integer from 0 through 28.`);
+  }
+  if (selector.includes("#")) {
+    const binding = definition.alias_binding;
+    if (
+      definition.alias !== selector
+      || !binding
+      || typeof binding !== "object"
+      || Array.isArray(binding)
+      || binding.alias !== selector
+      || !["permanent", "leased_active"].includes(binding.status)
+    ) {
+      throw new Error(`${label} asset definition is not actively bound to ${selector}.`);
+    }
+    if (
+      options.requireExactTairaXor === true
+      && selector === TAIRA_XOR_ALIAS
+      && (
+        definition.id !== TAIRA_XOR_ASSET_DEFINITION_ID
+        || binding.status !== "permanent"
+        || spec.scale !== TAIRA_XOR_SCALE
+      )
+    ) {
+      throw new Error(`${label} Taira XOR must resolve to its exact permanent asset definition with scale 9.`);
+    }
+  } else if (definition.id !== selector) {
+    throw new Error(`${label} asset definition id does not match ${selector}.`);
+  }
+  return spec.scale;
+}
+
+async function fetchAssetDefinitionScale(environment, selector, label) {
+  const environmentName = environment?.name || "";
+  const result = await fetchProxyGet(
+    `/api/assets/definitions/${encodeURIComponent(selector)}`,
+    { environment: environmentName },
+  );
+  return validateAssetDefinitionScale(result, selector, label, {
+    requireExactTairaXor: isCanonicalTairaEnvironment(environment),
+  });
+}
+
 async function fetchViewBatch(environment, authority, items, gasLimit = DEFAULT_GAS_LIMIT) {
   return requestJson("/api/view/batch", {
     method: "POST",
@@ -1238,7 +1284,19 @@ async function fetchViewBatch(environment, authority, items, gasLimit = DEFAULT_
       environment,
       authority,
       gas_limit: gasLimit,
-      items,
+      items: items.map((item) => ({
+        ...item,
+        ...(item.payload === undefined
+          ? {}
+          : {
+            payload: canonicalizeManifestPayload(
+              environment,
+              item.contract_address,
+              item.entrypoint,
+              item.payload,
+            ),
+          }),
+      })),
     }),
   });
 }
@@ -1260,7 +1318,7 @@ async function callView(environment, contractAddress, authority, entrypoint, pay
       authority,
       contract_address: contractAddress,
       entrypoint,
-      payload,
+      payload: canonicalizeManifestPayload(environment, contractAddress, entrypoint, payload),
     }),
     `view ${entrypoint}`,
   );
@@ -1291,7 +1349,23 @@ async function fetchTransactionStatus(environment, txHashHex) {
     }),
     "transaction status",
   );
-  return unwrapProxyValue(result.response_json) || {};
+  return requireCurrentPipelineStatusKind(result);
+}
+
+function requireCurrentPipelineStatusKind(result) {
+  const statusKind = result?.status_kind;
+  if (typeof statusKind !== "string" || !CURRENT_PIPELINE_STATUSES.has(statusKind)) {
+    throw new Error("Transaction status proxy did not return a current status_kind.");
+  }
+  return statusKind;
+}
+
+function requireCurrentTransactionHash(result) {
+  const txHashHex = result?.tx_hash_hex;
+  if (typeof txHashHex !== "string" || !/^[0-9a-f]{64}$/.test(txHashHex)) {
+    throw new Error("Contract call proxy did not return a current tx_hash_hex.");
+  }
+  return txHashHex;
 }
 
 function normalizeInteger(value) {
@@ -1305,6 +1379,135 @@ function normalizeInteger(value) {
     }
   }
   return null;
+}
+
+function canonicalIntegerArgument(value) {
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) ? String(value) : null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!/^-?\d+$/.test(trimmed)) {
+    return null;
+  }
+  try {
+    return BigInt(trimmed).toString();
+  } catch (_error) {
+    return null;
+  }
+}
+
+function canonicalFixedPointArgument(value, { unsigned = false } = {}) {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    value = String(value);
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const match = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (!match) {
+    return null;
+  }
+  const [, sign, integerDigits, fractionDigits = ""] = match;
+  const integer = BigInt(integerDigits).toString();
+  const fraction = fractionDigits.replace(/0+$/, "");
+  const isZero = integer === "0" && !fraction;
+  if (unsigned && sign === "-" && !isZero) {
+    return null;
+  }
+  const canonicalSign = sign === "-" && !isZero ? "-" : "";
+  return `${canonicalSign}${integer}${fraction ? `.${fraction}` : ""}`;
+}
+
+function canonicalManifestNumericArgument(value, typeName) {
+  if (typeName === "int") {
+    return canonicalIntegerArgument(value);
+  }
+  if (typeName === "quantity") {
+    return canonicalFixedPointArgument(value, { unsigned: true });
+  }
+  if (typeName === "decimal") {
+    return canonicalFixedPointArgument(value);
+  }
+  return value;
+}
+
+function canonicalFractionalDigits(value) {
+  const separator = String(value).indexOf(".");
+  return separator < 0 ? 0 : String(value).length - separator - 1;
+}
+
+function fallbackCanonicalizeNumericValues(value) {
+  if (typeof value === "number") {
+    return canonicalIntegerArgument(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => fallbackCanonicalizeNumericValues(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, fallbackCanonicalizeNumericValues(entry)]),
+    );
+  }
+  return value;
+}
+
+function manifestEntrypoint(environmentName, contractAddress, entrypointName) {
+  const environment = state.environments.find((item) => item.name === environmentName)
+    || (state.currentEnvironment?.name === environmentName ? state.currentEnvironment : null);
+  const contract = (environment?.contracts || []).find(
+    (item) => item.contract_address === contractAddress,
+  );
+  return (contract?.entrypoints || []).find((item) => item.name === entrypointName) || null;
+}
+
+function canonicalizeManifestPayload(environmentName, contractAddress, entrypointName, payload) {
+  const canonical = fallbackCanonicalizeNumericValues(payload);
+  const entrypoint = manifestEntrypoint(environmentName, contractAddress, entrypointName);
+  if (!entrypoint || !canonical || typeof canonical !== "object" || Array.isArray(canonical)) {
+    return canonical;
+  }
+  for (const parameter of entrypoint.params || []) {
+    if (
+      ["int", "quantity", "decimal"].includes(parameter.type_name)
+      && Object.hasOwn(canonical, parameter.name)
+    ) {
+      canonical[parameter.name] = canonicalManifestNumericArgument(
+        payload[parameter.name],
+        parameter.type_name,
+      );
+    }
+  }
+  return canonical;
+}
+
+function buildManifestPayload(action, draft) {
+  const environmentName = state.currentEnvironment?.name || "";
+  const contractAddress = selectedTradeModule()?.contractAddress || "";
+  const rawPayload = action.buildPayload(draft);
+  const entrypoint = manifestEntrypoint(environmentName, contractAddress, action.entrypoint);
+  const parameterTypes = new Map(
+    (entrypoint?.params || []).map((parameter) => [parameter.name, parameter.type_name]),
+  );
+  for (const field of action.fields) {
+    if (field.type === "number" && Object.hasOwn(rawPayload, field.key)) {
+      rawPayload[field.key] = canonicalManifestNumericArgument(
+        draft[field.key],
+        parameterTypes.get(field.key) || "int",
+      );
+    }
+  }
+  return canonicalizeManifestPayload(
+    environmentName,
+    contractAddress,
+    action.entrypoint,
+    rawPayload,
+  );
 }
 
 function normalizePrice(value) {
@@ -1480,6 +1683,22 @@ function currentAuthority() {
   return authorityInput.value.trim();
 }
 
+function workspaceIdentity(environmentName = state.currentEnvironment?.name || "", authority = currentAuthority()) {
+  return environmentName && authority ? `${environmentName}\u0000${authority}` : "";
+}
+
+function workspaceMatchesIdentity(identity) {
+  return Boolean(identity) && state.workspace?.identity === identity;
+}
+
+function synchronizeWorkspaceIdentity() {
+  const identity = workspaceIdentity();
+  if (state.workspace && state.workspace.identity !== identity) {
+    state.workspace = null;
+  }
+  return identity;
+}
+
 function currentSymbols() {
   const assets = state.workspace?.assets;
   const baseAssetId = assets?.baseAssetId || "xor#universal";
@@ -1487,6 +1706,8 @@ function currentSymbols() {
   return {
     baseAssetId,
     quoteAssetId,
+    baseAssetScale: assets?.baseAssetScale ?? null,
+    quoteAssetScale: assets?.quoteAssetScale ?? null,
     baseSymbol: assetTicker(baseAssetId),
     quoteSymbol: assetTicker(quoteAssetId),
   };
@@ -1634,10 +1855,12 @@ function humanizeEntrypoint(entrypoint) {
     deposit_and_mint: "Minted n3x",
     burn_and_redeem: "Redeemed n3x",
     open_position: "Opened perp",
+    modify_position: "Modified perp",
     close_position: "Closed perp",
     add_margin: "Added margin",
-    reduce_position: "Reduced perp",
-    liquidate_position: "Liquidated perp",
+    remove_margin: "Removed margin",
+    sync_funding: "Synced funding",
+    run_liquidation_pass: "Ran liquidation pass",
     stake: "Staked farm",
     unstake: "Unstaked farm",
     claim: "Claimed rewards",
@@ -1650,7 +1873,7 @@ function humanizeEntrypoint(entrypoint) {
     exercise: "Exercised option",
     register_policy: "Opened cover",
     claim_policy: "Claimed cover",
-    schedule_twamm_v2: "Scheduled TWAMM",
+    schedule_twamm: "Scheduled TWAMM",
     cancel_twamm: "Cancelled TWAMM",
     claim_twamm: "Claimed TWAMM",
     open_escrow: "Opened escrow",
@@ -1760,8 +1983,12 @@ function actionDraftFor(action) {
 }
 
 function applyModuleSelection(moduleKey, options = {}) {
+  const previousModuleKey = state.selectedModuleKey;
   state.selectedModuleKey = availableModuleKey(moduleKey);
   ensureSelectedAction(state.selectedModuleKey);
+  if (state.selectedModuleKey !== previousModuleKey) {
+    setBanner(tradeResult, "No trade submitted.", "muted");
+  }
   if (options.syncActivityFilter !== false) {
     state.activityFilterKey = state.selectedModuleKey;
   }
@@ -1888,6 +2115,7 @@ function applyEnvironment(environmentName, options = {}) {
     : "";
   const defaultAuthority = savedAuthority || (useDefaultAuthority ? state.currentEnvironment?.signer?.authority || "" : "");
   authorityInput.value = defaultAuthority;
+  synchronizeWorkspaceIdentity();
 
   renderDeploymentSummary();
   syncTradeControls();
@@ -1986,7 +2214,7 @@ function buildTradePreview() {
     contract_address: module?.contractAddress || "",
     entrypoint: action?.entrypoint || "",
     gas_limit: gasLimit,
-    payload: action ? action.buildPayload(draft) : {},
+    payload: action ? buildManifestPayload(action, draft) : {},
   };
 }
 
@@ -2010,6 +2238,25 @@ function tradeValidationError() {
   if (!action) {
     return "No action rail is available for the selected product.";
   }
+  const entrypoint = manifestEntrypoint(
+    environment.name,
+    module.contractAddress,
+    action.entrypoint,
+  );
+  if (!entrypoint) {
+    return `${action.entrypoint} is not present in the deployed contract manifest.`;
+  }
+  const manifestParameterTypes = new Map(
+    (entrypoint.params || []).map((parameter) => [parameter.name, parameter.type_name]),
+  );
+  const manifestParameterNames = new Set(manifestParameterTypes.keys());
+  const payloadNames = Object.keys(preview.payload);
+  if (
+    payloadNames.length !== manifestParameterNames.size
+    || payloadNames.some((name) => !manifestParameterNames.has(name))
+  ) {
+    return `${action.entrypoint} payload does not match the deployed contract manifest.`;
+  }
   if (!environment.signer?.call_enabled) {
     return "Bind a signer with a private key to submit signed trader actions from this cockpit.";
   }
@@ -2022,14 +2269,43 @@ function tradeValidationError() {
   for (const field of action.fields) {
     const value = preview.payload[field.key];
     if (field.type === "number") {
-      if (!Number.isSafeInteger(value)) {
-        return `${field.label} must be an integer.`;
+      const typeName = manifestParameterTypes.get(field.key) || "int";
+      const canonical = canonicalManifestNumericArgument(value, typeName);
+      if (canonical === null) {
+        return `${field.label} must be a canonical ${typeName}.`;
       }
-      if ((field.min ?? 0) > 0 && value < field.min) {
-        return `${field.label} must be at least ${field.min}.`;
+      if (typeName === "quantity" && field.assetScale) {
+        const scale = field.assetScale === "base"
+          ? state.workspace?.assets?.baseAssetScale
+          : state.workspace?.assets?.quoteAssetScale;
+        if (!Number.isInteger(scale)) {
+          return `${field.label} precision is unavailable until both current asset definitions are loaded.`;
+        }
+        if (canonicalFractionalDigits(canonical) > scale) {
+          const symbol = field.assetScale === "base"
+            ? currentSymbols().baseSymbol
+            : currentSymbols().quoteSymbol;
+          return `${field.label} exceeds the current ${symbol} scale of ${scale} fractional digits.`;
+        }
       }
-      if ((field.min ?? 0) === 0 && value < 0) {
+      if (field.nonzero && canonical === "0") {
+        return `${field.label} must not be zero.`;
+      }
+      if (typeName === "int") {
+        const integer = BigInt(canonical);
+        const minimum = BigInt(field.min ?? 0);
+        if (!field.signed) {
+          if (minimum > 0n && integer < minimum) {
+            return `${field.label} must be at least ${field.min}.`;
+          }
+          if (minimum === 0n && integer < 0n) {
+            return `${field.label} must not be negative.`;
+          }
+        }
+      } else if (!field.signed && canonical.startsWith("-")) {
         return `${field.label} must not be negative.`;
+      } else if (Number(field.min ?? 0) > 0 && canonical === "0") {
+        return `${field.label} must be positive.`;
       }
     }
     if (field.type === "text" && !String(value || "").trim()) {
@@ -2043,6 +2319,14 @@ function syncTradeControls() {
   const rail = ensureSelectedAction();
   const action = currentActionDefinition();
   const draft = actionDraftFor(action);
+  const actionEntrypoint = manifestEntrypoint(
+    state.currentEnvironment?.name || "",
+    selectedTradeModule()?.contractAddress || "",
+    action?.entrypoint || "",
+  );
+  const parameterTypes = new Map(
+    (actionEntrypoint?.params || []).map((parameter) => [parameter.name, parameter.type_name]),
+  );
 
   tradeKicker.textContent = selectedTradeModule()?.label || "Action Rail";
   tradeTitle.textContent = rail.title;
@@ -2055,6 +2339,9 @@ function syncTradeControls() {
     button.classList.toggle("active", item.key === state.selectedActionKey);
     button.textContent = item.label;
     button.addEventListener("click", () => {
+      if (item.key !== state.selectedActionKey) {
+        setBanner(tradeResult, "No trade submitted.", "muted");
+      }
       state.selectedActionKey = item.key;
       syncTradeControls();
     });
@@ -2074,16 +2361,24 @@ function syncTradeControls() {
       const input = document.createElement("input");
       input.type = field.type === "number" ? "number" : "text";
       if (field.type === "number") {
-        if (field.min !== undefined) {
+        const typeName = parameterTypes.get(field.key) || "int";
+        if (["quantity", "decimal"].includes(typeName)) {
+          input.step = "any";
+          if (!field.signed) {
+            input.min = "0";
+          }
+        } else if (field.min !== undefined) {
           input.min = String(field.min);
-        }
-        if (field.step !== undefined) {
+          if (field.step !== undefined) {
+            input.step = String(field.step);
+          }
+        } else if (field.step !== undefined) {
           input.step = String(field.step);
         }
       }
       input.value = String(draft[field.key] ?? field.defaultValue ?? "");
       input.addEventListener("input", () => {
-        state.tradeDrafts[action.key][field.key] = field.type === "number" ? normalizeInteger(input.value) ?? input.value : input.value;
+        state.tradeDrafts[action.key][field.key] = input.value;
         syncTradeControls();
       });
       wrapper.append(input);
@@ -2359,24 +2654,26 @@ async function loadPerpsModule(environment, authority) {
   }
 
   try {
-    const [configRaw, automationRaw, activityRaw] = await Promise.all([
+    const [configRaw, collateralPoolRaw, automationRaw, activityRaw] = await Promise.all([
       callView(environment.name, contract.contract_address, authority, "engine_config"),
+      callView(environment.name, contract.contract_address, authority, "collateral_pool_state"),
       callView(environment.name, contract.contract_address, authority, "automation_state"),
       listContractActivity(environment.name, contract.contract_address, authority, {
         limit: DEFAULT_MODULE_ACTIVITY_LIMIT,
       }),
     ]);
     const config = normalizeTupleValue(configRaw) || [];
+    const collateralPool = normalizeTupleValue(collateralPoolRaw) || [];
     const automation = normalizeTupleValue(automationRaw) || [];
     const activities = normalizeActivityItems(activityRaw);
-    const nextMarketId = normalizeInteger(config[3]) ?? 0;
-    const nextPositionId = normalizeInteger(config[4]) ?? 0;
+    const nextMarketId = normalizeInteger(config[4]) ?? 0;
+    const nextPositionId = normalizeInteger(config[5]) ?? 0;
     const marketId =
       findPayloadInteger(activities[0]?.contractPayload, ["market_id", "marketId"])
-      ?? (nextMarketId > 1 ? 1 : null);
+      ?? (nextMarketId > 1 ? nextMarketId - 1 : null);
     const positionId =
       findPayloadInteger(activities[0]?.contractPayload, ["position_id", "positionId"])
-      ?? (nextPositionId > 1 ? 1 : null);
+      ?? (nextPositionId > 1 ? nextPositionId - 1 : null);
 
     let market = null;
     let oracle = null;
@@ -2414,10 +2711,16 @@ async function loadPerpsModule(environment, authority) {
     const guardFlags = normalizeInteger(market?.[11]) ?? 0;
     const markPrice = normalizeInteger(oracle?.[0]) ?? normalizeInteger(position?.[8]) ?? 0;
     const indexPrice = normalizeInteger(oracle?.[1]) ?? normalizeInteger(position?.[9]) ?? 0;
+    const oracleConfidenceBps = normalizeInteger(oracle?.[2]) ?? 0;
+    const oracleSlot = normalizeInteger(oracle?.[3]) ?? 0;
     const utilisationBps = normalizeInteger(risk?.[3]) ?? 0;
     const backlog = normalizeInteger(automation[5]) ?? 0;
     const safeMode = normalizeInteger(automation[6]) ?? 0;
-    const withdrawalOnly = normalizeInteger(config[2]) ?? 0;
+    const withdrawalOnly = normalizeInteger(config[3]) ?? 0;
+    const collateralSymbol = assetTicker(config[0] || "usdt");
+    const poolBalance = normalizeInteger(collateralPool[1]) ?? 0;
+    const reservedMargin = normalizeInteger(collateralPool[2]) ?? 0;
+    const collateralSurplus = normalizeInteger(collateralPool[3]) ?? 0;
     const positionRegistered = (normalizeInteger(position?.[0]) ?? 0) === 1;
     const positionSize = normalizeInteger(position?.[3]) ?? 0;
     const positionMargin = normalizeInteger(position?.[4]) ?? 0;
@@ -2431,19 +2734,21 @@ async function loadPerpsModule(environment, authority) {
         : "Perps live",
       blurb: joinCompact([
         `Mark ${formatAmount(markPrice, 2)} / index ${formatAmount(indexPrice, 2)}`,
+        `Oracle confidence ${formatBasisPoints(oracleConfidenceBps)} at slot ${formatCount(oracleSlot)}`,
+        `Pool ${formatAmount(poolBalance)} ${collateralSymbol} / ${formatAmount(reservedMargin)} reserved / ${formatAmount(collateralSurplus)} surplus`,
         `Utilisation ${formatRatioBasisPoints(utilisationBps)}`,
         `Backlog ${formatCount(backlog)}`,
       ]),
       metrics: [
         createMetric("Open Interest", openInterestCap > 0 ? `${formatAmount(openInterest)} / ${formatAmount(openInterestCap)}` : "-"),
-        createMetric("Utilisation", formatRatioBasisPoints(utilisationBps)),
+        createMetric("Collateral Pool", `${formatAmount(poolBalance)} ${collateralSymbol}`),
         createMetric(
           "Tracked Position",
           positionRegistered
             ? joinCompact([
                 `${formatAmount(positionSize)} size`,
                 `${formatAmount(positionMargin)} margin`,
-                `${formatSignedAssetAmount(positionRealized, assetTicker(config[0] || "usdt"))}`,
+                `${formatSignedAssetAmount(positionRealized, collateralSymbol)}`,
               ])
             : "No recent position",
         ),
@@ -2519,7 +2824,7 @@ async function loadLaunchpadModule(environment, authority) {
 
   try {
     const [bindingRaw, activityRaw] = await Promise.all([
-      callView(environment.name, contract.contract_address, authority, "factory_binding_state"),
+      callView(environment.name, contract.contract_address, authority, "factory_config"),
       listContractActivity(environment.name, contract.contract_address, authority, {
         limit: DEFAULT_MODULE_ACTIVITY_LIMIT,
       }),
@@ -2558,7 +2863,7 @@ async function loadLaunchpadModule(environment, authority) {
     const allocationClaimed = normalizeInteger(allocationState?.[3]) ?? 0;
     return buildModuleCard(definition, contract, {
       statusTone:
-        (normalizeInteger(binding[0]) ?? 0) === 0 || (normalizeInteger(binding[1]) ?? 0) === 0
+        !binding[2] || !binding[3] || (normalizeInteger(binding[4]) ?? 1) !== 0
           ? "guarded"
           : "live",
       statusLabel: closed > 0 ? (successful > 0 ? "Successful" : "Closed") : "Sale live",
@@ -2575,77 +2880,7 @@ async function loadLaunchpadModule(environment, authority) {
         createMetric("Soft Cap", softCap > 0 ? formatAmount(softCap) : "-"),
         createMetric("Allocation", allocationName ? formatAmount(allocationClaimed) : "No allocation"),
       ],
-      radarValue: saleName ? `${formatAmount(raised)} raised` : "Factory bound",
-      rawActivities: activities,
-    });
-  } catch (error) {
-    return buildErrorModule(definition, contract, error);
-  }
-}
-
-async function loadOptionsManagerModule(environment, authority) {
-  const definition = PRODUCT_DEFINITIONS.find((item) => item.key === "optionsManager");
-  const contract = resolveEnvironmentContract(environment, definition.contractKey);
-  if (!contract) {
-    return buildMissingModule(definition);
-  }
-
-  try {
-    const [configRaw, automationRaw, activityRaw] = await Promise.all([
-      callView(environment.name, contract.contract_address, authority, "manager_config"),
-      callView(environment.name, contract.contract_address, authority, "automation_state"),
-      listContractActivity(environment.name, contract.contract_address, authority, {
-        limit: DEFAULT_MODULE_ACTIVITY_LIMIT,
-      }),
-    ]);
-    const config = normalizeTupleValue(configRaw) || [];
-    const automation = normalizeTupleValue(automationRaw) || [];
-    const activities = normalizeActivityItems(activityRaw);
-    const nextTemplateId = normalizeInteger(config[2]) ?? 0;
-    const nextSeriesId = normalizeInteger(config[3]) ?? 0;
-    const seriesId =
-      findPayloadInteger(activities[0]?.contractPayload, ["series_id", "seriesId"])
-      ?? (nextSeriesId > 1 ? nextSeriesId - 1 : null);
-    let seriesState = null;
-    let templateState = null;
-    if (seriesId !== null) {
-      seriesState = normalizeTupleValue(
-        await callViewOptional(environment.name, contract.contract_address, authority, "series_state", {
-          series_id: seriesId,
-        }),
-      );
-      const templateId =
-        findPayloadInteger(activities[0]?.contractPayload, ["template_id", "templateId"])
-        ?? normalizeInteger(seriesState?.[2])
-        ?? (nextTemplateId > 1 ? nextTemplateId - 1 : null);
-      if (templateId !== null) {
-        templateState = normalizeTupleValue(
-          await callViewOptional(environment.name, contract.contract_address, authority, "template_state", {
-            template_id: templateId,
-          }),
-        );
-      }
-    }
-    const withdrawalOnly = normalizeInteger(config[1]) ?? 0;
-    const safeMode = normalizeInteger(automation[6]) ?? normalizeInteger(config[8]) ?? 0;
-    const premiumBps = normalizeInteger(seriesState?.[5]) ?? 0;
-    const strikeBps = normalizeInteger(seriesState?.[6]) ?? normalizeInteger(templateState?.[3]) ?? 0;
-    const activeSeries = Math.max(0, (normalizeInteger(config[3]) ?? 1) - 1);
-    return buildModuleCard(definition, contract, {
-      statusTone: withdrawalOnly > 0 || safeMode > 0 ? "guarded" : "live",
-      statusLabel: withdrawalOnly > 0 || safeMode > 0 ? "Guarded" : "Series live",
-      hero: activeSeries > 0 ? `${formatCount(activeSeries)} series` : "Options ready",
-      blurb: joinCompact([
-        seriesId !== null ? `Series #${seriesId}` : "No tracked series",
-        `Premium ${formatBasisPoints(premiumBps)}`,
-        `Strike ${formatBasisPoints(strikeBps)}`,
-      ]),
-      metrics: [
-        createMetric("Series", formatCount(activeSeries)),
-        createMetric("Premium", formatBasisPoints(premiumBps)),
-        createMetric("Strike", formatBasisPoints(strikeBps)),
-      ],
-      radarValue: activeSeries > 0 ? `${formatCount(activeSeries)} series` : "No series",
+      radarValue: saleName ? `${formatAmount(raised)} raised` : "Factory ready",
       rawActivities: activities,
     });
   } catch (error) {
@@ -2654,7 +2889,7 @@ async function loadOptionsManagerModule(environment, authority) {
 }
 
 async function loadOptionsFactoryModule(environment, authority) {
-  const definition = PRODUCT_DEFINITIONS.find((item) => item.key === "optionsFactory");
+  const definition = PRODUCT_DEFINITIONS.find((item) => item.key === "options");
   const contract = resolveEnvironmentContract(environment, definition.contractKey);
   if (!contract) {
     return buildMissingModule(definition);
@@ -2671,7 +2906,7 @@ async function loadOptionsFactoryModule(environment, authority) {
     const config = normalizeTupleValue(configRaw) || [];
     const automation = normalizeTupleValue(automationRaw) || [];
     const activities = normalizeActivityItems(activityRaw);
-    const nextPositionId = normalizeInteger(config[2]) ?? 0;
+    const nextPositionId = normalizeInteger(config[4]) ?? 0;
     const positionId =
       findPayloadInteger(activities[0]?.contractPayload, ["position_id", "positionId"])
       ?? (nextPositionId > 1 ? nextPositionId - 1 : null);
@@ -2692,8 +2927,8 @@ async function loadOptionsFactoryModule(environment, authority) {
         }),
       )
       : null;
-    const withdrawalOnly = normalizeInteger(config[1]) ?? 0;
-    const safeMode = normalizeInteger(automation[6]) ?? normalizeInteger(config[6]) ?? 0;
+    const withdrawalOnly = normalizeInteger(config[3]) ?? 0;
+    const safeMode = normalizeInteger(automation[5]) ?? normalizeInteger(config[8]) ?? 0;
     const utilisationBps = normalizeInteger(seriesState?.[6]) ?? 0;
     const premiumPaid = normalizeInteger(positionState?.[4]) ?? 0;
     const collateralLocked = normalizeInteger(positionState?.[5]) ?? 0;
@@ -2746,12 +2981,11 @@ async function loadCoverModule(environment, authority) {
         }),
       )
       : null;
-    const withdrawalOnly = normalizeInteger(config[2]) ?? 0;
-    const safeMode = normalizeInteger(automation[6]) ?? normalizeInteger(config[8]) ?? 0;
-    const payout = normalizeInteger(policyState?.[4]) ?? 0;
-    const coveredNotional = normalizeInteger(policyState?.[7]) ?? 0;
-    const observationCount = normalizeInteger(policyState?.[9]) ?? 0;
-    const lastObserved = normalizeInteger(policyState?.[10]) ?? 0;
+    const withdrawalOnly = normalizeInteger(config[3]) ?? 0;
+    const safeMode = normalizeInteger(automation[5]) ?? 0;
+    const payout = normalizeInteger(policyState?.[3]) ?? 0;
+    const coveredNotional = normalizeInteger(policyState?.[6]) ?? 0;
+    const observationCount = normalizeInteger(policyState?.[10]) ?? 0;
     return buildModuleCard(definition, contract, {
       statusTone: withdrawalOnly > 0 || safeMode > 0 ? "guarded" : "live",
       statusLabel: withdrawalOnly > 0 || safeMode > 0 ? "Guarded" : "Monitoring",
@@ -2759,7 +2993,7 @@ async function loadCoverModule(environment, authority) {
       blurb: joinCompact([
         `Payout ${formatAmount(payout)}`,
         `Notional ${formatAmount(coveredNotional)}`,
-        lastObserved > 0 ? `Last observed ${formatAmount(lastObserved, 2)}` : null,
+        policyState ? `Status ${normalizeInteger(policyState[8]) ?? 0}` : null,
       ]),
       metrics: [
         createMetric("Payout", formatAmount(payout)),
@@ -2817,7 +3051,7 @@ async function loadProductModules(environment, authority, fills, metrics, symbol
       loadPerpsModule(environment, authority),
       loadFarmsModule(environment, authority),
       loadLaunchpadModule(environment, authority),
-      loadGenericProductModule(environment, authority, "options"),
+      loadOptionsFactoryModule(environment, authority),
       loadCoverModule(environment, authority),
       loadGenericProductModule(environment, authority, "intents"),
       loadGenericProductModule(environment, authority, "vaults"),
@@ -2902,13 +3136,15 @@ function describeContractActivity(module, activity) {
     case "perps": {
       const marketId = findPayloadInteger(payload, ["market_id", "marketId"]);
       const positionId = findPayloadInteger(payload, ["position_id", "positionId"]);
-      const size = findPayloadInteger(payload, ["size"]);
-      const margin = findPayloadInteger(payload, ["margin"]);
+      const size = findPayloadInteger(payload, ["size", "size_delta"]);
+      const margin = findPayloadInteger(payload, ["margin", "margin_delta", "amount"]);
+      const requestedLeverageBps = findPayloadInteger(payload, ["requested_leverage_bps"]);
       return {
         action: humanizeEntrypoint(entrypoint),
         exposure: joinCompact([
           size !== null ? `${formatAmount(size)} size` : null,
           margin !== null ? `${formatAmount(margin)} margin` : null,
+          requestedLeverageBps !== null ? `${formatAmount(requestedLeverageBps / 10000, 2)}x` : null,
         ]) || "Perp action",
         context: joinCompact([
           marketId !== null ? `Market ${marketId}` : null,
@@ -2942,29 +3178,14 @@ function describeContractActivity(module, activity) {
         ]),
       };
     }
-    case "optionsManager": {
-      const seriesId = findPayloadInteger(payload, ["series_id", "seriesId"]);
-      const templateId = findPayloadInteger(payload, ["template_id", "templateId"]);
-      const maxNotional = findPayloadInteger(payload, ["max_notional"]);
-      return {
-        action: humanizeEntrypoint(entrypoint),
-        exposure: maxNotional !== null ? `${formatAmount(maxNotional)} max notional` : "Series action",
-        context: joinCompact([
-          seriesId !== null ? `Series #${seriesId}` : null,
-          templateId !== null ? `Template #${templateId}` : null,
-        ]),
-      };
-    }
-    case "optionsFactory": {
+    case "options": {
       const seriesId = findPayloadInteger(payload, ["series_id", "seriesId"]);
       const positionId = findPayloadInteger(payload, ["position_id", "positionId"]);
       const notional = findPayloadInteger(payload, ["notional"]);
-      const premiumPaid = findPayloadInteger(payload, ["premium_paid"]);
       return {
         action: humanizeEntrypoint(entrypoint),
         exposure: joinCompact([
           notional !== null ? `${formatAmount(notional)} notional` : null,
-          premiumPaid !== null ? `${formatAmount(premiumPaid)} premium` : null,
         ]) || "Option action",
         context: joinCompact([
           seriesId !== null ? `Series #${seriesId}` : null,
@@ -3023,7 +3244,7 @@ function describeContractActivity(module, activity) {
     }
     case "operators": {
       const service = findPayloadString(payload, ["service"]);
-      const amount = findPayloadInteger(payload, ["amount", "min_bond", "fees_accrued"]);
+      const amount = findPayloadInteger(payload, ["amount", "min_bond"]);
       const health = findPayloadInteger(payload, ["health_bps", "healthBps"]);
       return {
         action: humanizeEntrypoint(entrypoint),
@@ -3833,15 +4054,18 @@ function renderWorkspace() {
   syncTradeControls();
 }
 
-function clearWorkspaceForLoading(message) {
-  state.workspace = null;
-  renderWorkspace();
+function stageWorkspaceForLoading(identity, message) {
+  if (!workspaceMatchesIdentity(identity)) {
+    state.workspace = null;
+    renderWorkspace();
+  }
   setBanner(statusBanner, message, "muted");
 }
 
 async function refreshWorkspace(options = {}) {
   const token = ++state.refreshToken;
   const reloadCatalog = options.reloadCatalog !== false;
+  let identity = "";
 
   try {
     if (reloadCatalog) {
@@ -3855,6 +4079,7 @@ async function refreshWorkspace(options = {}) {
     const environment = state.currentEnvironment;
     const contract = state.currentContract;
     const authority = currentAuthority();
+    identity = synchronizeWorkspaceIdentity();
     rememberAuthority();
     syncTradeControls();
 
@@ -3865,12 +4090,13 @@ async function refreshWorkspace(options = {}) {
       throw new Error(`No deployed ${state.catalog?.preferred_contract_key || "router"} contract is available in ${environment.name}.`);
     }
     if (!authority) {
-      clearWorkspaceForLoading("Enter an authority to load router state, chart history, and PnL.");
+      stageWorkspaceForLoading(identity, "Enter an authority to load router state, chart history, and PnL.");
       ensureLiveFollow();
       return;
     }
 
-    clearWorkspaceForLoading(
+    stageWorkspaceForLoading(
+      identity,
       `Loading ${environment.name} trader cockpit for ${truncateMiddle(authority, 16, 10)}…`,
     );
 
@@ -3902,7 +4128,7 @@ async function refreshWorkspace(options = {}) {
       }),
     ]);
 
-    if (token !== state.refreshToken) {
+    if (token !== state.refreshToken || identity !== workspaceIdentity()) {
       return;
     }
 
@@ -3919,9 +4145,21 @@ async function refreshWorkspace(options = {}) {
       requireProxySuccess(activityResult, "trader activity").response_json,
     ) || {};
 
-    const assets = {
+    const assetIds = {
       baseAssetId: accountPayload?.assets?.baseAssetId || fillsPayload.base_asset_id || "xor#universal",
       quoteAssetId: accountPayload?.assets?.quoteAssetId || fillsPayload.quote_asset_id || "quote",
+    };
+    const [baseAssetScale, quoteAssetScale] = await Promise.all([
+      fetchAssetDefinitionScale(environment, assetIds.baseAssetId, "Base"),
+      fetchAssetDefinitionScale(environment, assetIds.quoteAssetId, "Quote"),
+    ]);
+    if (token !== state.refreshToken || identity !== workspaceIdentity()) {
+      return;
+    }
+    const assets = {
+      ...assetIds,
+      baseAssetScale,
+      quoteAssetScale,
     };
     const symbols = {
       baseAssetId: assets.baseAssetId,
@@ -3950,7 +4188,13 @@ async function refreshWorkspace(options = {}) {
     const unifiedActivities = normalizeTraderActivityItems(activityPayload.items);
     const historyHead = normalizeInteger(accountPayload.historyHead ?? fillsPayload.history_head) ?? 0;
 
+    if (token !== state.refreshToken || identity !== workspaceIdentity()) {
+      return;
+    }
+
     state.workspace = {
+      identity,
+      environmentName: environment.name,
       authority,
       assets,
       historyHead,
@@ -3971,44 +4215,25 @@ async function refreshWorkspace(options = {}) {
     renderLiveStatus();
     ensureLiveFollow();
   } catch (error) {
-    if (token !== state.refreshToken) {
+    if (token !== state.refreshToken || (identity && identity !== workspaceIdentity())) {
       return;
     }
     console.error(error);
-    state.workspace = null;
     renderWorkspace();
-    setBanner(statusBanner, error.message || "Failed to load trader cockpit.", "error");
+    setBanner(
+      statusBanner,
+      `${error.message || "Failed to load trader cockpit."}${state.workspace ? " Retaining the last complete workspace." : ""}`,
+      state.workspace ? "warning" : "error",
+    );
     ensureLiveFollow();
   }
-}
-
-function extractStatusKind(payload) {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const directStatus = payload.status;
-  if (directStatus && typeof directStatus === "object" && typeof directStatus.kind === "string") {
-    return directStatus.kind;
-  }
-  if (typeof directStatus === "string") {
-    return directStatus;
-  }
-  const nested = payload.content?.status;
-  if (nested && typeof nested === "object" && typeof nested.kind === "string") {
-    return nested.kind;
-  }
-  if (typeof nested === "string") {
-    return nested;
-  }
-  return null;
 }
 
 async function waitForTransaction(environmentName, txHashHex) {
   const deadline = Date.now() + DEFAULT_TRANSACTION_POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const payload = await fetchTransactionStatus(environmentName, txHashHex);
-    const statusKind = extractStatusKind(payload);
-    if (statusKind && (SUCCESS_STATUSES.has(statusKind) || FAILURE_STATUSES.has(statusKind))) {
+    const statusKind = await fetchTransactionStatus(environmentName, txHashHex);
+    if (SUCCESS_STATUSES.has(statusKind) || FAILURE_STATUSES.has(statusKind)) {
       return statusKind;
     }
     await new Promise((resolve) => {
@@ -4052,12 +4277,7 @@ async function submitTrade() {
       await fetchProxyPost("/api/call", requestPayload),
       action?.entrypoint || "trader action",
     );
-    const txHashHex = result.tx_hash_hex || result.response_json?.tx_hash_hex || result.entrypoint_hash;
-    if (!txHashHex) {
-      setBanner(tradeResult, `${action?.label || "Action"} submitted, but no transaction hash was returned.`, "success");
-      await refreshWorkspace({ reloadCatalog: false });
-      return;
-    }
+    const txHashHex = requireCurrentTransactionHash(result);
 
     setBanner(
       tradeResult,
@@ -4066,12 +4286,12 @@ async function submitTrade() {
     );
     const statusKind = await waitForTransaction(environment.name, txHashHex);
     if (SUCCESS_STATUSES.has(statusKind)) {
+      await refreshWorkspace({ reloadCatalog: false });
       setBanner(
         tradeResult,
         `${action?.label || "Action"} committed as ${truncateMiddle(txHashHex, 12, 10)}.`,
         "success",
       );
-      await refreshWorkspace({ reloadCatalog: false });
       return;
     }
     if (FAILURE_STATUSES.has(statusKind)) {
@@ -4110,7 +4330,10 @@ function attachEventListeners() {
   });
 
   authorityInput.addEventListener("input", () => {
+    state.refreshToken += 1;
+    synchronizeWorkspaceIdentity();
     rememberAuthority();
+    renderWorkspace();
     syncTradeControls();
     ensureLiveFollow();
   });

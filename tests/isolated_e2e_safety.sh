@@ -36,16 +36,16 @@ unset SORASWAP_LOCAL_ACCEPTANCE_EXPECTED_GIT_SHA
 
 matcher_config="$fixture_root/peer0.toml"
 isolated_command_matches_peer_config \
-  "$fixture_root/bin/irohad --sora --config $matcher_config" "$matcher_config" \
-  || fail "exact irohad config command was rejected"
+  "$fixture_root/bin/iroha3d --config $matcher_config" "$matcher_config" \
+  || fail "exact iroha3d config command was rejected"
 ! isolated_command_matches_peer_config \
-  "$fixture_root/bin/not-irohad --config $matcher_config" "$matcher_config" \
-  || fail "non-irohad executable was accepted"
+  "$fixture_root/bin/not-iroha3d --config $matcher_config" "$matcher_config" \
+  || fail "non-iroha3d executable was accepted"
 ! isolated_command_matches_peer_config \
-  "$fixture_root/bin/irohad --config $matcher_config.other" "$matcher_config" \
+  "$fixture_root/bin/iroha3d --config $matcher_config.other" "$matcher_config" \
   || fail "config path prefix was accepted as an exact match"
 ! isolated_command_matches_peer_config \
-  "$fixture_root/bin/irohad --config $matcher_config --config=$matcher_config" "$matcher_config" \
+  "$fixture_root/bin/iroha3d --config $matcher_config --config=$matcher_config" "$matcher_config" \
   || fail "duplicate config arguments were accepted"
 
 (
@@ -154,7 +154,7 @@ mismatch_status=0
 (
   export PATH="$mock_bin:$PATH"
   export ISOLATED_TEST_PS_STATE="$mismatch_dir/ps-state"
-  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/irohad --config $mismatch_dir/peer0.toml.other"
+  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/iroha3d --config $mismatch_dir/peer0.toml.other"
   export ISOLATED_TEST_STOP_MARKER="$mismatch_marker"
   isolated_cleanup_localnet "$mismatch_dir"
 ) >/dev/null 2>&1 || mismatch_status="$?"
@@ -175,7 +175,7 @@ inspection_error_status=0
 (
   export PATH="$mock_bin:$PATH"
   export ISOLATED_TEST_PS_STATE="$inspection_error_dir/ps-state"
-  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/irohad --config $inspection_error_dir/peer0.toml"
+  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/iroha3d --config $inspection_error_dir/peer0.toml"
   export ISOLATED_TEST_STOP_MARKER="$inspection_error_marker"
   isolated_cleanup_localnet "$inspection_error_dir"
 ) >/dev/null 2>&1 || inspection_error_status="$?"
@@ -194,7 +194,7 @@ stop_failure_status=0
 (
   export PATH="$mock_bin:$PATH"
   export ISOLATED_TEST_PS_STATE="$stop_failure_dir/ps-state"
-  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/irohad --config $stop_failure_dir/peer0.toml"
+  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/iroha3d --config $stop_failure_dir/peer0.toml"
   isolated_cleanup_localnet "$stop_failure_dir"
 ) >/dev/null 2>&1 || stop_failure_status="$?"
 [[ "$stop_failure_status" == "37" ]] || fail "generated stop.sh failure status was not propagated"
@@ -211,7 +211,7 @@ still_live_status=0
 (
   export PATH="$mock_bin:$PATH"
   export ISOLATED_TEST_PS_STATE="$still_live_dir/ps-state"
-  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/irohad --config=$still_live_dir/peer0.toml"
+  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/iroha3d --config=$still_live_dir/peer0.toml"
   isolated_cleanup_localnet "$still_live_dir"
 ) >/dev/null 2>&1 || still_live_status="$?"
 [[ "$still_live_status" == "72" ]] || fail "still-live peer postcondition did not fail closed"
@@ -227,7 +227,7 @@ printf 'zombie\n' > "$zombie_dir/ps-state"
 (
   export PATH="$mock_bin:$PATH"
   export ISOLATED_TEST_PS_STATE="$zombie_dir/ps-state"
-  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/irohad --config $zombie_dir/peer0.toml"
+  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/iroha3d --config $zombie_dir/peer0.toml"
   export ISOLATED_TEST_PID_FILE="$zombie_dir/peer0.pid"
   isolated_cleanup_localnet "$zombie_dir"
 ) >/dev/null 2>&1 || fail "zombie peer state was treated as live"
@@ -244,7 +244,7 @@ printf 'live\n' > "$success_dir/ps-state"
 (
   export PATH="$mock_bin:$PATH"
   export ISOLATED_TEST_PS_STATE="$success_dir/ps-state"
-  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/irohad --config $success_dir/peer0.toml"
+  export ISOLATED_TEST_PS_COMMAND="$fixture_root/bin/iroha3d --config $success_dir/peer0.toml"
   export ISOLATED_TEST_PID_FILE="$success_dir/peer0.pid"
   isolated_cleanup_localnet "$success_dir"
 ) >/dev/null 2>&1 || fail "exact generated-stop cleanup failed"

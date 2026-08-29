@@ -1,54 +1,108 @@
-koto_test { target: "../../contracts/perps/perps_engine.ko" }
+module PerpsAdminRegressions {
+    koto_test {
+        target: "../../contracts/perps/perps_engine.ko"
+    }
 
-fixture perps_admin_actors {
-  actor("owner", AccountId::parse("ed0120AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
-}
+    fixture perps_admin_actors {
+        actor("owner", AccountId::parse("sorauﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"));
+        grant_permission("owner", "AssetOps");
+    }
 
-fn seed_perps_market(AccountId owner) {
-  PerpsInitialized = 1;
-  PerpsOwner = owner;
-  PerpsCollateralAsset = asset_definition("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
-  PerpsRiskVaultContract = b"";
-  PerpsWithdrawalOnly = 0;
-  PerpsNextMarketId = 2;
-  PerpsNextPositionId = 1;
-  PerpsMarketAsset[1] = asset_definition("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
-  PerpsMarketActive[1] = 1;
-  PerpsMarketOpenInterest[1] = 0;
-  PerpsMarketOpenInterestCap[1] = 100_000;
-  PerpsMarketMaxLeverageBps[1] = 50_000;
-  PerpsMarketMaintenanceMarginBps[1] = 500;
-  PerpsMarketLiquidationFeeBps[1] = 1_000;
-  PerpsMarketFundingBps[1] = 100;
-  PerpsMarketFundingIntervalSlots[1] = 4;
-  PerpsMarketOracleStaleSlots[1] = 4;
-  PerpsMarketBacklogLimit[1] = 6;
-  PerpsMarketUtilisationClampBps[1] = 9_000;
-  PerpsMarketLiquidationStressLimit[1] = 4;
-  PerpsMarketGuardFlags[1] = 0;
-}
+    fn seed_perps_market(AccountId owner) {
+        PerpsInitialized = 1;
+        PerpsOwner = owner;
+        PerpsCollateralAsset = AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+        PerpsCustodyAccount = AccountId::parse(
+            "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
+        );
+        PerpsOracleAccount = AccountId::parse(
+            "sorauﾛ1PﾈﾈｲPｹﾙﾄﾒﾜｻヱﾉBﾅQUﾅｹcDﾂPbﾂｵsyZﾘｻﾉcﾂYDｼﾇヱRW66MF",
+        );
+        PerpsCollateralPoolBalance = 0;
+        PerpsReservedMargin = 0;
+        PerpsWithdrawalOnly = 0;
+        PerpsNextMarketId = 2;
+        PerpsNextPositionId = 1;
+        PerpsMarketAsset[1] = AssetDefinitionId::parse("62Fk4FPcMuLvW5QjDGNF2a4jAmjM");
+        PerpsMarketActive[1] = 1;
+        PerpsMarketOpenInterest[1] = 0;
+        PerpsMarketOpenInterestCap[1] = 100_000;
+        PerpsMarketMaxLeverageBps[1] = 50_000;
+        PerpsMarketMaintenanceMarginBps[1] = 500;
+        PerpsMarketLiquidationFeeBps[1] = 1_000;
+        PerpsMarketFundingBps[1] = 100;
+        PerpsMarketFundingIntervalSlots[1] = 4;
+        PerpsMarketOracleStaleSlots[1] = 4;
+        PerpsMarketBacklogLimit[1] = 6;
+        PerpsMarketUtilisationClampBps[1] = 9_000;
+        PerpsMarketLiquidationStressLimit[1] = 4;
+        PerpsMarketGuardFlags[1] = 0;
+    }
 
-#[test(fixture="perps_admin_actors")]
-fn update_market_accepts_valid_replacement_params() {
-  let owner = actor_account("owner");
-  seed_perps_market(owner);
+    #[test(fixture = "perps_admin_actors")]
+    fn update_market_accepts_valid_replacement_params() {
+        let owner = test::actor_account("owner");
+        seed_perps_market(owner);
+        test::invoke_kotoage_as(
+            actor: "owner",
+            kotoage: "update_market",
+            arguments: Json::parse(
+                "{\"market_id\":\"1\",\"max_leverage_bps\":\"40000\",\"maintenance_margin_bps\":\"600\",\"liquidation_fee_bps\":\"900\",\"open_interest_cap\":\"90000\",\"funding_bps\":\"50\",\"funding_interval_slots\":\"5\",\"oracle_stale_slots\":\"5\",\"backlog_limit\":\"5\",\"utilisation_clamp_bps\":\"8500\",\"liquidation_stress_limit\":\"3\",\"guard_flags\":\"0\",\"active\":\"1\"}",
+            ),
+        );
+        test::assert(
+            PerpsMarketMaxLeverageBps.get_or(key: 1, default: 0) == 40_000,
+            "updated leverage",
+        );
+        test::assert(
+            PerpsMarketMaintenanceMarginBps.get_or(key: 1, default: 0) == 600,
+            "updated maintenance",
+        );
+        test::assert(
+            PerpsMarketOracleStaleSlots.get_or(key: 1, default: 0) == 5,
+            "updated stale slots",
+        );
+        test::assert(PerpsMarketActive.get_or(key: 1, default: 0) == 1, "updated active flag");
+    }
 
-  invoke_entrypoint_as("owner", "update_market", json("{\"market_id\":1,\"max_leverage_bps\":40000,\"maintenance_margin_bps\":600,\"liquidation_fee_bps\":900,\"open_interest_cap\":90000,\"funding_bps\":50,\"funding_interval_slots\":5,\"oracle_stale_slots\":5,\"backlog_limit\":5,\"utilisation_clamp_bps\":8500,\"liquidation_stress_limit\":3,\"guard_flags\":0,\"active\":1}"));
-
-  assert(PerpsMarketMaxLeverageBps[1] == 40_000, "updated leverage");
-  assert(PerpsMarketMaintenanceMarginBps[1] == 600, "updated maintenance");
-  assert(PerpsMarketOracleStaleSlots[1] == 5, "updated stale slots");
-  assert(PerpsMarketActive[1] == 1, "updated active flag");
-}
-
-#[test(fixture="perps_admin_actors")]
-fn update_market_rejects_invalid_replacement_params() {
-  let owner = actor_account("owner");
-  seed_perps_market(owner);
-
-  expect_reject_as("owner", "update_market", json("{\"market_id\":1,\"max_leverage_bps\":40000,\"maintenance_margin_bps\":600,\"liquidation_fee_bps\":10001,\"open_interest_cap\":90000,\"funding_bps\":50,\"funding_interval_slots\":5,\"oracle_stale_slots\":5,\"backlog_limit\":5,\"utilisation_clamp_bps\":8500,\"liquidation_stress_limit\":3,\"guard_flags\":0,\"active\":1}"));
-  expect_reject_as("owner", "update_market", json("{\"market_id\":1,\"max_leverage_bps\":40000,\"maintenance_margin_bps\":0,\"liquidation_fee_bps\":900,\"open_interest_cap\":90000,\"funding_bps\":50,\"funding_interval_slots\":5,\"oracle_stale_slots\":5,\"backlog_limit\":5,\"utilisation_clamp_bps\":8500,\"liquidation_stress_limit\":3,\"guard_flags\":0,\"active\":1}"));
-  expect_reject_as("owner", "update_market", json("{\"market_id\":1,\"max_leverage_bps\":40000,\"maintenance_margin_bps\":600,\"liquidation_fee_bps\":900,\"open_interest_cap\":0,\"funding_bps\":50,\"funding_interval_slots\":5,\"oracle_stale_slots\":5,\"backlog_limit\":5,\"utilisation_clamp_bps\":8500,\"liquidation_stress_limit\":3,\"guard_flags\":0,\"active\":1}"));
-  expect_reject_as("owner", "update_market", json("{\"market_id\":1,\"max_leverage_bps\":40000,\"maintenance_margin_bps\":600,\"liquidation_fee_bps\":900,\"open_interest_cap\":90000,\"funding_bps\":50,\"funding_interval_slots\":5,\"oracle_stale_slots\":5,\"backlog_limit\":5,\"utilisation_clamp_bps\":10001,\"liquidation_stress_limit\":3,\"guard_flags\":0,\"active\":1}"));
-  expect_reject_as("owner", "update_market", json("{\"market_id\":1,\"max_leverage_bps\":40000,\"maintenance_margin_bps\":600,\"liquidation_fee_bps\":900,\"open_interest_cap\":90000,\"funding_bps\":50,\"funding_interval_slots\":5,\"oracle_stale_slots\":5,\"backlog_limit\":5,\"utilisation_clamp_bps\":8500,\"liquidation_stress_limit\":3,\"guard_flags\":0,\"active\":2}"));
+    #[test(fixture = "perps_admin_actors")]
+    fn update_market_rejects_invalid_replacement_params() {
+        let owner = test::actor_account("owner");
+        seed_perps_market(owner);
+        test::expect_reject_as(
+            actor: "owner",
+            kotoage: "update_market",
+            arguments: Json::parse(
+                "{\"market_id\":\"1\",\"max_leverage_bps\":\"40000\",\"maintenance_margin_bps\":\"600\",\"liquidation_fee_bps\":\"10001\",\"open_interest_cap\":\"90000\",\"funding_bps\":\"50\",\"funding_interval_slots\":\"5\",\"oracle_stale_slots\":\"5\",\"backlog_limit\":\"5\",\"utilisation_clamp_bps\":\"8500\",\"liquidation_stress_limit\":\"3\",\"guard_flags\":\"0\",\"active\":\"1\"}",
+            ),
+        );
+        test::expect_reject_as(
+            actor: "owner",
+            kotoage: "update_market",
+            arguments: Json::parse(
+                "{\"market_id\":\"1\",\"max_leverage_bps\":\"40000\",\"maintenance_margin_bps\":\"0\",\"liquidation_fee_bps\":\"900\",\"open_interest_cap\":\"90000\",\"funding_bps\":\"50\",\"funding_interval_slots\":\"5\",\"oracle_stale_slots\":\"5\",\"backlog_limit\":\"5\",\"utilisation_clamp_bps\":\"8500\",\"liquidation_stress_limit\":\"3\",\"guard_flags\":\"0\",\"active\":\"1\"}",
+            ),
+        );
+        test::expect_reject_as(
+            actor: "owner",
+            kotoage: "update_market",
+            arguments: Json::parse(
+                "{\"market_id\":\"1\",\"max_leverage_bps\":\"40000\",\"maintenance_margin_bps\":\"600\",\"liquidation_fee_bps\":\"900\",\"open_interest_cap\":\"0\",\"funding_bps\":\"50\",\"funding_interval_slots\":\"5\",\"oracle_stale_slots\":\"5\",\"backlog_limit\":\"5\",\"utilisation_clamp_bps\":\"8500\",\"liquidation_stress_limit\":\"3\",\"guard_flags\":\"0\",\"active\":\"1\"}",
+            ),
+        );
+        test::expect_reject_as(
+            actor: "owner",
+            kotoage: "update_market",
+            arguments: Json::parse(
+                "{\"market_id\":\"1\",\"max_leverage_bps\":\"40000\",\"maintenance_margin_bps\":\"600\",\"liquidation_fee_bps\":\"900\",\"open_interest_cap\":\"90000\",\"funding_bps\":\"50\",\"funding_interval_slots\":\"5\",\"oracle_stale_slots\":\"5\",\"backlog_limit\":\"5\",\"utilisation_clamp_bps\":\"10001\",\"liquidation_stress_limit\":\"3\",\"guard_flags\":\"0\",\"active\":\"1\"}",
+            ),
+        );
+        test::expect_reject_as(
+            actor: "owner",
+            kotoage: "update_market",
+            arguments: Json::parse(
+                "{\"market_id\":\"1\",\"max_leverage_bps\":\"40000\",\"maintenance_margin_bps\":\"600\",\"liquidation_fee_bps\":\"900\",\"open_interest_cap\":\"90000\",\"funding_bps\":\"50\",\"funding_interval_slots\":\"5\",\"oracle_stale_slots\":\"5\",\"backlog_limit\":\"5\",\"utilisation_clamp_bps\":\"8500\",\"liquidation_stress_limit\":\"3\",\"guard_flags\":\"0\",\"active\":\"2\"}",
+            ),
+        );
+    }
 }

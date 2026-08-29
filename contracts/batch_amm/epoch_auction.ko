@@ -1,6 +1,6 @@
 // Trigger-native bounded batch auction for XOR/stable launch routing.
 // Each epoch admits at most 64 orders and 64 price ticks, matching Kotodama
-// V1's compiler-proven iteration bound. Asset amounts are `quantity`.
+// the compiler-proven runtime bound. Asset amounts are `quantity`.
 
 seiyaku EpochAuction {
   error enum EpochAuctionError {
@@ -311,7 +311,7 @@ seiyaku EpochAuction {
     if best_base == zero_quantity() {
       return (0, zero_quantity(), zero_quantity(), zero_quantity());
     }
-    let midpoint_steps = ((last_best_tick - first_best_tick) / EpochTickStep) / 2;
+    let midpoint_steps = (last_best_tick - first_best_tick) / EpochTickStep / 2;
     let best_tick = first_best_tick + midpoint_steps * EpochTickStep;
     let best_totals = totals_at_tick(best_tick);
     return (best_tick, best_totals.2, best_totals.0, best_totals.1);
@@ -361,16 +361,53 @@ seiyaku EpochAuction {
     );
   }
 
+  fn assert_valid_initialization(
+    AssetDefinitionId base_asset,
+    AssetDefinitionId quote_asset,
+    AccountId custody_account
+  ) {
+    require(base_asset != quote_asset, EpochAuctionError::IdenticalAssets);
+    require(
+      custody_account != context::authority(),
+      EpochAuctionError::CustodyAccountIsOwner
+    );
+  }
+
+  fn assert_valid_epoch_configuration(
+    int epoch_id,
+    int start_slot,
+    int end_slot,
+    int lower_tick,
+    int upper_tick,
+    int tick_step,
+    int max_orders
+  ) {
+    require(epoch_id > EpochId, EpochAuctionError::StaleEpoch);
+    require(start_slot >= 0, EpochAuctionError::InvalidStartSlot);
+    require(end_slot > start_slot, EpochAuctionError::InvalidEndSlot);
+    require(lower_tick > 0, EpochAuctionError::InvalidLowerTick);
+    require(upper_tick >= lower_tick, EpochAuctionError::InvalidUpperTick);
+    require(tick_step > 0, EpochAuctionError::InvalidTickStep);
+    require(
+      (upper_tick - lower_tick) % tick_step == 0,
+      EpochAuctionError::MisalignedTickGrid
+    );
+    let tick_count = (upper_tick - lower_tick) / tick_step + 1;
+    require(tick_count <= 64, EpochAuctionError::TooManyTicks);
+    require(max_orders > 0 && max_orders <= 64, EpochAuctionError::InvalidMaxOrders);
+    require(start_slot >= context::block_height(), EpochAuctionError::StaleStartSlot);
+  }
+
   hajimari(
     AssetDefinitionId base_asset,
     AssetDefinitionId quote_asset,
     AccountId custody_account,
     AccountId guardian
   ) {
-    require(base_asset != quote_asset, EpochAuctionError::IdenticalAssets);
-    require(
-      custody_account != context::authority(),
-      EpochAuctionError::CustodyAccountIsOwner
+    assert_valid_initialization(
+      base_asset: base_asset,
+      quote_asset: quote_asset,
+      custody_account: custody_account
     );
     AuctionInitialized = 1;
     AuctionOwner = context::authority();
@@ -424,19 +461,15 @@ seiyaku EpochAuction {
     assert_not_paused();
     require(EpochStatus != 1, EpochAuctionError::EpochActive);
     persist_current_epoch_state();
-    require(epoch_id > EpochId, EpochAuctionError::StaleEpoch);
-    require(start_slot >= 0, EpochAuctionError::InvalidStartSlot);
-    require(start_slot >= context::block_height(), EpochAuctionError::StaleStartSlot);
-    require(end_slot > start_slot, EpochAuctionError::InvalidEndSlot);
-    require(lower_tick > 0, EpochAuctionError::InvalidLowerTick);
-    require(upper_tick >= lower_tick, EpochAuctionError::InvalidUpperTick);
-    require(tick_step > 0, EpochAuctionError::InvalidTickStep);
-    require(
-      (upper_tick - lower_tick) % tick_step == 0,
-      EpochAuctionError::MisalignedTickGrid
+    assert_valid_epoch_configuration(
+      epoch_id: epoch_id,
+      start_slot: start_slot,
+      end_slot: end_slot,
+      lower_tick: lower_tick,
+      upper_tick: upper_tick,
+      tick_step: tick_step,
+      max_orders: max_orders
     );
-    require(((upper_tick - lower_tick) / tick_step) + 1 <= 64, EpochAuctionError::TooManyTicks);
-    require(max_orders > 0 && max_orders <= 64, EpochAuctionError::InvalidMaxOrders);
     EpochId = epoch_id;
     EpochStartSlot = start_slot;
     EpochEndSlot = end_slot;

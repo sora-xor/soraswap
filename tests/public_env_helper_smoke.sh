@@ -17,6 +17,7 @@ while (( $# > 0 )); do
   shift
 done
 TMP_DIR="$(mktemp -d)"
+ROOT_ORACLE_FIXTURE_DIR="$(mktemp -d "$ROOT/tmp-public-env-helper-oracle.XXXXXX")"
 FIXTURE_SERVER_PID=""
 DEV_LOCK_PID=""
 DEFAULT_FAKE_MAKE_DIR="$TMP_DIR/default-fake-make"
@@ -102,6 +103,7 @@ fi
 cleanup() {
   [[ -z "${FIXTURE_SERVER_PID:-}" ]] || kill "$FIXTURE_SERVER_PID" >/dev/null 2>&1 || true
   [[ -z "${DEV_LOCK_PID:-}" ]] || kill "$DEV_LOCK_PID" >/dev/null 2>&1 || true
+  rm -rf "$ROOT_ORACLE_FIXTURE_DIR"
   rm -rf "$TMP_DIR"
 }
 
@@ -184,12 +186,106 @@ trap 'cmd_status=$?; echo "public_env_helper_smoke.sh failed near line ${LINENO}
 FAKE_IROHA_ROOT="$TMP_DIR/iroha"
 mkdir -p "$FAKE_IROHA_ROOT/target/debug"
 
+canonical_payload_error="$TMP_DIR/canonical-payload.error"
+(
+  export SORASWAP_ROOT="$ROOT"
+  export SORASWAP_SCRIPT_DIR="$ROOT/scripts"
+  export SORASWAP_IROHA_ROOT="$FAKE_IROHA_ROOT"
+  source "$ROOT/scripts/common.sh"
+
+  soraswap_require_canonical_contract_payload_json \
+    "fixture.route_swap" \
+    '{"amount_in":"10","input_is_base":"1","enabled":true,"items":[1],"metadata":{"slot":2}}'
+  ! soraswap_require_canonical_contract_payload_json \
+    "fixture.route_swap" \
+    '{"amount_in":10,"input_is_base":1}' \
+    2>"$canonical_payload_error"
+
+  torii_base_from_config() { printf '%s\n' 'https://torii.fixture'; }
+  sleep() { :; }
+  soraswap_curl_for_config() {
+    printf '%s\n' '{"id":"fixture-asset-id","name":"XOR","alias":"xor#universal","alias_binding":{"alias":"xor#universal","status":"permanent","bound_at_ms":0}}'
+  }
+  [[ "$(asset_definition_id_for_alias fixture 'xor#universal')" == "fixture-asset-id" ]]
+
+  soraswap_curl_for_config() {
+    printf '%s\n' '{"id":"fixture-asset-id","name":"XOR","alias":"xor#universal","alias_binding":{"alias":"xor#universal","status":"leased_grace","bound_at_ms":0}}'
+  }
+  ! asset_definition_id_for_alias fixture 'xor#universal' >/dev/null
+
+  soraswap_curl_for_config() {
+    printf '%s\n' '{"id":"fixture-asset-id","name":"XOR","alias":"xor#other.universal","alias_binding":{"alias":"xor#other.universal","status":"permanent","bound_at_ms":0}}'
+  }
+  ! asset_definition_id_for_alias fixture 'xor#universal' >/dev/null
+
+  public_env_for_config() { printf '%s\n' testnet; }
+  soraswap_curl_for_config() {
+    printf '%s\n' '{"id":"6TEAJqbb8oEPmLncoNiMRbLEK6tw","name":"XOR","spec":{"scale":9},"alias":"xor#universal","alias_binding":{"alias":"xor#universal","status":"permanent","bound_at_ms":0}}'
+  }
+  [[ "$(asset_definition_id_for_alias fixture 'xor#universal')" == "6TEAJqbb8oEPmLncoNiMRbLEK6tw" ]]
+
+  soraswap_curl_for_config() {
+    printf '%s\n' '{"id":"6TEAJqbb8oEPmLncoNiMRbLEK6tw","name":"XOR","spec":{"scale":null},"alias":"xor#universal","alias_binding":{"alias":"xor#universal","status":"permanent","bound_at_ms":0}}'
+  }
+  ! asset_definition_id_for_alias fixture 'xor#universal' >/dev/null 2>&1
+
+  soraswap_curl_for_config() {
+    printf '%s\n' '{"id":"6TEAJqbb8oEPmLncoNiMRbLEK6tw","name":"XOR","spec":{"scale":9},"alias":"xor#universal","alias_binding":{"alias":"xor#universal","status":"leased_active","bound_at_ms":0}}'
+  }
+  ! asset_definition_id_for_alias fixture 'xor#universal' >/dev/null 2>&1
+
+  fanout_headers="$TMP_DIR/fanout.headers"
+  printf '%s\r\n' \
+    'HTTP/2 200' \
+    'x-iroha-fanout-routes-failed: 0' \
+    'x-iroha-fanout-routes-denied: 0' \
+    'x-iroha-fanout-routes-unavailable: 0' \
+    'x-iroha-fanout-routes-not-found: 0' \
+    >"$fanout_headers"
+  soraswap_require_complete_torii_fanout_headers "$fanout_headers"
+  printf '%s\r\n' \
+    'HTTP/2 200' \
+    'x-iroha-fanout-routes-failed: 1' \
+    >"$fanout_headers"
+  ! soraswap_require_complete_torii_fanout_headers "$fanout_headers" >/dev/null 2>&1
+)
+rg -q 'contract numeric arguments must use canonical JSON strings' "$canonical_payload_error"
+rg -q 'amount_in, input_is_base' "$canonical_payload_error"
+rg -Fq 'asset_definition_id_for_alias "$config" "$SORASWAP_TAIRA_XOR_ASSET_ALIAS"' "$ROOT/scripts/taira_preflight.sh"
+rg -Fq 'scale $SORASWAP_TAIRA_XOR_ASSET_SCALE' "$ROOT/scripts/taira_preflight.sh"
+rg -Fq '6TEAJqbb8oEPmLncoNiMRbLEK6tw' "$ROOT/config/testnet/taira.client.toml.example"
+rg -Fq 'required numeric scale `9`' "$ROOT/config/testnet/taira.client.toml.example"
+rg -Fq 'XOR definition ID `6TEAJqbb8oEPmLncoNiMRbLEK6tw`' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'and numeric scale `9`' "$ROOT/docs/release/taira_operator_runbook.md"
+
+for current_api_script in \
+  scripts/bootstrap_contract_state.sh \
+  scripts/smoke_local.sh \
+  scripts/smoke_public.sh \
+  scripts/smoke_public_mutating.sh \
+  scripts/trader_public.sh; do
+  ! rg -n '\b(init_auction|init_trigger_twamm|init_referral|init_farm|init_bridge|bind_router|bind_share_asset)\b' \
+    "$ROOT/$current_api_script"
+done
+
 cat > "$FAKE_IROHA_ROOT/target/debug/kagami" <<'EOF'
 #!/usr/bin/env python3
 import sys
+import os
+import re
 
-if len(sys.argv) > 1 and sys.argv[1] == "keys":
-    print("ed0120DEADBEEF")
+if (
+    len(sys.argv) == 7
+    and sys.argv[1:4] == ["keys", "--algorithm", "ed25519"]
+    and sys.argv[4] == "--seed-hex"
+    and re.fullmatch(r"[0-9a-f]{64}", sys.argv[5])
+    and sys.argv[6] == "--compact"
+):
+    if os.environ.get("KAGAMI_ARGS_PATH"):
+        with open(os.environ["KAGAMI_ARGS_PATH"], "w", encoding="utf-8") as handle:
+            handle.write(" ".join(sys.argv[1:]))
+    print("ed0120" + "11" * 32)
+    print("802620" + "22" * 32)
     raise SystemExit(0)
 
 raise SystemExit(1)
@@ -215,7 +311,52 @@ EOF
 
 cat > "$FAKE_IROHA_ROOT/target/debug/iroha" <<'EOF'
 #!/bin/sh
+if [ -n "${SORASWAP_IROHA_DEV_ARGS_PATH:-}" ]; then
+  printf '%s\n' "$@" > "$SORASWAP_IROHA_DEV_ARGS_PATH"
+fi
+if [ -n "${SORASWAP_IROHA_DEV_PWD_PATH:-}" ]; then
+  pwd > "$SORASWAP_IROHA_DEV_PWD_PATH"
+fi
 case " $* " in
+  *" contract dev check "*)
+    manifest="iroha.contracts.toml"
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --manifest)
+          manifest="$2"
+          shift 2
+          ;;
+        --manifest=*)
+          manifest="${1#--manifest=}"
+          shift
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    python3 - "$manifest" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
+manifest = Path(sys.argv[1]).resolve()
+root = manifest.parent
+data = tomllib.loads(manifest.read_text())
+for contract in data.get("contracts", []):
+    source = contract.get("source")
+    if source and not (root / source).is_file():
+        print(f"failed to canonicalize `{root / source}`: No such file or directory", file=sys.stderr)
+        raise SystemExit(1)
+print(json.dumps({"ok": True}, sort_keys=True))
+PY
+    exit $?
+    ;;
   *" contract dev test "*)
     manifest="iroha.contracts.toml"
     test_calls="${SORASWAP_KOTO_TEST_CALLS:-/dev/null}"
@@ -247,10 +388,20 @@ manifest = Path(sys.argv[1]).resolve()
 output = Path(sys.argv[2])
 data = tomllib.loads(manifest.read_text())
 with output.open("a", encoding="utf-8") as stream:
-    for test in data.get("tests", []):
+    for index, test in enumerate(data.get("tests", [])):
         path = test.get("path")
-        if path:
-            stream.write(f"{(manifest.parent / path).resolve()}\n")
+        if not isinstance(path, str):
+            print(f"`tests[{index}].path` must be a string", file=sys.stderr)
+            raise SystemExit(1)
+        resolved = manifest.parent / path
+        if not resolved.is_file():
+            print(
+                f"Kotodama tests in `{resolved}` failed: failed to read {resolved}: "
+                "No such file or directory",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        stream.write(f"{resolved.resolve()}\n")
 PY
     exit $?
     ;;
@@ -359,17 +510,17 @@ for contract in data.get("contracts", []):
     artifact_path = root / artifact
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     stem = artifact_path.with_suffix("")
-    artifact_path.write_text("compiled by fake iroha\n", encoding="utf-8")
+    artifact_path.write_text("compiled by fake iroha" + chr(10), encoding="utf-8")
     Path(str(stem) + ".manifest.json").write_text(
-        '{"entrypoints":[],"states":[]}\n",
+        json.dumps({"entrypoints": [], "states": []}) + chr(10),
         encoding="utf-8",
     )
     Path(str(stem) + ".interface.json").write_text(
-        '{"entrypoints":[],"states":[]}\n",
+        json.dumps({"entrypoints": [], "states": []}) + chr(10),
         encoding="utf-8",
     )
-    Path(str(stem) + ".source-map.json").write_text("{}\n", encoding="utf-8")
-    Path(str(stem) + ".budget.json").write_text("[]\n", encoding="utf-8")
+    Path(str(stem) + ".source-map.json").write_text("{}" + chr(10), encoding="utf-8")
+    Path(str(stem) + ".budget.json").write_text("[]" + chr(10), encoding="utf-8")
     contracts.append(contract.get("name", "unknown"))
 print(json.dumps({"ok": True, "contracts": contracts}, sort_keys=True))
 PY
@@ -483,8 +634,294 @@ export SORASWAP_SKIP_IROHA_CLI_BUILD=1
 source "$ROOT/scripts/common.sh"
 source "$ROOT/scripts/release_phase_guards.sh"
 
+write_typed_oracle_fixture_config() {
+  local fixture_root="$1"
+  local source_config="$2"
+  local fixture_name="$3"
+  local fixture_dir
+  local fixture_config
+  local chain network_id torii_url
+
+  if [[ "${fixture_root:A}" == "${ROOT:A}" ]]; then
+    fixture_dir="$ROOT_ORACLE_FIXTURE_DIR"
+  else
+    fixture_dir="$fixture_root/tmp-oracle-fixtures"
+  fi
+  fixture_config="$fixture_dir/$fixture_name.client.toml"
+  mkdir -p "$fixture_dir"
+  if ! git -C "$fixture_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$fixture_root" init -q
+    printf '/tmp-oracle-fixtures/\n' > "$fixture_root/.git/info/exclude"
+  fi
+  chain="$(config_toml_string_value "$source_config" chain)"
+  network_id="$(config_toml_string_value "$source_config" network_id)"
+  torii_url="$(config_toml_string_value "$source_config" torii_url)"
+  cat > "$fixture_config" <<EOF
+chain = "$chain"
+network_id = "$network_id"
+torii_url = "$torii_url"
+public_key = "ed0120a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+private_key = "8026202222222222222222222222222222222222222222222222222222222222222222"
+EOF
+  chmod 600 "$fixture_config"
+  printf '%s\n' "$fixture_config"
+}
+
+expected_foundation_contract_ids=$'n3x.n3x_hub\ndlmm.dlmm_pool\ndlmm.dlmm_router\nbatch_amm.epoch_auction\nlaunchpad.liquidity_executor\nescrow.conditional_escrow'
+[[ "$(foundation_contract_ids)" == "$expected_foundation_contract_ids" ]]
+
 [[ "$(soraswap_first_json_value_from_output_or_null $'diagnostic\n{"ok":true}')" == '{"ok":true}' ]]
 [[ "$(soraswap_json_array_from_output_or_empty $'diagnostic\n["one","two"]')" == '["one","two"]' ]]
+(
+  export SORASWAP_TESTNET_CHAIN_ID_DEFAULT="wrong-chain"
+  export SORASWAP_TESTNET_NETWORK_ID_DEFAULT="hash:WRONG#0000"
+  export SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT="1"
+  source "$ROOT/scripts/common.sh"
+  [[ "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT" == "fc56984b-2be7-431d-840e-21514d1883f0" ]]
+  [[ "$SORASWAP_TESTNET_NETWORK_ID_DEFAULT" == "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94" ]]
+  [[ "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT" == "369" ]]
+)
+! rg -n 'SORASWAP_TESTNET_CHAIN_ID="|SORASWAP_TESTNET_CHAIN_DISCRIMINANT="' "$ROOT/scripts/common.sh"
+
+local_oracle_config="$TMP_DIR/local-oracle.client.toml"
+cat > "$local_oracle_config" <<'EOF'
+chain = "fixture-local-chain"
+torii_url = "http://127.0.0.1:18080/"
+EOF
+local_oracle_kagami_args="$TMP_DIR/local-oracle.kagami-args"
+local_oracle_keypair="$(
+  export KAGAMI_ARGS_PATH="$local_oracle_kagami_args"
+  soraswap_local_oracle_keypair_json_for_config "$local_oracle_config"
+)"
+jq -e '
+  .public_key == "ed01201111111111111111111111111111111111111111111111111111111111111111"
+  and .private_key == "8026202222222222222222222222222222222222222222222222222222222222222222"
+' <<<"$local_oracle_keypair" >/dev/null
+local_oracle_expected_seed="$(printf '%s' 'soraswap:oracle:v1:fixture-local-chain:http://127.0.0.1:18080' | json_sha256)"
+[[ "$(<"$local_oracle_kagami_args")" == "keys --algorithm ed25519 --seed-hex $local_oracle_expected_seed --compact" ]]
+[[ "${#local_oracle_expected_seed}" == "64" ]]
+! rg -q -- '--seed([^-]|$)' "$ROOT/scripts/common.sh"
+
+(
+  unset SORASWAP_ORACLE_CLIENT_CONFIG
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED
+  unset SORASWAP_ACTIVE_ORACLE_ACCOUNT
+  prepared_oracle_config="$TMP_DIR/prepared-local-oracle.client.toml"
+
+  public_env_for_config() { return 1; }
+  soraswap_local_oracle_keypair_json_for_config() {
+    jq -cn \
+      --arg public_key "ed01201111111111111111111111111111111111111111111111111111111111111111" \
+      --arg private_key "8026202222222222222222222222222222222222222222222222222222222222222222" \
+      '{public_key: $public_key, private_key: $private_key}'
+  }
+  materialize_cli_compatible_config() {
+    [[ "$1" == "$local_oracle_config" ]]
+    [[ "$2" == "ed01201111111111111111111111111111111111111111111111111111111111111111" ]]
+    [[ "$3" == "8026202222222222222222222222222222222222222222222222222222222222222222" ]]
+    : > "$prepared_oracle_config"
+    chmod 600 "$prepared_oracle_config"
+    printf '%s\n' "$prepared_oracle_config"
+  }
+  soraswap_inspect_client_config() {
+    jq -cn '{
+      chain: "fixture-local-chain",
+      network_id: "fixture-network",
+      chain_discriminant: "0",
+      torii_origin: "http://127.0.0.1:18080"
+    }'
+  }
+  authority_from_config() {
+    if [[ "$1" == "$local_oracle_config" ]]; then
+      printf '%s\n' 'fixture-operator@universal'
+    else
+      [[ "$1" == "$prepared_oracle_config" ]]
+      printf '%s\n' 'fixture-oracle@universal'
+    fi
+  }
+  soraswap_secure_unlink_owned_file() {
+    [[ "$1" == "$prepared_oracle_config" ]]
+    command rm -f -- "$1"
+  }
+
+  soraswap_prepare_oracle_client_config "$local_oracle_config"
+  [[ "$SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG" == "$prepared_oracle_config" ]]
+  [[ "$SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED" == "1" ]]
+  [[ "$SORASWAP_ACTIVE_ORACLE_ACCOUNT" == "fixture-oracle@universal" ]]
+  [[ -f "$prepared_oracle_config" ]]
+  soraswap_cleanup_oracle_client_config
+  [[ ! -e "$prepared_oracle_config" ]]
+  [[ -z "${SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG:-}" ]]
+  [[ -z "${SORASWAP_ACTIVE_ORACLE_ACCOUNT:-}" ]]
+)
+
+(
+  unset SORASWAP_ORACLE_CLIENT_CONFIG
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED
+  unset SORASWAP_ACTIVE_ORACLE_ACCOUNT
+  public_env_for_config() { printf '%s\n' testnet; }
+  ! soraswap_prepare_oracle_client_config "$local_oracle_config"
+) >/dev/null 2>&1
+
+(
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG
+  unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED
+  unset SORASWAP_ACTIVE_ORACLE_ACCOUNT
+  oracle_call_log="$TMP_DIR/typed-oracle-contract-call.log"
+  soraswap_prepare_oracle_client_config() {
+    typeset -g SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG="$TMP_DIR/active-oracle.client.toml"
+    typeset -g SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED=0
+    typeset -g SORASWAP_ACTIVE_ORACLE_ACCOUNT='fixture-oracle@universal'
+  }
+  call_contract_and_wait() {
+    printf '%s\n' "$@" > "$oracle_call_log"
+    printf '%s\n' 'typed-oracle-tx-hash'
+  }
+
+  typed_oracle_tx_hash="$(soraswap_call_contract_as_oracle_and_wait \
+    "$local_oracle_config" \
+    'perps-contract' \
+    publish_market_oracle \
+    '{"market_id":1,"mark_price_bps":10000}' \
+    123456)"
+  [[ "$typed_oracle_tx_hash" == 'typed-oracle-tx-hash' ]]
+  [[ "$(<"$oracle_call_log")" == "$TMP_DIR/active-oracle.client.toml"$'\n''perps-contract'$'\n''publish_market_oracle'$'\n''{"market_id":1,"mark_price_bps":10000}'$'\n''123456' ]]
+)
+
+account_readback_fixture="$(
+  iroha_cli_json() { printf '%s\n' '{"account_id":"fixture@wonderland","label":"fixture"}'; }
+  exact_account_readback_json fixture 'fixture@wonderland'
+)"
+jq -e '
+  .query_available == true
+  and .observed_ids == ["fixture@wonderland"]
+  and .matched == true
+' <<<"$account_readback_fixture" >/dev/null
+for legacy_account_readback in \
+  '{"id":"fixture@wonderland"}' \
+  '{"result":{"account_id":"fixture@wonderland"}}'
+do
+  legacy_account_readback_result="$(
+    iroha_cli_json() { printf '%s\n' "$legacy_account_readback"; }
+    exact_account_readback_json fixture 'fixture@wonderland'
+  )"
+  jq -e '.query_available == true and .observed_ids == [] and .matched == false' \
+    <<<"$legacy_account_readback_result" >/dev/null
+done
+
+[[ "$(
+  iroha_cli_json_with_config_timeout() { printf '7\n'; }
+  contract_deploy_nonce_for_authority fixture 'fixture@wonderland'
+)" == "7" ]]
+(
+  iroha_cli_json_with_config_timeout() { printf '"7"\n'; }
+  ! contract_deploy_nonce_for_authority fixture 'fixture@wonderland'
+)
+[[ "$(
+  contract_deploy_nonce_for_authority() { return 2; }
+  account_contract_deploy_nonce fixture 'fixture@wonderland'
+)" == "0" ]]
+
+pipeline_status_fixture='{"hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":{"kind":"Applied","block_height":77},"scope":"global","resolved_from":"state"}'
+[[ "$(pipeline_status_kind_from_json "$pipeline_status_fixture")" == "Applied" ]]
+! pipeline_status_kind_from_json '{"content":{"status":{"kind":"Applied"}}}' >/dev/null 2>&1
+pipeline_status_response="$(
+  torii_base_from_config() { printf 'https://fixture.invalid\n'; }
+  soraswap_curl_for_config() { printf '%s\n200\n' "$pipeline_status_fixture"; }
+  pipeline_transaction_status_json fixture aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa global
+)"
+jq -e '.status.kind == "Applied" and .scope == "global"' <<<"$pipeline_status_response" >/dev/null
+(
+  torii_base_from_config() { printf 'https://fixture.invalid\n'; }
+  soraswap_curl_for_config() { printf '%s\n200\n' '{"content":{"status":{"kind":"Applied"}}}'; }
+  ! pipeline_transaction_status_json fixture aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa global
+) >/dev/null 2>&1
+! pipeline_transaction_status_json fixture aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa auto >/dev/null 2>&1
+
+alias_resolve_args="$TMP_DIR/alias-resolve.args"
+alias_resolve_fixture="$(
+  iroha_cli_json() {
+    printf '%s\n' "$*" > "$alias_resolve_args"
+    printf '%s\n' '{"contract_alias":"fixture::universal","contract_address":"tairac1fixture","contract_subject_account":"fixture-subject","dataspace":"universal","contract_alias_binding":{"alias":"fixture::universal","status":"permanent","bound_at_ms":10},"source":"state"}'
+  }
+  contract_alias_resolve_json fixture 'fixture::universal'
+)"
+jq -e '.contract_alias == "fixture::universal" and .contract_address == "tairac1fixture"' \
+  <<<"$alias_resolve_fixture" >/dev/null
+[[ "$(<"$alias_resolve_args")" == '--config fixture contract alias resolve fixture::universal' ]]
+(
+  iroha_cli_json() { printf '%s\n' '{"result":{"contract_address":"tairac1fixture"}}'; }
+  ! contract_alias_resolve_json fixture 'fixture::universal'
+) >/dev/null 2>&1
+
+code_get_args="$TMP_DIR/code-get.args"
+(
+  iroha_cli() {
+    local output_path="" arg
+    printf '%s\n' "$*" > "$code_get_args"
+    while (( $# > 0 )); do
+      arg="$1"
+      if [[ "$arg" == "--out" ]]; then
+        output_path="$2"
+        break
+      fi
+      shift
+    done
+    [[ -n "$output_path" ]] || return 1
+    printf 'fixture-code' > "$output_path"
+  }
+  contract_code_bytes_visible_by_code_hash fixture bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+)
+rg -Fq -- '--config fixture contract code get --code-hash bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --out ' "$code_get_args"
+! contract_code_bytes_visible_by_code_hash fixture BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB >/dev/null 2>&1
+
+contract_view_helper_args="$TMP_DIR/contract-view-helper.args"
+contract_view_helper_request="$TMP_DIR/contract-view-helper.request.json"
+contract_view_fixture_manifest="$ROOT/artifacts/compiled/dlmm/dlmm_pool.manifest.json"
+contract_view_fixture_code_hash="$(manifest_code_hash_hex "$contract_view_fixture_manifest")"
+contract_view_fixture_abi_hash="$(manifest_abi_hash_hex "$contract_view_fixture_manifest")"
+contract_view_fixture="$(
+  is_contract_address_literal() { return 0; }
+  authority_from_config() { printf '%s\n' 'fixture-authority'; }
+  torii_base_from_config() { printf '%s\n' 'https://torii.fixture'; }
+  public_env_for_config() { printf '%s\n' 'testnet'; }
+  python3() {
+    printf '%s\n' "$*" > "$contract_view_helper_args"
+    command cat > "$contract_view_helper_request"
+    jq -cn \
+      --arg code_hash_hex "$contract_view_fixture_code_hash" \
+      --arg abi_hash_hex "$contract_view_fixture_abi_hash" \
+      '{ok:true,dataspace:"universal",contract_address:"tairac1fixture",code_hash_hex:$code_hash_hex,abi_hash_hex:$abi_hash_hex,entrypoint:"mirror_bin",result:["1","2","3","1.5","2.5"]}'
+  }
+  submit_contract_view fixture tairac1fixture mirror_bin 500000 '{"bin_id":"7"}'
+)"
+jq -e '
+  keys == ["abi_hash_hex", "code_hash_hex", "contract_address", "dataspace", "entrypoint", "normalized_result", "ok", "result"]
+  and .ok == true
+  and .result == ["1", "2", "3", "1.5", "2.5"]
+  and .normalized_result == [1, 2, 3, 1.5, 2.5]
+' <<<"$contract_view_fixture" >/dev/null
+[[ "$(contract_view_result_json "$contract_view_fixture")" == "[1,2,3,1.5,2.5]" ]]
+jq -e '
+  keys == ["authority", "contract_address", "entrypoint", "gas_limit", "payload"]
+  and .authority == "fixture-authority"
+  and .contract_address == "tairac1fixture"
+  and .entrypoint == "mirror_bin"
+  and .gas_limit == 500000
+  and .payload == {"bin_id": "7"}
+' "$contract_view_helper_request" >/dev/null
+[[ "$(<"$contract_view_helper_args")" == "$ROOT/scripts/current_torii_contract.py --config fixture --environment testnet --authority fixture-authority --torii-url https://torii.fixture --timeout 30 view" ]]
+numeric_contract_view_output="$TMP_DIR/contract-view-numeric-payload.out"
+numeric_contract_view_status=0
+submit_contract_view fixture tairac1fixture mirror_bin 500000 '{"bin_id":7}' \
+  >"$numeric_contract_view_output" 2>&1 || numeric_contract_view_status="$?"
+[[ "$numeric_contract_view_status" != "0" ]]
+rg -Fq 'contract numeric arguments must use canonical JSON strings; JSON numbers found for: bin_id' \
+  "$numeric_contract_view_output"
+! rg -n 'soraswap_curl_for_config.*v1/contracts/view|curl.*v1/contracts/view' "$ROOT/scripts/common.sh"
+
 trigger_evidence_retry_json="$(
   (
     trigger_list_calls_file="$TMP_DIR/trigger-list.calls"
@@ -511,7 +948,10 @@ trigger_evidence_retry_json="$(
 )"
 jq -e '.registered_trigger_ids == ["one","two"] and .active_trigger_ids == ["one"] and .missing_expected_trigger_ids == [] and .expected_trigger_details == []' \
   <<<"$trigger_evidence_retry_json" >/dev/null
-[[ "$(contract_view_report_result_json '{"ok":true,"result":[1,2,3]}')" == "[1,2,3]" ]]
+[[ "$(contract_view_report_result_json '{"ok":true,"result":["1","2","3"],"normalized_result":[1,2,3]}')" == "[1,2,3]" ]]
+view_report_unnormalized_json="$(contract_view_report_result_json '{"ok":true,"result":["1","2","3"]}')"
+jq -e '.status == "invalid_contract_view_response" and .ok == false and .response.result == ["1", "2", "3"]' \
+  <<<"$view_report_unnormalized_json" >/dev/null
 view_report_failure_json="$(contract_view_report_result_json '{"ok":false,"error":{"code":"view_rejected"}}')"
 jq -e '.status == "contract_view_failed" and .ok == false and .error.code == "view_rejected"' \
   <<<"$view_report_failure_json" >/dev/null
@@ -808,16 +1248,31 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 root = Path(sys.argv[1])
-manifest = tomllib.loads((root / "iroha.contracts.toml").read_text())
-manifest_contract_sources = {
+manifest_path = root / "iroha.contracts.toml"
+contract_manifest_paths = sorted(root.rglob("iroha.contracts.toml"))
+legacy_manifest_paths = sorted(root.rglob("iroha.app.toml"))
+if contract_manifest_paths != [manifest_path] or legacy_manifest_paths:
+    raise SystemExit(
+        "contract manifest drift: "
+        f"iroha_contracts_manifests={contract_manifest_paths} "
+        f"retired_iroha_app_manifests={legacy_manifest_paths}"
+    )
+manifest = tomllib.loads(manifest_path.read_text())
+manifest_contract_source_paths = [
     str(root / contract["source"])
     for contract in manifest.get("contracts", [])
     if contract.get("source")
-}
+]
+manifest_contract_sources = set(manifest_contract_source_paths)
 contract_names = [
     contract["name"]
     for contract in manifest.get("contracts", [])
     if contract.get("name")
+]
+contract_aliases = [
+    contract["alias"]
+    for contract in manifest.get("contracts", [])
+    if contract.get("alias")
 ]
 contract_artifacts = [
     contract["artifact"]
@@ -825,7 +1280,7 @@ contract_artifacts = [
     if contract.get("artifact")
 ]
 expected_generated_interfaces = {
-    str(Path(contract["artifact"]).with_suffix(".interface.json"))
+    f'./{Path(contract["artifact"]).with_suffix(".interface.json")}'
     for contract in manifest.get("contracts", [])
     if contract.get("artifact")
 }
@@ -840,7 +1295,6 @@ repo_contract_modules = {
 doc_name_for_module = {
     "escrow": "conditional_escrow",
     "n3x": "n3x_hub",
-    "risk": "risk_vault",
     "rwa": "rwa_market",
 }
 expected_module_docs = {
@@ -873,19 +1327,18 @@ if generated_doc.is_file():
 else:
     generated_contracts = set()
     generated_interfaces = set()
-manifest_tests = {
+manifest_test_paths = [
     str(root / test["path"])
     for test in manifest.get("tests", [])
     if test.get("path")
-}
+]
+manifest_tests = set(manifest_test_paths)
 repo_tests = {
     str(path)
     for path in (root / "tests" / "kotodama").glob("*.ko")
 }
-dedicated_tests = {
-    str(root / "tests" / "kotodama" / "validation_fee_autonomous_payout_regressions.test.ko")
-}
-dedicated_docs = {"validation_fee"}
+dedicated_tests = set()
+dedicated_docs = set()
 smoke_ids = [
     smoke["id"]
     for smoke in manifest.get("smoke", [])
@@ -919,10 +1372,15 @@ stale_generated_contracts = sorted(generated_contracts - set(contract_names))
 missing_generated_interfaces = sorted(expected_generated_interfaces - generated_interfaces)
 stale_generated_interfaces = sorted(generated_interfaces - expected_generated_interfaces)
 duplicate_contracts = duplicates(contract_names)
+duplicate_contract_aliases = duplicates(contract_aliases)
+duplicate_contract_sources = duplicates(manifest_contract_source_paths)
 duplicate_artifacts = duplicates(contract_artifacts)
-duplicate_tests = duplicates(sorted(manifest_tests))
+duplicate_tests = duplicates(manifest_test_paths)
 duplicate_smoke_ids = duplicates(smoke_ids)
 unknown_smoke_contracts = sorted(smoke_contracts - set(contract_names))
+non_universal_contract_aliases = sorted(
+    alias for alias in contract_aliases if not alias.endswith(".universal")
+)
 if (
     missing_contracts
     or stale_contracts
@@ -937,10 +1395,13 @@ if (
     or missing_generated_interfaces
     or stale_generated_interfaces
     or duplicate_contracts
+    or duplicate_contract_aliases
+    or duplicate_contract_sources
     or duplicate_artifacts
     or duplicate_tests
     or duplicate_smoke_ids
     or unknown_smoke_contracts
+    or non_universal_contract_aliases
 ):
     raise SystemExit(
         "iroha.contracts.toml drift: "
@@ -957,16 +1418,20 @@ if (
         f"missing_generated_interfaces={missing_generated_interfaces} "
         f"stale_generated_interfaces={stale_generated_interfaces} "
         f"duplicate_contracts={duplicate_contracts} "
+        f"duplicate_contract_aliases={duplicate_contract_aliases} "
+        f"duplicate_contract_sources={duplicate_contract_sources} "
         f"duplicate_artifacts={duplicate_artifacts} "
         f"duplicate_tests={duplicate_tests} "
         f"duplicate_smoke_ids={duplicate_smoke_ids} "
-        f"unknown_smoke_contracts={unknown_smoke_contracts}"
+        f"unknown_smoke_contracts={unknown_smoke_contracts} "
+        f"non_universal_contract_aliases={non_universal_contract_aliases}"
     )
 PY
 
 placeholder_config_fixture="$TMP_DIR/placeholder-config-fixture.toml"
 cat > "$placeholder_config_fixture" <<'EOF'
 chain = "fixture-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://public.example/"
 public_key = "ed0120replaceme"
 private_key = "802620DEADBEEF"
@@ -975,6 +1440,7 @@ soraswap_client_config_has_placeholder_values "$placeholder_config_fixture"
 wildcard_ipv4_config_fixture="$TMP_DIR/wildcard-ipv4-config-fixture.toml"
 cat > "$wildcard_ipv4_config_fixture" <<'EOF'
 chain = "fixture-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "http://0.0.0.0:8080/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -983,6 +1449,7 @@ soraswap_client_config_has_placeholder_values "$wildcard_ipv4_config_fixture"
 ipv6_loopback_config_fixture="$TMP_DIR/ipv6-loopback-config-fixture.toml"
 cat > "$ipv6_loopback_config_fixture" <<'EOF'
 chain = "fixture-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "http://[::1]:8080/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -991,6 +1458,7 @@ soraswap_client_config_has_placeholder_values "$ipv6_loopback_config_fixture"
 ipv6_wildcard_config_fixture="$TMP_DIR/ipv6-wildcard-config-fixture.toml"
 cat > "$ipv6_wildcard_config_fixture" <<'EOF'
 chain = "fixture-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "http://[::]:8080/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -1019,7 +1487,9 @@ ln -s /usr/bin/grep "$regex_fallback_bin/grep"
 clean_config_fixture="$TMP_DIR/clean-config-fixture.toml"
 cat > "$clean_config_fixture" <<'EOF'
 chain = "fixture-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://public.soraswap.dev/"
+[account]
 domain = "fixture.universal"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -1071,16 +1541,22 @@ taira_direct_health_json="$(
       done
       case "$url" in
         https://taira-validator-1.sora.org/status)
-          printf '%s\n' '{"blocks":44,"queue_size":2,"tx_queue_depth":2,"tx_queue_saturated":false,"time_since_last_block_ms":1000}' > "$output"
+          printf '%s\n' '{"blocks":44,"queue_size":2,"queue_queued":2,"queue_inflight":0,"time_since_last_block_ms":1000}' > "$output"
           ;;
         https://taira-validator-1.sora.org/v1/sumeragi/status)
-          printf '%s\n' '{"canonical":{"height":45,"phase":"pending_finality","rbc_status":"disabled","payload_status":"missing_local_payload"},"commit_qc":{"height":44},"highest_qc":{"height":44},"tx_queue":{"depth":2,"saturated":false,"saturated_by_age":true,"oldest_queued_age_ms":222222},"view_change_causes":{"last_cause":"missing_qc","missing_qc_total":7,"quorum_timeout_total":3,"missing_payload_total":2},"worker_loop":{"stage":"idle"}}' > "$output"
+          printf '%s\n' '{"protocol_version":4,"restart_required":false,"height_context_id":"fixture-45","height":45,"view":3,"phase":{"phase":"pending_apply","details":null},"leader":0,"body_state":{"state":"pending_apply","details":null},"pending_persistence_id":null,"last_committed_height":44,"last_committed_subject":"fixture-subject-44","liveness":{"no_progress_age_ms":222222,"blocker":{"blocker":"commit_quorum_missing","details":null}}}' > "$output"
+          ;;
+        https://taira-validator-1.sora.org/v1/sumeragi/diagnostics)
+          printf '%s\n' '{"pipeline_execution":null,"tx_queue_depth":2,"tx_queue_capacity":4096,"tx_queue_retained_bytes":200,"tx_queue_max_retained_bytes":13631488,"tx_queue_saturated":false,"tx_queue_saturated_by_count":false,"tx_queue_saturated_by_bytes":false,"tx_queue_saturated_by_age":true,"tx_queue_oldest_queued_age_ms":222222}' > "$output"
           ;;
         https://taira-validator-2.sora.org/status)
-          printf '%s\n' '{"blocks":44,"queue_size":0,"tx_queue_depth":0,"tx_queue_saturated":false,"time_since_last_block_ms":1000}' > "$output"
+          printf '%s\n' '{"blocks":44,"queue_size":0,"queue_queued":0,"queue_inflight":0,"time_since_last_block_ms":1000}' > "$output"
           ;;
         https://taira-validator-2.sora.org/v1/sumeragi/status)
-          printf '%s\n' '{"canonical":{"height":45,"phase":"pending_finality","rbc_status":"disabled","payload_status":"available"},"commit_qc":{"height":44},"highest_qc":{"height":44},"tx_queue":{"depth":0,"saturated":false,"saturated_by_age":false,"oldest_queued_age_ms":0},"view_change_causes":{"last_cause":"none","missing_qc_total":7,"quorum_timeout_total":3,"missing_payload_total":0},"worker_loop":{"stage":"idle"}}' > "$output"
+          printf '%s\n' '{"protocol_version":4,"restart_required":false,"height_context_id":"fixture-45","height":45,"view":3,"phase":{"phase":"prepare","details":null},"leader":1,"body_state":{"state":"validated","details":null},"pending_persistence_id":null,"last_committed_height":44,"last_committed_subject":"fixture-subject-44","liveness":{"no_progress_age_ms":1000,"blocker":null}}' > "$output"
+          ;;
+        https://taira-validator-2.sora.org/v1/sumeragi/diagnostics)
+          printf '%s\n' '{"pipeline_execution":null,"tx_queue_depth":0,"tx_queue_capacity":4096,"tx_queue_retained_bytes":0,"tx_queue_max_retained_bytes":13631488,"tx_queue_saturated":false,"tx_queue_saturated_by_count":false,"tx_queue_saturated_by_bytes":false,"tx_queue_saturated_by_age":false,"tx_queue_oldest_queued_age_ms":0}' > "$output"
           ;;
         *)
           printf '%s\n' '{}' > "$output"
@@ -1100,39 +1576,39 @@ jq -e '
   and all(.validators[]; has("ip") | not)
   and all(.validators[]; .health.status.url | startswith("direct-validator-"))
   and all(.validators[]; .health.sumeragi.url | startswith("direct-validator-"))
+  and all(.validators[]; .health.sumeragi_diagnostics.url | startswith("direct-validator-"))
   and all(.validators[]; .health.status | has("host") | not)
   and all(.validators[]; .health.sumeragi | has("host") | not)
+  and all(.validators[]; .health.sumeragi_diagnostics | has("host") | not)
   and all(.validators[]; .health.sumeragi.tls_verified == false)
   and .validators[0].health.sumeragi.summary.height == 45
-  and .validators[0].health.sumeragi.summary.commit_qc_height == 44
-  and .validators[0].health.sumeragi.summary.payload_status == "missing_local_payload"
-  and .validators[0].health.sumeragi.summary.missing_payload_total == 2
-  and .validators[0].health.sumeragi.summary.tx_queue.depth == 2
-  and .validators[0].health.sumeragi.summary.tx_queue.saturated_by_age == true
-  and .validators[1].health.sumeragi.summary.tx_queue.depth == 0
+  and .validators[0].health.sumeragi.summary.last_committed_height == 44
+  and .validators[0].health.sumeragi.summary.body_state == "pending_apply"
+  and .validators[0].health.sumeragi.summary.blocker == "commit_quorum_missing"
+  and .validators[0].health.sumeragi_diagnostics.summary.tx_queue_depth == 2
+  and .validators[0].health.sumeragi_diagnostics.summary.tx_queue_saturated_by_age == true
+  and .validators[1].health.sumeragi_diagnostics.summary.tx_queue_depth == 0
 ' <<<"$taira_direct_health_json" >/dev/null
 rg -q '^taira-validator-1\.sora\.org:443:203\.0\.113\.10$' "$taira_direct_resolve_calls"
 rg -q '^taira-validator-2\.sora\.org:443:203\.0\.113\.10$' "$taira_direct_resolve_calls"
 taira_direct_health_summary="$(soraswap_direct_validator_health_summary_text_from_json "$taira_direct_health_json")"
-rg -Fq 'direct-validator direct-validator-1: status_http=200 sumeragi_http=200 height=45 commit_qc=44 highest_qc=44 tx_queue_depth=2 saturated=false saturated_by_age=true oldest_queued_age_ms=222222 payload_status=missing_local_payload view_change=missing_qc missing_payload_total=2 worker_stage=idle' <<<"$taira_direct_health_summary"
+rg -Fq 'direct-validator direct-validator-1: status_http=200 sumeragi_http=200 diagnostics_http=200 height=45 last_committed=44 phase=pending_apply body_state=pending_apply restart_required=false no_progress_age_ms=222222 blocker=commit_quorum_missing tx_queue_depth=2 saturated=false saturated_by_age=true oldest_queued_age_ms=222222' <<<"$taira_direct_health_summary"
 ! rg -q '203\.0\.113\.10' <<<"$taira_direct_health_json"
 ! rg -q '203\.0\.113\.10' <<<"$taira_direct_health_summary"
 ! rg -q 'taira-validator-[0-9]\.sora\.org' <<<"$taira_direct_health_json"
 ! rg -q 'taira-validator-[0-9]\.sora\.org' <<<"$taira_direct_health_summary"
 taira_direct_health_diagnosis="$(soraswap_direct_validator_health_diagnosis_text_from_json "$taira_direct_health_json" 30000)"
-rg -Fq 'direct-validator diagnosis: sampled validators are one height ahead of committed/highest QC with 1 queued/saturated peer(s), 1 age-saturated peer(s), 1 missing_qc/quorum_timeout peer(s), and 2 idle worker(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence' <<<"$taira_direct_health_diagnosis"
+rg -Fq 'direct-validator diagnosis: sampled validators report 1 liveness-blocked peer(s), 1 queued/saturated peer(s), 1 age-saturated peer(s), and 0 restart-required peer(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence' <<<"$taira_direct_health_diagnosis"
 ! rg -q '203\.0\.113\.10' <<<"$taira_direct_health_diagnosis"
 taira_direct_healthy_diagnosis="$(
   jq -c '
     .validators |= map(
-      .health.sumeragi.summary.commit_qc_height = .health.sumeragi.summary.height
-      | .health.sumeragi.summary.highest_qc_height = .health.sumeragi.summary.height
-      | .health.sumeragi.summary.tx_queue.depth = 0
-      | .health.sumeragi.summary.tx_queue.saturated = false
-      | .health.sumeragi.summary.tx_queue.saturated_by_age = false
-      | .health.sumeragi.summary.tx_queue.oldest_queued_age_ms = 0
-      | .health.sumeragi.summary.view_change_last_cause = "none"
-      | .health.sumeragi.summary.worker_stage = "tick"
+      .health.sumeragi.summary.blocker = null
+      | .health.sumeragi.summary.restart_required = false
+      | .health.sumeragi_diagnostics.summary.tx_queue_depth = 0
+      | .health.sumeragi_diagnostics.summary.tx_queue_saturated = false
+      | .health.sumeragi_diagnostics.summary.tx_queue_saturated_by_age = false
+      | .health.sumeragi_diagnostics.summary.tx_queue_oldest_queued_age_ms = 0
     )
   ' <<<"$taira_direct_health_json" \
     | while IFS= read -r healthy_direct_json; do
@@ -1142,12 +1618,12 @@ taira_direct_healthy_diagnosis="$(
 [[ -z "$taira_direct_healthy_diagnosis" ]]
 preflight_direct_health_fixture="$TMP_DIR/preflight-direct-health.json"
 jq -cn --argjson direct "$taira_direct_health_json" \
-  '{status: "blocked", blockers: ["Taira public finality path has queued writes stalled"], endpoint: {health_issues: [], health: {status: {http_status: "200", json_available: true}, sumeragi: {http_status: "200", json_available: true}}, direct_validator_health: $direct}}' \
+  '{status: "blocked", blockers: ["Taira public finality path has queued writes stalled"], endpoint: {health_issues: [], health: {status: {http_status: "200", json_available: true}, sumeragi: {http_status: "200", json_available: true}, sumeragi_diagnostics: {http_status: "200", json_available: true}}, direct_validator_health: $direct}}' \
   > "$preflight_direct_health_fixture"
 preflight_direct_health_output="$TMP_DIR/preflight-direct-health.out"
 soraswap_print_preflight_report_reasons "$preflight_direct_health_fixture" "" >"$preflight_direct_health_output" 2>&1
-rg -Fq 'direct-validator direct-validator-1: status_http=200 sumeragi_http=200 height=45 commit_qc=44 highest_qc=44 tx_queue_depth=2 saturated=false saturated_by_age=true oldest_queued_age_ms=222222 payload_status=missing_local_payload view_change=missing_qc missing_payload_total=2 worker_stage=idle' "$preflight_direct_health_output"
-rg -Fq 'direct-validator diagnosis: sampled validators are one height ahead of committed/highest QC with 1 queued/saturated peer(s), 1 age-saturated peer(s), 1 missing_qc/quorum_timeout peer(s), and 2 idle worker(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence' "$preflight_direct_health_output"
+rg -Fq 'direct-validator direct-validator-1: status_http=200 sumeragi_http=200 diagnostics_http=200 height=45 last_committed=44 phase=pending_apply body_state=pending_apply restart_required=false no_progress_age_ms=222222 blocker=commit_quorum_missing tx_queue_depth=2 saturated=false saturated_by_age=true oldest_queued_age_ms=222222' "$preflight_direct_health_output"
+rg -Fq 'direct-validator diagnosis: sampled validators report 1 liveness-blocked peer(s), 1 queued/saturated peer(s), 1 age-saturated peer(s), and 0 restart-required peer(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence' "$preflight_direct_health_output"
 ! rg -q '203\.0\.113\.10' "$preflight_direct_health_output"
 ! rg -q 'taira-validator-[0-9]\.sora\.org' "$preflight_direct_health_output"
 taira_direct_port_calls="$TMP_DIR/taira-direct-port.calls"
@@ -1181,13 +1657,19 @@ taira_direct_port_health_json="$(
           printf '%s\n' '{"blocks":88,"queue_size":3,"time_since_last_block_ms":60000}' > "$output"
           ;;
         http://203.0.113.20:29080/v1/sumeragi/status)
-          printf '%s\n' '{"canonical":{"height":89,"phase":"prepare","rbc_status":"disabled","payload_status":"available"},"commit_qc":{"height":88},"highest_qc":{"height":88},"tx_queue":{"depth":3,"saturated":false,"saturated_by_age":true,"oldest_queued_age_ms":60000},"view_change_causes":{"last_cause":"quorum_timeout","missing_qc_total":4,"quorum_timeout_total":9,"missing_payload_total":0},"worker_loop":{"stage":"idle"}}' > "$output"
+          printf '%s\n' '{"protocol_version":4,"restart_required":false,"height_context_id":"fixture-89","height":89,"view":2,"phase":{"phase":"prepare","details":null},"leader":0,"body_state":{"state":"validated","details":null},"pending_persistence_id":null,"last_committed_height":88,"last_committed_subject":"fixture-subject-88","liveness":{"no_progress_age_ms":60000,"blocker":{"blocker":"timeout_certificate_missing","details":null}}}' > "$output"
+          ;;
+        http://203.0.113.20:29080/v1/sumeragi/diagnostics)
+          printf '%s\n' '{"pipeline_execution":null,"tx_queue_depth":3,"tx_queue_capacity":4096,"tx_queue_retained_bytes":300,"tx_queue_max_retained_bytes":13631488,"tx_queue_saturated":false,"tx_queue_saturated_by_count":false,"tx_queue_saturated_by_bytes":false,"tx_queue_saturated_by_age":true,"tx_queue_oldest_queued_age_ms":60000}' > "$output"
           ;;
         http://203.0.113.20:29081/status)
           printf '%s\n' '{"blocks":88,"queue_size":0,"time_since_last_block_ms":60000}' > "$output"
           ;;
         http://203.0.113.20:29081/v1/sumeragi/status)
-          printf '%s\n' '{"canonical":{"height":89,"phase":"prepare","rbc_status":"disabled","payload_status":"available"},"commit_qc":{"height":88},"highest_qc":{"height":88},"tx_queue":{"depth":0,"saturated":false,"saturated_by_age":false,"oldest_queued_age_ms":0},"view_change_causes":{"last_cause":"none","missing_qc_total":4,"quorum_timeout_total":9,"missing_payload_total":0},"worker_loop":{"stage":"tick"}}' > "$output"
+          printf '%s\n' '{"protocol_version":4,"restart_required":false,"height_context_id":"fixture-89","height":89,"view":2,"phase":{"phase":"prepare","details":null},"leader":1,"body_state":{"state":"validated","details":null},"pending_persistence_id":null,"last_committed_height":88,"last_committed_subject":"fixture-subject-88","liveness":{"no_progress_age_ms":1000,"blocker":null}}' > "$output"
+          ;;
+        http://203.0.113.20:29081/v1/sumeragi/diagnostics)
+          printf '%s\n' '{"pipeline_execution":null,"tx_queue_depth":0,"tx_queue_capacity":4096,"tx_queue_retained_bytes":0,"tx_queue_max_retained_bytes":13631488,"tx_queue_saturated":false,"tx_queue_saturated_by_count":false,"tx_queue_saturated_by_bytes":false,"tx_queue_saturated_by_age":false,"tx_queue_oldest_queued_age_ms":0}' > "$output"
           ;;
         *)
           printf '%s\n' '{}' > "$output"
@@ -1207,41 +1689,28 @@ jq -e '
   and [.validators[].port] == [29080, 29081]
   and all(.validators[]; (.health.status.url | startswith("direct-torii-port-")))
   and all(.validators[]; (.health.sumeragi.url | startswith("direct-torii-port-")))
+  and all(.validators[]; (.health.sumeragi_diagnostics.url | startswith("direct-torii-port-")))
   and .validators[0].health.sumeragi.summary.height == 89
-  and .validators[0].health.sumeragi.summary.tx_queue.saturated_by_age == true
+  and .validators[0].health.sumeragi_diagnostics.summary.tx_queue_saturated_by_age == true
 ' <<<"$taira_direct_port_health_json" >/dev/null
 rg -q '^http://203\.0\.113\.20:29080/status$' "$taira_direct_port_calls"
 rg -q '^http://203\.0\.113\.20:29081/v1/sumeragi/status$' "$taira_direct_port_calls"
+rg -q '^http://203\.0\.113\.20:29081/v1/sumeragi/diagnostics$' "$taira_direct_port_calls"
 ! rg -q '203\.0\.113\.20' <<<"$taira_direct_port_health_json"
 taira_direct_port_summary="$(soraswap_direct_validator_health_summary_text_from_json "$taira_direct_port_health_json")"
-rg -Fq 'direct-validator port-29080: status_http=200 sumeragi_http=200 height=89 commit_qc=88 highest_qc=88 tx_queue_depth=3 saturated=false saturated_by_age=true oldest_queued_age_ms=60000 payload_status=available view_change=quorum_timeout missing_payload_total=0 worker_stage=idle' <<<"$taira_direct_port_summary"
+rg -Fq 'direct-validator port-29080: status_http=200 sumeragi_http=200 diagnostics_http=200 height=89 last_committed=88 phase=prepare body_state=validated restart_required=false no_progress_age_ms=60000 blocker=timeout_certificate_missing tx_queue_depth=3 saturated=false saturated_by_age=true oldest_queued_age_ms=60000' <<<"$taira_direct_port_summary"
 ! rg -q '203\.0\.113\.20' <<<"$taira_direct_port_summary"
 taira_direct_port_diagnosis="$(soraswap_direct_validator_health_diagnosis_text_from_json "$taira_direct_port_health_json" 30000)"
-rg -Fq 'direct-validator diagnosis: sampled validators are one height ahead of committed/highest QC with 1 queued/saturated peer(s), 1 age-saturated peer(s), 1 missing_qc/quorum_timeout peer(s), and 1 idle worker(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence' <<<"$taira_direct_port_diagnosis"
+rg -Fq 'direct-validator diagnosis: sampled validators report 1 liveness-blocked peer(s), 1 queued/saturated peer(s), 1 age-saturated peer(s), and 0 restart-required peer(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence' <<<"$taira_direct_port_diagnosis"
 preflight_direct_port_fixture="$TMP_DIR/preflight-direct-port-health.json"
 jq -cn --argjson direct "$taira_direct_port_health_json" \
-  '{status: "blocked", blockers: [], endpoint: {health_issues: [], health: {status: {http_status: "200", json_available: true}, sumeragi: {http_status: "200", json_available: true}}, direct_torii_port_health: $direct}}' \
+  '{status: "blocked", blockers: [], endpoint: {health_issues: [], health: {status: {http_status: "200", json_available: true}, sumeragi: {http_status: "200", json_available: true}, sumeragi_diagnostics: {http_status: "200", json_available: true}}, direct_torii_port_health: $direct}}' \
   > "$preflight_direct_port_fixture"
 preflight_direct_port_output="$TMP_DIR/preflight-direct-port-health.out"
 soraswap_print_preflight_report_reasons "$preflight_direct_port_fixture" "" >"$preflight_direct_port_output" 2>&1
-rg -Fq 'direct-validator port-29080: status_http=200 sumeragi_http=200 height=89 commit_qc=88 highest_qc=88 tx_queue_depth=3 saturated=false saturated_by_age=true oldest_queued_age_ms=60000 payload_status=available view_change=quorum_timeout missing_payload_total=0 worker_stage=idle' "$preflight_direct_port_output"
-rg -Fq 'direct-validator diagnosis: sampled validators are one height ahead of committed/highest QC with 1 queued/saturated peer(s), 1 age-saturated peer(s), 1 missing_qc/quorum_timeout peer(s), and 1 idle worker(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence' "$preflight_direct_port_output"
+rg -Fq 'direct-validator port-29080: status_http=200 sumeragi_http=200 diagnostics_http=200 height=89 last_committed=88 phase=prepare body_state=validated restart_required=false no_progress_age_ms=60000 blocker=timeout_certificate_missing tx_queue_depth=3 saturated=false saturated_by_age=true oldest_queued_age_ms=60000' "$preflight_direct_port_output"
+rg -Fq 'direct-validator diagnosis: sampled validators report 1 liveness-blocked peer(s), 1 queued/saturated peer(s), 1 age-saturated peer(s), and 0 restart-required peer(s); pause SoraSwap signed writes and use the Taira operator finality recovery runbook before retrying release evidence' "$preflight_direct_port_output"
 ! rg -q '203\.0\.113\.20' "$preflight_direct_port_output"
-oracle_keypair_config_fixture="$TMP_DIR/oracle-keypair-config-fixture.toml"
-cat > "$oracle_keypair_config_fixture" <<'EOF'
-chain = "fixture-chain"
-torii_url = "https://public.soraswap.dev/"
-public_key = "ed0120d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-private_key = "8026201111111111111111111111111111111111111111111111111111111111111111"
-EOF
-soraswap_oracle_keypair_matches_for_config "$oracle_keypair_config_fixture"
-oracle_keypair_mismatch_output="$TMP_DIR/oracle-keypair-mismatch.out"
-(
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xa09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
-  ! soraswap_oracle_keypair_matches_for_config "$oracle_keypair_config_fixture"
-) >"$oracle_keypair_mismatch_output" 2>&1
-rg -q "oracle private key does not match SORASWAP_ORACLE_PUBLIC_KEY_HEX/config signer public key" "$oracle_keypair_mismatch_output"
 (
   export SORASWAP_PUBLIC_ENV=testnet
   unset SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS
@@ -1262,6 +1731,7 @@ commented_placeholder_config_fixture="$TMP_DIR/commented-placeholder-config-fixt
 cat > "$commented_placeholder_config_fixture" <<'EOF'
 # chain = "change-me"
 chain = "fixture-chain" # TODO from copied template
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://public.soraswap.dev/" # https://example.com/
 
 [account]
@@ -1277,6 +1747,7 @@ EOF
 example_domain_config_fixture="$TMP_DIR/example-domain-config-fixture.toml"
 cat > "$example_domain_config_fixture" <<'EOF'
 chain = "fixture-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://example.com/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -1285,6 +1756,7 @@ soraswap_client_config_has_placeholder_values "$example_domain_config_fixture"
 single_quoted_placeholder_config_fixture="$TMP_DIR/single-quoted-placeholder-config-fixture.toml"
 cat > "$single_quoted_placeholder_config_fixture" <<'EOF'
 chain = 'fixture-chain'
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = 'https://public.soraswap.dev/'
 public_key = '<ed0120-public-key>'
 private_key = '802620DEADBEEF'
@@ -1414,473 +1886,6 @@ generated_redaction_check_clean_output="$TMP_DIR/generated-redaction-check-clean
 SORASWAP_ROOT="$generated_redaction_root" run_repo_zsh_script "$ROOT/scripts/redact_generated_evidence.sh" --check \
   >"$generated_redaction_check_clean_output"
 rg -q "generated evidence redaction check: inspected 3 JSON artifacts; pending 0" "$generated_redaction_check_clean_output"
-contract_call_redaction_output="$TMP_DIR/contract-call-redaction.out"
-contract_call_redaction_status=0
-(
-  export SORASWAP_AUTHORITY="fixture.authority"
-  curl() {
-    printf '%s\n%s\n' '{"error":{"private_key":"802620DEADBEEF","payload":{"privateKey":"camel-secret","secret":"nested-secret","mnemonic":"seed words"},"visible":"ok"}}' "500"
-  }
-  submit_contract_call "$clean_config_fixture" "tairac1fixture" "route_swap" 100000 '{}'
-) >"$contract_call_redaction_output" 2>&1 || contract_call_redaction_status="$?"
-[[ "$contract_call_redaction_status" != "0" ]]
-rg -q '\[redacted\]' "$contract_call_redaction_output"
-! rg -q "802620DEADBEEF|camel-secret|nested-secret|seed words" "$contract_call_redaction_output"
-contract_call_retry_body_output="$TMP_DIR/contract-call-retry-body.out"
-contract_call_retry_body_status=0
-contract_call_retry_body_attempts="$TMP_DIR/contract-call-retry-body-attempts"
-contract_call_retry_body_requests="$TMP_DIR/contract-call-retry-body-requests.jsonl"
-printf '0\n' > "$contract_call_retry_body_attempts"
-: > "$contract_call_retry_body_requests"
-(
-  export SORASWAP_AUTHORITY="fixture.authority"
-  export SORASWAP_CONTRACT_CALL_RETRY_COUNT=3
-  export SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS=0
-  curl() {
-    local body="" arg next_is_data=0 attempts
-    for arg in "$@"; do
-      if (( next_is_data )); then
-        body="$arg"
-        next_is_data=0
-        continue
-      fi
-      if [[ "$arg" == "-d" ]]; then
-        next_is_data=1
-      fi
-    done
-    printf '%s\n' "$body" >> "$contract_call_retry_body_requests"
-    attempts="$(cat "$contract_call_retry_body_attempts")"
-    attempts=$(( attempts + 1 ))
-    printf '%s\n' "$attempts" > "$contract_call_retry_body_attempts"
-    if (( attempts < 3 )); then
-      printf '%s\n%s\n' '{"error":{"message":"Failed to submit transaction: Unexpected transaction response; status: 502 Bad Gateway; response body: <html>502 Bad Gateway</html>"}}' "200"
-    else
-      printf '%s\n%s\n' '{"ok":true,"submitted":true,"tx_hash_hex":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","entrypoint_hash_hex":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}' "200"
-    fi
-  }
-  submit_contract_call "$clean_config_fixture" "tairac1fixture" "route_swap" 100000 '{}'
-) >"$contract_call_retry_body_output" 2>&1 || contract_call_retry_body_status="$?"
-[[ "$contract_call_retry_body_status" == "0" ]]
-[[ "$(cat "$contract_call_retry_body_attempts")" == "3" ]]
-rg -Fq 'retrying same creation_time_ms=' "$contract_call_retry_body_output"
-jq -s '
-  length == 3
-  and ([.[].creation_time_ms] | unique | length == 1)
-  and all(.[]; .contract_address == "tairac1fixture")
-  and all(.[]; .entrypoint == "route_swap")
-  and all(.[]; .transaction_ttl_ms == 900000)
-' "$contract_call_retry_body_requests" >/dev/null
-rg -Fq '"submitted":true' "$contract_call_retry_body_output"
-contract_app_redaction_output="$TMP_DIR/contract-app-redaction.out"
-contract_app_redaction_status=0
-contract_app_redaction_cli="$TMP_DIR/contract-app-redaction-cli"
-cat >"$contract_app_redaction_cli" <<'EOF'
-#!/bin/zsh
-set -euo pipefail
-printf '%s\n' 'stderr leaked --private-key 802620APPSECRET --secret=nested' >&2
-printf '%s\n' '{"ok":false,"private_key":"802620APPSECRET","visible":"ok"}'
-exit 1
-EOF
-chmod 700 "$contract_app_redaction_cli"
-(
-  export SORASWAP_AUTHORITY="fixture.authority"
-  export SORASWAP_CONTRACT_APP_DEPLOY_ATTEMPTS=1
-  export SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS=0
-  ensure_iroha_cli_bin() {
-    SORASWAP_ACTIVE_IROHA_CLI_BIN="$contract_app_redaction_cli"
-  }
-  submit_contract_app_bundle "$clean_config_fixture" deploy "$ROOT/iroha.contracts.toml"
-) >"$contract_app_redaction_output" 2>&1 || contract_app_redaction_status="$?"
-[[ "$contract_app_redaction_status" != "0" ]]
-rg -q '\[redacted\]' "$contract_app_redaction_output"
-! rg -q "802620APPSECRET|nested" "$contract_app_redaction_output"
-rg -q 'sns register fallback failed.*soraswap_redact_sensitive_text' "$ROOT/scripts/common.sh"
-rg -q 'printf .*soraswap_redact_sensitive_text.*output.*>&2' "$ROOT/scripts/common.sh"
-rg -q 'contract manifest build.*2>&1' "$ROOT/scripts/common.sh"
-rg -q 'contract manifest build' "$ROOT/scripts/common.sh"
-rg -q 'soraswap_redact_sensitive_text.*deployment_record_check_output' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'cid_probe_body_max_chars="${SORASWAP_TRADER_API_PROBE_BODY_MAX_CHARS:-8192}"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'soraswap_require_positive_integer_setting "SORASWAP_TRADER_API_PROBE_BODY_MAX_CHARS"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'registry_visibility_attempt_count="${SORASWAP_TRADER_API_REGISTRY_VISIBILITY_ATTEMPTS:-30}"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'storage_pin_propagation_attempt_count="${SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_ATTEMPTS:-8}"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'wait_for_trader_api_paid_pin_record()' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'pin_trader_api_storage' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'manifest_build_summary_path="$artifact_dir/app-api.manifest.summary.json"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'propagation_attempt_count: $propagation_attempt_count' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'trader_api_probe_report_text()' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'trader_api_probe_report_parsed()' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'cid_probe_last_report_body="$(trader_api_probe_report_text "$cid_probe_last_body")"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'cid_probe_body="$cid_probe_last_report_body"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'with_entries(select(.value != null))' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'soraswap_redact_sensitive_text "$raw"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'truncated: true' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'trader_api_redact_artifact_file_in_place()' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'trader_api_redact_artifact_file_in_place "$summary_path"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'trader_api_redact_artifact_file_in_place "$response_path"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'trader_api_redact_artifact_file_in_place "$registry_submit_summary_path"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'trader_api_redact_artifact_file_in_place "$registry_submit_response_path"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'soraswap_cover_contract_oracle_fields_json()' "$ROOT/scripts/common.sh"
-rg -Fq 'perps_oracle_stale_slots="${SORASWAP_PERPS_MARKET_ORACLE_STALE_SLOTS:-120}"' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'options_oracle_stale_slots="${SORASWAP_OPTIONS_ORACLE_STALE_SLOTS:-120}"' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'cover_oracle_stale_slots="${SORASWAP_COVER_ORACLE_STALE_SLOTS:-120}"' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'trigger_lifecycle_enabled="${SORASWAP_TRIGGER_LIFECYCLE_ENABLED:-1}"' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'on time schedule(0, 120000);' "$ROOT/contracts/cover/policy_manager.ko"
-rg -Fq 'on time schedule(20000, 120000);' "$ROOT/contracts/launchpad/sale_factory.ko"
-rg -Fq 'on time schedule(40000, 120000);' "$ROOT/contracts/options/factory.ko"
-rg -Fq 'on time schedule(60000, 120000);' "$ROOT/contracts/options/manager.ko"
-rg -Fq 'on time schedule(80000, 120000);' "$ROOT/contracts/perps/perps_engine.ko"
-rg -Fq 'on time schedule(100000, 120000);' "$ROOT/contracts/vaults/manager.ko"
-rg -Fq 'launchpad_claim_slot="${SORASWAP_LAUNCHPAD_CLAIM_SLOT:-}"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'launchpad_claim_slot="${SORASWAP_LAUNCHPAD_CLAIM_SLOT:-}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'launchpad_claim_delay_slots="${SORASWAP_LAUNCHPAD_CLAIM_DELAY_SLOTS:-12}"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'launchpad_claim_delay_slots="${SORASWAP_LAUNCHPAD_CLAIM_DELAY_SLOTS:-12}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'refund_sale_claim_delay_slots="${SORASWAP_REFUND_SALE_CLAIM_DELAY_SLOTS:-120}"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'refund_sale_claim_delay_slots="${SORASWAP_REFUND_SALE_CLAIM_DELAY_SLOTS:-120}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'soraswap_wait_for_block_height_at_least "$config" "$launchpad_claim_slot" "launchpad allocation claim"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'soraswap_wait_for_block_height_at_least "$config" "$launchpad_claim_slot" "launchpad allocation claim" 120 1' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'perps_oracle_stale_slots="${SORASWAP_PERPS_MARKET_ORACLE_STALE_SLOTS:-120}"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'cover_oracle_stale_slots="${SORASWAP_COVER_ORACLE_STALE_SLOTS:-120}"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'default_cover_policy_id_scan_limit=256' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'default_cover_policy_id_scan_limit=16' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'cover_policy_id_scan_limit="${SORASWAP_COVER_POLICY_ID_SCAN_LIMIT:-$default_cover_policy_id_scan_limit}"' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'sync_cover_manager_next_policy_id()' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'configure_next_policy_id' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'perps_oracle_stale_slots="${SORASWAP_PERPS_MARKET_ORACLE_STALE_SLOTS:-120}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'options_oracle_stale_slots="${SORASWAP_OPTIONS_ORACLE_STALE_SLOTS:-120}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'cover_oracle_stale_slots="${SORASWAP_COVER_ORACLE_STALE_SLOTS:-120}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'pool_position_base="${SORASWAP_POOL_POSITION_BASE:-500}"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'pool_position_quote="${SORASWAP_POOL_POSITION_QUOTE:-500}"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'pool_position_base="${SORASWAP_POOL_POSITION_BASE:-200000}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'pool_position_quote="${SORASWAP_POOL_POSITION_QUOTE:-200000}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'cover_monitoring_window_slots="${SORASWAP_COVER_SMOKE_WINDOW_SLOTS:-10}"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'cover_monitoring_window_slots="${SORASWAP_COVER_SMOKE_WINDOW_SLOTS:-60}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'cover_claimable_observation_max_attempts="${SORASWAP_COVER_CLAIMABLE_OBSERVATION_MAX_ATTEMPTS:-8}"' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'cover_claimable_observation_max_attempts="${SORASWAP_COVER_CLAIMABLE_OBSERVATION_MAX_ATTEMPTS:-12}"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'local smoke cover policy $cover_policy_id was not claimable after $cover_claimable_observation_max_attempts additional observations' "$ROOT/scripts/smoke_local.sh"
-rg -Fq 'options_factory_series_utilisation_bps()' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'options_factory_shout_series_before_view_json="$(submit_contract_view "$config" "$options_factory_contract" series_state "$SORASWAP_SMOKE_GAS_LIMIT" '\''{"series_id":1}'\'')"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'options_factory_shout_expected_open_notional="$(jq -r '\''.[5] // 0'\'' <<<"$options_factory_shout_series_before_result")"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'next_policy_id "$SORASWAP_SMOKE_GAS_LIMIT" null' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'soraswap_cover_contract_oracle_fields_json "$config" "$cover_policy_id" "$cover_trigger_price"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -q 'ledger asset definition register' "$ROOT/scripts/common.sh"
-rg -q 'printf .*soraswap_redact_sensitive_text.*output' "$ROOT/scripts/common.sh"
-rg -Fq 'redacted_output="$(soraswap_redact_sensitive_text "$confirm_output")"' "$ROOT/scripts/common.sh"
-rg -Fq 'normal deploy completed for $contract_key but confirmation failed: $redacted_output' "$ROOT/scripts/common.sh"
-rg -Fq 'deploy nonce advanced for $contract_key but confirmation failed: $redacted_output' "$ROOT/scripts/common.sh"
-rg -Fq 'split deploy completed for $contract_key but confirmation failed: $redacted_output' "$ROOT/scripts/common.sh"
-! rg -Fq 'confirmation failed: $confirm_output' "$ROOT/scripts/common.sh"
-rg -Fq 'printf '\''%s\n'\'' "$(soraswap_redact_sensitive_text "$grant_output")" >&2' "$ROOT/scripts/common.sh"
-rg -Fq 'printf '\''%s\n'\'' "$(soraswap_redact_sensitive_text "$output")" >&2' "$ROOT/scripts/common.sh"
-rg -Fq 'printf '\''%s\n'\'' "$(soraswap_redact_sensitive_text "$init_output")" >&2' "$ROOT/scripts/bootstrap_contract_state.sh"
-rg -Fq 'contract alias resolve request failed for $contract_alias: HTTP $last_http_code: $(soraswap_redact_sensitive_text "$last_body")' "$ROOT/scripts/common.sh"
-rg -Fq 'call output: $(soraswap_redact_sensitive_text "$perps_open_output")' "$ROOT/scripts/smoke_local.sh"
-rg -Fq -- '--arg bytes_bind_output "$(soraswap_redact_sensitive_text "$bytes_bind_output")"' "$ROOT/scripts/common.sh"
-rg -Fq -- '--arg asset_relay_output "$(soraswap_redact_sensitive_text "$asset_relay_output")"' "$ROOT/scripts/common.sh"
-rg -Fq -- '--arg asset_balance_check_output "$(soraswap_redact_sensitive_text "$asset_balance_check_output")"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_COUNT="${SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_COUNT:-5}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_DELAY_SECS="${SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_DELAY_SECS:-1}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS="${SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS:-}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS="${SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS:-1800000}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_CONTRACT_CALL_RETRY_COUNT="${SORASWAP_CONTRACT_CALL_RETRY_COUNT:-4}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS="${SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS:-2}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT="${SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT:-60}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS="${SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS:-2}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_TORII_READ_RETRY_COUNT="${SORASWAP_TORII_READ_RETRY_COUNT:-6}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_TORII_READ_RETRY_DELAY_SECS="${SORASWAP_TORII_READ_RETRY_DELAY_SECS:-2}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX="${SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX:-10}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX="${SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX:-8}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS="${SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS:-30000}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT="${SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT:-3}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS="${SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS:-5}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_COUNT="${SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_COUNT:-24}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_DELAY_SECS="${SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_DELAY_SECS:-5}"' "$ROOT/scripts/common.sh"
-rg -Fq 'SORASWAP_PUBLIC_TX_WAIT_QUEUED_STALL_MAX_MS="${SORASWAP_PUBLIC_TX_WAIT_QUEUED_STALL_MAX_MS:-180000}"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_positive_integer_setting "SORASWAP_TORII_READ_RETRY_COUNT"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_number_setting "SORASWAP_TORII_READ_RETRY_DELAY_SECS"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_number_setting "SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_COUNT"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_number_setting "SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_DELAY_SECS"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_TX_WAIT_QUEUED_STALL_MAX_MS"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_contract_call_tx_committed_wait_secs()' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_public_tx_wait_queued_stall_max_ms_for_config()' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_contract_call_transaction_ttl_ms_for_config()' "$ROOT/scripts/common.sh"
-rg -Fq 'wait_for_transaction_terminal_or_committed "$config" "$tx_hash" "$tx_committed_wait_secs" 1 auto "$committed_hash" "$queued_stall_max_ms"' "$ROOT/scripts/common.sh"
-rg -Fq '"$contract_id.$entrypoint expired transaction $tx_hash"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS"' "$ROOT/scripts/common.sh"
-rg -Fq 'elif (( wait_secs < 300 )); then' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS"' "$ROOT/scripts/common.sh"
-rg -Fq 'submit_contract_view_expect()' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_positive_integer_setting "SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS"' "$ROOT/scripts/common.sh"
-rg -Fq -- '--argjson creation_time_ms "$creation_time_ms"' "$ROOT/scripts/common.sh"
-rg -Fq 'retrying same creation_time_ms=$creation_time_ms' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_public_submit_health_ready_for_config "$config" "$public_env mutating smoke"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'soraswap_require_public_submit_health_ready_for_config "$config" "$public_env trader API publication"' "$ROOT/scripts/publish_trader_api_bundle.sh"
-rg -Fq 'soraswap_require_public_write_health_ready_for_config()' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_print_public_write_health_wait_context "$config" "transaction $tx_hash visibility wait"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_public_submit_health_ready_for_config' "$ROOT/scripts/common.sh"
-rg -Fq '"$contract_id.$entrypoint submit" || return $?' "$ROOT/scripts/common.sh"
-rg -Fq 'creation_time_ms="$(soraswap_next_contract_call_creation_time_ms)" || return 1' "$ROOT/scripts/common.sh"
-rg -Fq 'wait_for_transaction_terminal_or_committed "$config" "$tx_hash" "$tx_committed_wait_secs"' "$ROOT/scripts/common.sh"
-rg -Fq 'committed_transaction_result_json "$config" "$committed_hash" "$tx_committed_wait_secs"' "$ROOT/scripts/common.sh"
-rg -Fq 'if (( terminal_status == 75 )); then' "$ROOT/scripts/common.sh"
-rg -Fq 'refund_allocation_mirror_view_json="$(submit_contract_view_expect' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'launchpad refunded allocation mirror for $refund_allocation_id' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'referral_mirror_view_json="$(submit_contract_view_expect' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'referral child and parent claim mirror for $referral_member' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'farm_mirror_view_json="$(submit_contract_view_expect' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'farm post-claim unstake mirror for $farm_position' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'perps_recovery_position_state_view_json="$(submit_contract_view_expect' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'perps recovered position state for $perps_liquidation_position_id' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'perps_recovery_position_liquidation_view_json="$(submit_contract_view_expect' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'perps recovered liquidation state for $perps_liquidation_position_id' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'dlmm_route_liquidity_topup_required_available_quote=' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'DLMM route liquidity top-up state for bin $dlmm_route_liquidity_topup_bin_id' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'DLMM route liquidity top-up bin $current_bin_id' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq '(((.result[5] // -1) - $pool_min_reserve_quote) >= $dlmm_route_liquidity_topup_required_available_quote)' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq '(((.result[1] // -1) - $pool_min_reserve_quote) >= $dlmm_route_liquidity_topup_required_available_quote)' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'run_suffix: $run_suffix' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'smoke_scope: $smoke_scope' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'SORASWAP_SMOKE_LATEST_REPORT="$readonly_report_path"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'SORASWAP_SMOKE_TIMESTAMPED_REPORT="$readonly_timestamped_report"' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'smoke.readonly.latest.json' "$ROOT/scripts/smoke_public_mutating.sh"
-rg -Fq 'latest_report="${SORASWAP_SMOKE_LATEST_REPORT:-$report_dir/smoke.latest.json}"' "$ROOT/scripts/smoke_public.sh"
-rg -Fq 'timestamped_report="${SORASWAP_SMOKE_TIMESTAMPED_REPORT:-$report_dir/smoke.${timestamp}.json}"' "$ROOT/scripts/smoke_public.sh"
-rg -Fq 'unset SORASWAP_SMOKE_LATEST_REPORT SORASWAP_SMOKE_TIMESTAMPED_REPORT' "$ROOT/scripts/release_taira.sh"
-rg -Fq 'unset SORASWAP_SMOKE_LATEST_REPORT SORASWAP_SMOKE_TIMESTAMPED_REPORT' "$ROOT/scripts/release_production.sh"
-rg -Fq 'soraswap_require_positive_integer_setting "SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_COUNT"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_ALIAS_RESOLVE_RETRY_DELAY_SECS"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_torii_read_retryable_http_code "$http_code"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_contract_alias_resolve_retryable_http_code "$http_code"' "$ROOT/scripts/common.sh"
-rg -Fq 'reusing existing iroha binary $(soraswap_display_path "$fallback_bin")' "$ROOT/scripts/common.sh"
-rg -Fq 'missing iroha binary at $(soraswap_display_path "$debug_bin") or $(soraswap_display_path "$release_bin") and SORASWAP_SKIP_IROHA_CLI_BUILD=1' "$ROOT/scripts/common.sh"
-rg -Fq 'missing split_contract_deploy binary at $(soraswap_display_path "$bin") and SORASWAP_SKIP_IROHA_CLI_BUILD=1' "$ROOT/scripts/common.sh"
-rg -Fq -- '--private-key-file "$private_key_file"' "$ROOT/scripts/common.sh"
-rg -Fq -- '--fee-payment-json "$fee_payment_file"' "$ROOT/scripts/common.sh"
-rg -Fq '{payer: "authority", value: {charge_limits: [], gas_limit: $gas_limit}}' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_secure_unlink_owned_files "$private_key_file" "$fee_payment_file"' "$ROOT/scripts/common.sh"
-rg -Fq 'split_contract_deploy lacks required --private-key-file support; refusing inline private key fallback' "$ROOT/scripts/common.sh"
-rg -Fq 'split_contract_deploy lacks required --fee-payment-json support; refusing an unsigned fee-selection fallback' "$ROOT/scripts/common.sh"
-rg -Fq 'private_key_file: PathBuf' "$ROOT/../iroha/crates/iroha_cli/src/bin/split_contract_deploy.rs"
-! rg -Fq 'private_key: String' "$ROOT/../iroha/crates/iroha_cli/src/bin/split_contract_deploy.rs"
-rg -Fq 'read_private_key_file(&args.private_key_file)' "$ROOT/../iroha/crates/iroha_cli/src/bin/split_contract_deploy.rs"
-rg -Fq 'read_fee_payment_file(&args.fee_payment_json)' "$ROOT/../iroha/crates/iroha_cli/src/bin/split_contract_deploy.rs"
-rg -Fq 'CommitContractDeployment' "$ROOT/../iroha/crates/iroha_cli/src/bin/split_contract_deploy.rs"
-rg -Fq 'contract_alias: String' "$ROOT/../iroha/crates/iroha_cli/src/bin/split_contract_deploy.rs"
-rg -Fq -- '--contract-alias "$contract_alias"' "$ROOT/scripts/common.sh"
-rg -Fq '.tx_hash_hex // .commit_tx_hash // empty' "$ROOT/scripts/common.sh"
-! rg -Fq '.tx_hash_hex // .activate_tx_hash' "$ROOT/scripts/common.sh"
-rg -Fq 'contract_subject_account_for_literal "$config" "$predicted_address"' "$ROOT/scripts/common.sh"
-rg -Fq 'missing kagami binary at $(soraswap_display_path "$bin") and SORASWAP_SKIP_IROHA_CLI_BUILD=1' "$ROOT/scripts/common.sh"
-rg -Fq 'sibling cargo job holds $(soraswap_display_path "$cargo_lock")' "$ROOT/scripts/common.sh"
-rg -Fq 'reusing existing kagami binary $(soraswap_display_path "$bin")' "$ROOT/scripts/common.sh"
-rg -Fq 'missing sorafs_cli binary at $(soraswap_display_path "$debug_bin")' "$ROOT/scripts/publish_trader_api_bundle.sh"
-soraswap_require_nonnegative_integer_at_most_setting "FIXTURE_NONNEG_LIMIT" 10 10
-! soraswap_require_nonnegative_integer_at_most_setting "FIXTURE_NONNEG_LIMIT" 11 10 >/dev/null 2>&1
-soraswap_require_positive_integer_at_most_setting "FIXTURE_POSITIVE_LIMIT" 1 10
-! soraswap_require_positive_integer_at_most_setting "FIXTURE_POSITIVE_LIMIT" 0 10 >/dev/null 2>&1
-! soraswap_require_positive_integer_at_most_setting "FIXTURE_POSITIVE_LIMIT" 11 10 >/dev/null 2>&1
-invalid_ledger_gas_limit_output="$TMP_DIR/invalid-ledger-gas-limit.out"
-invalid_ledger_gas_limit_status=0
-(
-  export SORASWAP_LEDGER_GAS_LIMIT=0
-  iroha_cli_with_gas_metadata "$TMP_DIR/missing-client.toml" ledger domain register --id soraswap
-) >"$invalid_ledger_gas_limit_output" 2>&1 || invalid_ledger_gas_limit_status="$?"
-[[ "$invalid_ledger_gas_limit_status" != "0" ]]
-rg -Fq "SORASWAP_LEDGER_GAS_LIMIT must be a positive integer" "$invalid_ledger_gas_limit_output"
-invalid_skip_iroha_cli_output="$TMP_DIR/invalid-skip-iroha-cli.out"
-invalid_skip_iroha_cli_status=0
-(
-  export SORASWAP_SKIP_IROHA_CLI_BUILD=maybe
-  ensure_kagami_bin
-) >"$invalid_skip_iroha_cli_output" 2>&1 || invalid_skip_iroha_cli_status="$?"
-[[ "$invalid_skip_iroha_cli_status" != "0" ]]
-rg -Fq "SORASWAP_SKIP_IROHA_CLI_BUILD must be 0 or 1; got 'maybe'" "$invalid_skip_iroha_cli_output"
-explicit_kagami_root="$TMP_DIR/explicit-kagami-root"
-explicit_kagami_dir="$TMP_DIR/explicit kagami; fixture"
-explicit_kagami_bin="$explicit_kagami_dir/kagami"
-explicit_subject_bin="$explicit_kagami_dir/account_literal_reencode"
-hostile_kagami_calls="$TMP_DIR/hostile-kagami.calls"
-mkdir -p "$explicit_kagami_root/target/debug" "$explicit_kagami_dir"
-cat > "$explicit_kagami_root/target/debug/kagami" <<'EOF'
-#!/bin/sh
-printf '%s\n' "$*" >> "$SORASWAP_HOSTILE_KAGAMI_CALLS"
-exit 97
-EOF
-cat > "$explicit_kagami_bin" <<'EOF'
-#!/bin/sh
-if [ "${1:-}" = "keys" ]; then
-  printf '%s\n' 'ed0120A11CE' '802620BEEF'
-  exit 0
-fi
-exit 1
-EOF
-cat > "$explicit_subject_bin" <<'EOF'
-#!/bin/sh
-discriminant=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --to-chain-discriminant)
-      discriminant="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-[ -n "$discriminant" ] || exit 2
-printf 'acct:%s:ed0120A11CE\n' "$discriminant"
-EOF
-chmod +x "$explicit_kagami_root/target/debug/kagami" "$explicit_kagami_bin" "$explicit_subject_bin"
-clear_generated_executable_metadata "$explicit_kagami_root/target/debug/kagami" "$explicit_kagami_bin" "$explicit_subject_bin"
-explicit_kagami_config="$TMP_DIR/explicit-kagami.client.toml"
-cat > "$explicit_kagami_config" <<'EOF'
-chain = "explicit-kagami-chain"
-torii_url = "http://127.0.0.1:8080/"
-domain = "fixture.universal"
-public_key = "ed0120A11CE"
-private_key = "802620BEEF"
-EOF
-explicit_kagami_output="$TMP_DIR/explicit-kagami.out"
-(
-  unset SORASWAP_PUBLIC_ENV CHAIN ACCOUNT_CHAIN_DISCRIMINANT IROHA_ACCOUNT_CHAIN_DISCRIMINANT
-  export SORASWAP_IROHA_ROOT="$explicit_kagami_root"
-  export SORASWAP_IROHA_CLI_BIN="$FAKE_IROHA_ROOT/target/debug/iroha"
-  export SORASWAP_SKIP_IROHA_CLI_BUILD=1
-  export SORASWAP_HOSTILE_KAGAMI_CALLS="$hostile_kagami_calls"
-  export KAGAMI_BIN="$explicit_kagami_bin"
-  export SORASWAP_ACCOUNT_LITERAL_REENCODE_BIN="$explicit_subject_bin"
-  ensure_kagami_bin
-  explicit_oracle_keypair="$(soraswap_local_oracle_keypair_json_for_config "$explicit_kagami_config")"
-  jq -e '.public_key == "ed0120A11CE" and .private_key == "802620BEEF"' \
-    <<<"$explicit_oracle_keypair" >/dev/null
-  explicit_subject="$(contract_subject_account_for_literal \
-    "$explicit_kagami_config" \
-    'tairac1qyqqqqqqqqqqqqrcew9a497j0j5glh9q0xcgzq4hypfyrqctpk8nc')"
-  [[ "$explicit_subject" == "acct:753:ed0120A11CE" ]]
-) >"$explicit_kagami_output" 2>&1
-rg -Fq "cli tool: reusing explicit kagami binary" "$explicit_kagami_output"
-[[ ! -e "$hostile_kagami_calls" ]]
-
-missing_explicit_kagami_output="$TMP_DIR/missing-explicit-kagami.out"
-missing_explicit_kagami_status=0
-(
-  export SORASWAP_IROHA_ROOT="$explicit_kagami_root"
-  export SORASWAP_SKIP_IROHA_CLI_BUILD=0
-  export KAGAMI_BIN="$TMP_DIR/missing explicit kagami"
-  ensure_kagami_bin
-) >"$missing_explicit_kagami_output" 2>&1 || missing_explicit_kagami_status="$?"
-[[ "$missing_explicit_kagami_status" != "0" ]]
-rg -Fq "explicit KAGAMI_BIN is missing or not executable" "$missing_explicit_kagami_output"
-[[ ! -e "$hostile_kagami_calls" ]]
-
-[[ "$(rg -F -c 'kagami_bin="${KAGAMI_BIN:-$SORASWAP_IROHA_ROOT/target/debug/kagami}"' "$ROOT/scripts/common.sh")" == "1" ]]
-rg -Fq 'kagami_bin="${KAGAMI_BIN:-$SORASWAP_IROHA_ROOT/target/debug/kagami}"' \
-  "$ROOT/scripts/bootstrap_contract_state.sh"
-missing_skip_cli_root="$TMP_DIR/missing-skip-cli-root"
-mkdir -p "$missing_skip_cli_root/target/debug" "$missing_skip_cli_root/target/release"
-for missing_skip_case in iroha split_contract_deploy kagami; do
-  missing_skip_cli_output="$TMP_DIR/missing-skip-$missing_skip_case.out"
-  missing_skip_cli_status=0
-  (
-    export SORASWAP_IROHA_ROOT="$missing_skip_cli_root"
-    export SORASWAP_SKIP_IROHA_CLI_BUILD=1
-    case "$missing_skip_case" in
-      iroha)
-        ensure_iroha_cli_bin
-        ;;
-      split_contract_deploy)
-        ensure_split_contract_deploy_bin
-        ;;
-      kagami)
-        ensure_kagami_bin
-        ;;
-    esac
-  ) >"$missing_skip_cli_output" 2>&1 || missing_skip_cli_status="$?"
-  [[ "$missing_skip_cli_status" != "0" ]]
-  rg -Fq "SORASWAP_SKIP_IROHA_CLI_BUILD=1" "$missing_skip_cli_output"
-done
-invalid_skip_koto_tool_output="$TMP_DIR/invalid-skip-koto-tool.out"
-invalid_skip_koto_tool_status=0
-(
-  export SORASWAP_SKIP_KOTO_TOOL_BUILD=maybe
-  ensure_koto_bin
-) >"$invalid_skip_koto_tool_output" 2>&1 || invalid_skip_koto_tool_status="$?"
-[[ "$invalid_skip_koto_tool_status" != "0" ]]
-rg -Fq "SORASWAP_SKIP_KOTO_TOOL_BUILD must be 0 or 1; got 'maybe'" "$invalid_skip_koto_tool_output"
-invalid_skip_localnet_tool_output="$TMP_DIR/invalid-skip-localnet-tool.out"
-invalid_skip_localnet_tool_status=0
-(
-  export SORASWAP_SKIP_LOCALNET_TOOL_BUILD=maybe
-  ensure_localnet_tool_bins
-) >"$invalid_skip_localnet_tool_output" 2>&1 || invalid_skip_localnet_tool_status="$?"
-[[ "$invalid_skip_localnet_tool_status" != "0" ]]
-rg -Fq "SORASWAP_SKIP_LOCALNET_TOOL_BUILD must be 0 or 1; got 'maybe'" "$invalid_skip_localnet_tool_output"
-force_compile_fixture="$TMP_DIR/force-compile-fixture.ko"
-: > "$force_compile_fixture"
-invalid_force_compile_output="$TMP_DIR/invalid-force-compile.out"
-invalid_force_compile_status=0
-(
-  export SORASWAP_FORCE_COMPILE=maybe
-  compile_one "$force_compile_fixture"
-) >"$invalid_force_compile_output" 2>&1 || invalid_force_compile_status="$?"
-[[ "$invalid_force_compile_status" != "0" ]]
-rg -Fq "SORASWAP_FORCE_COMPILE must be 0 or 1; got 'maybe'" "$invalid_force_compile_output"
-
-canonical_manifest_root="$TMP_DIR/canonical-manifest-root"
-mkdir -p \
-  "$canonical_manifest_root/contracts/fixture" \
-  "$canonical_manifest_root/artifacts/compiled/fixture" \
-  "$canonical_manifest_root/deployments/testnet"
-touch \
-  "$canonical_manifest_root/contracts/fixture/current.ko" \
-  "$canonical_manifest_root/artifacts/compiled/fixture/current.to"
-cat > "$canonical_manifest_root/artifacts/compiled/fixture/current.manifest.json" <<'EOF'
-{
-  "code_hash": "hash:1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash": "hash:2222222222222222222222222222222222222222222222222222222222222222",
-  "entrypoints": [{"name": "compiler_manifest_entrypoint"}]
-}
-EOF
-canonical_manifest_out="$canonical_manifest_root/deployments/testnet/fixture.current.manifest.json"
-(
-  export SORASWAP_ROOT="$canonical_manifest_root"
-  artifact_hashes_json="$(contract_artifact_manifest_hashes_json \
-    "$clean_config_fixture" \
-    "$canonical_manifest_root/artifacts/compiled/fixture/current.to")"
-  jq -e '
-    .code_hash == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    and .abi_hash == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  ' <<<"$artifact_hashes_json" >/dev/null
-
-  write_deployment_manifest \
-    "$canonical_manifest_root/artifacts/compiled/fixture/current.manifest.json" \
-    "$canonical_manifest_out" \
-    testnet \
-    fixture.current \
-    20260623T010100Z \
-    "$canonical_manifest_root/contracts/fixture/current.ko" \
-    "$clean_config_fixture" \
-    9999999999999999999999999999999999999999999999999999999999999999 \
-    eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
-)
-jq -e '
-  .contract_key == "fixture.current"
-  and .environment == "testnet"
-  and .generated_at == "20260623T010100Z"
-  and .code_hash == "hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA#CAFE"
-  and .abi_hash == "hash:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB#BEEF"
-  and .entrypoints[0].name == "canonical_manifest_entrypoint"
-' "$canonical_manifest_out" >/dev/null
-! rg -q "compiler_manifest_entrypoint|9999999999999999999999999999999999999999999999999999999999999999" \
-  "$canonical_manifest_out"
-
 deployment_manifest_fixture="$TMP_DIR/deployment-manifest.json"
 cat > "$deployment_manifest_fixture" <<'EOF'
 {
@@ -1896,193 +1901,6 @@ deployment_manifest_matches_environment "$deployment_manifest_fixture" testnet l
 ! deployment_manifest_matches_environment "$deployment_manifest_fixture" production live.current
 jq 'del(.generated_at)' "$deployment_manifest_fixture" > "$TMP_DIR/deployment-manifest-raw.json"
 ! deployment_manifest_matches_environment "$TMP_DIR/deployment-manifest-raw.json" testnet live.current
-
-manifest_subset_fixture="$TMP_DIR/manifest-subset-fixture.toml"
-manifest_subset_output="$TMP_DIR/manifest-subset-output.toml"
-cat > "$manifest_subset_fixture" <<'EOF'
-bundle_name = "fixture"
-default_dataspace = "universal"
-
-[[contracts]]
-name = "alpha.one"
-alias = "one::alpha.universal"
-source = "contracts/alpha/one.ko"
-artifact = "artifacts/compiled/alpha/one.to"
-
-[[contracts]]
-name = "beta.two"
-alias = "two::beta.universal"
-source = "contracts/beta/two.ko"
-artifact = "artifacts/compiled/beta/two.to"
-
-[profiles.local]
-client_config = "tmp/client.toml"
-default_gas_limit = 42
-fee_asset_id = "xor#universal"
-EOF
-
-write_contract_app_manifest_subset "$manifest_subset_fixture" "$manifest_subset_output" "beta.two"
-[[ "$(contract_app_manifest_contract_names "$manifest_subset_output")" == "beta.two" ]]
-rg -q '^bundle_name = "fixture"$' "$manifest_subset_output"
-rg -q '^default_gas_limit = 42$' "$manifest_subset_output"
-[[ "$(rg -c '^default_gas_limit = 1_500_000$' "$ROOT/iroha.contracts.toml")" == "3" ]]
-rg -q '^fee_asset_id = "xor#universal"$' "$manifest_subset_output"
-! rg -q 'alpha.one' "$manifest_subset_output"
-! rg -q '"n3x\.n3x_hub",' "$ROOT/scripts/deploy_local.sh"
-! rg -q '"dlmm\.dlmm_pool",' "$ROOT/scripts/deploy_local.sh"
-! rg -q '"dlmm\.dlmm_router",' "$ROOT/scripts/deploy_local.sh"
-! rg -q '"batch_amm\.epoch_auction",' "$ROOT/scripts/deploy_local.sh"
-
-(
-  chunk_fixture="$TMP_DIR/manifest-chunk-fixture.toml"
-  chunk_output="$TMP_DIR/manifest-chunk-output.json"
-  materialized_chunks="$TMP_DIR/manifest-chunk-materialized.txt"
-  repaired_nonces="$TMP_DIR/manifest-chunk-repaired-nonces.txt"
-  mkdir -p "$TMP_DIR/chunk-receipts"
-  cat > "$chunk_fixture" <<'EOF'
-bundle_name = "chunked"
-default_dataspace = "universal"
-
-[[contracts]]
-name = "one.contract"
-alias = "contract::one.universal"
-source = "contracts/one/contract.ko"
-artifact = "artifacts/compiled/one/contract.to"
-
-[[contracts]]
-name = "two.contract"
-alias = "contract::two.universal"
-source = "contracts/two/contract.ko"
-artifact = "artifacts/compiled/two/contract.to"
-
-[[contracts]]
-name = "three.contract"
-alias = "contract::three.universal"
-source = "contracts/three/contract.ko"
-artifact = "artifacts/compiled/three/contract.to"
-EOF
-
-  submit_contract_app_bundle() {
-    local _config="$1"
-    local _action="$2"
-    local manifest_path="$3"
-    python3 - "$manifest_path" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
-
-data = tomllib.loads(Path(sys.argv[1]).read_text())
-names = [contract["name"] for contract in data.get("contracts", [])]
-print(json.dumps({
-    "ok": True,
-    "bundle_digest": "digest-" + "-".join(names),
-    "contracts": [
-        {
-            "name": name,
-            "status": "deployed",
-            "contract_alias": name.replace(".", "_") + "::fixture.universal",
-            "contract_address": "sorac1" + str(index),
-            "dataspace": "universal",
-            "deploy_nonce": index,
-            "code_hash_hex": f"{index:064x}",
-            "abi_hash_hex": "0" * 64,
-            "tx_hash_hex": f"{index + 10:064x}",
-            "kaizen": False,
-        }
-        for index, name in enumerate(names)
-    ],
-}))
-PY
-  }
-  materialize_contract_bundle_records_for_env() {
-    local env="$1"
-    local receipt_json="$2"
-    printf '%s\t%s\n' "$env" "$(jq -r '[.contracts[].name] | join(",")' <<<"$receipt_json")" >> "$materialized_chunks"
-  }
-  ensure_contract_deploy_nonce_after_bundle() {
-    local config="$1"
-    local receipt_json="$2"
-    printf '%s\t%s\n' "$config" "$(jq -r '([.contracts[].deploy_nonce] | max) + 1' <<<"$receipt_json")" >> "$repaired_nonces"
-  }
-  contract_bundle_receipt_path_for_env() {
-    local env="$1"
-    echo "$TMP_DIR/chunk-receipts/${env}.bundle.json"
-  }
-
-  SORASWAP_CONTRACT_APP_CHUNK_SIZE=2 \
-  SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS=0 \
-    submit_contract_app_manifest_for_env local "$TMP_DIR/client.toml" "$chunk_fixture" > "$chunk_output"
-  jq -e '
-    .ok == true
-    and .chunked == true
-    and ((.generated_at // "") | type == "string" and length > 0)
-    and .environment == "local"
-    and .chain_fingerprint == null
-    and .chunk_count == 2
-    and (.contracts | length) == 3
-    and (.chunks[0].contracts == ["one.contract", "two.contract"])
-    and (.chunks[1].contracts == ["three.contract"])
-  ' "$chunk_output" >/dev/null
-  rg -q $'local\tone.contract,two.contract' "$materialized_chunks"
-  rg -q $'local\tthree.contract' "$materialized_chunks"
-  rg -q "$TMP_DIR/client.toml"$'\t2' "$repaired_nonces"
-  rg -q "$TMP_DIR/client.toml"$'\t1' "$repaired_nonces"
-  cmp -s "$chunk_output" "$TMP_DIR/chunk-receipts/local.bundle.json"
-)
-
-(
-  public_bundle_guard_root="$TMP_DIR/public-bundle-guard-root"
-  public_bundle_guard_manifest="$TMP_DIR/public-bundle-guard.toml"
-  public_bundle_guard_called="$TMP_DIR/public-bundle-guard-called"
-  public_bundle_guard_output="$TMP_DIR/public-bundle-guard.out"
-  mkdir -p "$public_bundle_guard_root/deployments/testnet"
-  cat > "$public_bundle_guard_manifest" <<'EOF'
-bundle_name = "public-guard"
-default_dataspace = "universal"
-
-[[contracts]]
-name = "one.contract"
-alias = "contract::one.universal"
-source = "contracts/one/contract.ko"
-artifact = "artifacts/compiled/one/contract.to"
-EOF
-
-  submit_contract_app_bundle() {
-    touch "$public_bundle_guard_called"
-    printf '{"ok":true,"bundle_digest":"fixture","contracts":[]}\n'
-  }
-
-  export SORASWAP_ROOT="$public_bundle_guard_root"
-  unset SORASWAP_CHAIN_FINGERPRINT_JSON
-  public_bundle_guard_status=0
-  submit_contract_app_manifest_for_env testnet "$TMP_DIR/client.toml" "$public_bundle_guard_manifest" >"$public_bundle_guard_output" 2>&1 || public_bundle_guard_status="$?"
-  [[ "$public_bundle_guard_status" != "0" ]]
-  [[ ! -e "$public_bundle_guard_called" ]]
-  rg -Fq "contract app bundle submission for testnet requires a complete chain fingerprint" "$public_bundle_guard_output"
-
-  cat > "$public_bundle_guard_root/deployments/testnet/chain.latest.json" <<'EOF'
-{
-  "generated_at": "20260414T000000Z",
-  "environment": "testnet",
-  "torii_url": "https://taira.example.invalid",
-  "chain": "public-bundle-chain",
-  "block_1_hash": "public-bundle-block-1"
-}
-EOF
-  public_bundle_receipt="$(contract_bundle_receipt_with_metadata testnet '{"ok":true,"bundle_digest":"fixture","contracts":[]}' "20260414T000001Z")"
-  jq -e '
-    .generated_at == "20260414T000001Z"
-    and .environment == "testnet"
-    and .chain_fingerprint.torii_url == "https://taira.example.invalid"
-    and .chain_fingerprint.chain == "public-bundle-chain"
-    and .chain_fingerprint.block_1_hash == "public-bundle-block-1"
-  ' <<<"$public_bundle_receipt" >/dev/null
-)
 
 dev_test_fixture_dir="$TMP_DIR/dev-test-fixture"
 mkdir -p "$dev_test_fixture_dir/tests"
@@ -2100,6 +1918,27 @@ invalid_dev_tool_skip_status=0
 [[ "$invalid_dev_tool_skip_status" != "0" ]]
 rg -Fq "SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD must be 0 or 1; got 'maybe'" "$invalid_dev_tool_skip_output"
 export SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD=1
+dev_relative_manifest_args="$TMP_DIR/dev-relative-manifest.args"
+dev_relative_manifest_pwd="$TMP_DIR/dev-relative-manifest.pwd"
+(
+  export SORASWAP_IROHA_DEV_ARGS_PATH="$dev_relative_manifest_args"
+  export SORASWAP_IROHA_DEV_PWD_PATH="$dev_relative_manifest_pwd"
+  run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" check \
+    --manifest iroha.contracts.toml \
+    --profile local >/dev/null
+)
+expected_dev_relative_manifest_args="$(
+  printf '%s\n' \
+    contract \
+    dev \
+    check \
+    --manifest \
+    ./iroha.contracts.toml \
+    --profile \
+    local
+)"
+[[ "$(<"$dev_relative_manifest_args")" == "$expected_dev_relative_manifest_args" ]]
+[[ "$(<"$dev_relative_manifest_pwd")" == "$ROOT" ]]
 export SORASWAP_KOTO_TEST_CALLS="$TMP_DIR/koto_test.calls"
 run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" test --manifest "$dev_test_fixture_dir/iroha.contracts.toml" --profile local
 recorded_koto_test_call="$(cat "$SORASWAP_KOTO_TEST_CALLS")"
@@ -2148,14 +1987,22 @@ dev_manifest_strict_fixture_dir="$TMP_DIR/dev-manifest-strict-fixture"
 mkdir -p "$dev_manifest_strict_fixture_dir/contracts"
 touch "$dev_manifest_strict_fixture_dir/contracts/sample.ko"
 cat > "$dev_manifest_strict_fixture_dir/missing-artifact.toml" <<'EOF'
+bundle_name = "fixture"
+default_dataspace = "universal"
+
 [[contracts]]
 name = "sample.contract"
+alias = "sample::fixture.universal"
 source = "contracts/sample.ko"
 EOF
 export SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD=1
 cat > "$dev_manifest_strict_fixture_dir/missing-source.toml" <<'EOF'
+bundle_name = "fixture"
+default_dataspace = "universal"
+
 [[contracts]]
 name = "sample.contract"
+alias = "sample::fixture.universal"
 source = "contracts/missing.ko"
 artifact = "artifacts/compiled/sample.to"
 EOF
@@ -2165,20 +2012,24 @@ run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" check \
   --manifest "$dev_manifest_strict_fixture_dir/missing-source.toml" \
   --profile local >"$dev_missing_source_output" 2>&1 || dev_missing_source_status="$?"
 [[ "$dev_missing_source_status" != "0" ]]
-rg -q "contract entry 1 \\(sample.contract\\) source not found: contracts/missing.ko" \
+rg -q "failed to canonicalize .*contracts/missing.ko.*No such file or directory" \
   "$dev_missing_source_output"
 dev_missing_artifact_output="$TMP_DIR/dev-missing-artifact.out"
 dev_missing_artifact_status=0
 run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" build \
   --manifest "$dev_manifest_strict_fixture_dir/missing-artifact.toml" \
   --profile local >"$dev_missing_artifact_output" 2>&1 || dev_missing_artifact_status="$?"
-[[ "$dev_missing_artifact_status" != "0" ]]
-rg -q "contract entry 1 \\(sample.contract\\) missing artifact" "$dev_missing_artifact_output"
+[[ "$dev_missing_artifact_status" == "0" ]]
+rg -q '"ok": true' "$dev_missing_artifact_output"
 mkdir -p "$dev_manifest_strict_fixture_dir/artifacts/compiled/stale"
 printf '%s\n' 'stale' > "$dev_manifest_strict_fixture_dir/artifacts/compiled/stale/old.to"
 cat > "$dev_manifest_strict_fixture_dir/artifact-drift.toml" <<'EOF'
+bundle_name = "fixture"
+default_dataspace = "universal"
+
 [[contracts]]
 name = "sample.contract"
+alias = "sample::fixture.universal"
 source = "contracts/sample.ko"
 artifact = "artifacts/compiled/sample.to"
 EOF
@@ -2187,10 +2038,18 @@ dev_artifact_drift_status=0
 run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" build \
   --manifest "$dev_manifest_strict_fixture_dir/artifact-drift.toml" \
   --profile local >"$dev_artifact_drift_output" 2>&1 || dev_artifact_drift_status="$?"
-[[ "$dev_artifact_drift_status" != "0" ]]
-rg -q "compiled artifact drift: .*stale_outputs=.*artifacts/compiled/stale/old.to" \
-  "$dev_artifact_drift_output"
+[[ "$dev_artifact_drift_status" == "0" ]]
+rg -q '"ok": true' "$dev_artifact_drift_output"
+[[ -f "$dev_manifest_strict_fixture_dir/artifacts/compiled/stale/old.to" ]]
 cat > "$dev_manifest_strict_fixture_dir/stale-test-path.toml" <<'EOF'
+bundle_name = "fixture"
+default_dataspace = "universal"
+
+[[contracts]]
+name = "sample.contract"
+alias = "sample::fixture.universal"
+source = "contracts/sample.ko"
+
 [[tests]]
 path = "tests/missing.test.ko"
 EOF
@@ -2200,8 +2059,17 @@ run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" test \
   --manifest "$dev_manifest_strict_fixture_dir/stale-test-path.toml" \
   --profile local >"$dev_stale_test_output" 2>&1 || dev_stale_test_status="$?"
 [[ "$dev_stale_test_status" != "0" ]]
-rg -q "test entry 1 path not found: tests/missing.test.ko" "$dev_stale_test_output"
+rg -q "Kotodama tests in .*tests/missing.test.ko.*failed to read .*No such file or directory" \
+  "$dev_stale_test_output"
 cat > "$dev_manifest_strict_fixture_dir/missing-test-path.toml" <<'EOF'
+bundle_name = "fixture"
+default_dataspace = "universal"
+
+[[contracts]]
+name = "sample.contract"
+alias = "sample::fixture.universal"
+source = "contracts/sample.ko"
+
 [[tests]]
 name = "missing-path"
 EOF
@@ -2211,7 +2079,7 @@ run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" test \
   --manifest "$dev_manifest_strict_fixture_dir/missing-test-path.toml" \
   --profile local >"$dev_missing_test_output" 2>&1 || dev_missing_test_status="$?"
 [[ "$dev_missing_test_status" != "0" ]]
-rg -q "test entry 1 missing path" "$dev_missing_test_output"
+rg -q '`tests\[0\]\.path` must be a string' "$dev_missing_test_output"
 unset SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD
 
 dev_contract_source_bad_fixture_dir="$TMP_DIR/dev-contract-source-bad-fixture"
@@ -2310,29 +2178,26 @@ export SORASWAP_FAKE_LOCK_HOLDER_PID=424242
 [[ "$(PATH="$fake_lsof_dir:$PATH" cargo_lock_holder_pid "$dev_lock_file")" == "424242" ]]
 
 export SORASWAP_FAKE_CARGO_CALLS="$TMP_DIR/fake-cargo.calls"
-export SORASWAP_KOTO_LINT_CALLS="$TMP_DIR/koto_lint.calls"
 dev_lock_output="$TMP_DIR/dev-iroha-lock-reuse.out"
-PATH="$fake_lsof_dir:$fake_cargo_dir:$PATH" run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" check \
+SORASWAP_SKIP_IROHA_CLI_BUILD=0 PATH="$fake_lsof_dir:$fake_cargo_dir:$PATH" \
+  run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" check \
   --manifest "$dev_check_fixture_dir/iroha.contracts.toml" \
   --profile local >"$dev_lock_output" 2>&1
 [[ ! -s "$SORASWAP_FAKE_CARGO_CALLS" ]]
-rg -q "iroha dev: sibling cargo job holds .*reusing existing iroha/koto dev tools" "$dev_lock_output"
-recorded_koto_lint_call="$(cat "$SORASWAP_KOTO_LINT_CALLS")"
-[[ "$recorded_koto_lint_call" == */dev-check-fixture/contracts/sample.ko ]]
+rg -q "cli tool: sibling cargo job holds .*reusing existing iroha binary" "$dev_lock_output"
+rg -q '"ok": true' "$dev_lock_output"
 unset SORASWAP_FAKE_LOCK_HOLDER_PID
 
-touch -t 203001010001 "$FAKE_IROHA_ROOT/target/debug/koto_lint"
+touch -t 203001010001 "$FAKE_IROHA_ROOT/target/debug/iroha"
 : > "$SORASWAP_FAKE_CARGO_CALLS"
-: > "$SORASWAP_KOTO_LINT_CALLS"
 dev_current_output="$TMP_DIR/dev-iroha-current-reuse.out"
-PATH="$fake_cargo_dir:$PATH" run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" check \
+SORASWAP_SKIP_IROHA_CLI_BUILD=0 PATH="$fake_cargo_dir:$PATH" \
+  run_repo_zsh_script "$ROOT/scripts/dev_iroha.sh" check \
   --manifest "$dev_check_fixture_dir/iroha.contracts.toml" \
   --profile local >"$dev_current_output" 2>&1
 [[ ! -s "$SORASWAP_FAKE_CARGO_CALLS" ]]
-rg -q "iroha dev: reusing existing dev tool for check" "$dev_current_output"
-recorded_koto_lint_call="$(cat "$SORASWAP_KOTO_LINT_CALLS")"
-[[ "$recorded_koto_lint_call" == */dev-check-fixture/contracts/sample.ko ]]
-unset SORASWAP_FAKE_CARGO_CALLS SORASWAP_KOTO_LINT_CALLS
+rg -q '"ok": true' "$dev_current_output"
+unset SORASWAP_FAKE_CARGO_CALLS
 
 dev_smoke_missing_config_fixture_dir="$TMP_DIR/dev-smoke-missing-config-fixture"
 mkdir -p "$dev_smoke_missing_config_fixture_dir"
@@ -2388,6 +2253,7 @@ client_config = "client.toml"
 EOF
 cat > "$dev_doctor_missing_torii_fixture_dir/client.toml" <<'EOF'
 chain = "fixture-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 EOF
 dev_doctor_missing_torii_output="$TMP_DIR/dev-doctor-missing-torii.out"
 dev_doctor_missing_torii_status=0
@@ -2427,225 +2293,64 @@ rg -q "run make local-up before make dev-doctor" "$dev_doctor_unreachable_output
 
 snapshot_filter_root="$TMP_DIR/deployment-record-filter"
 mkdir -p "$snapshot_filter_root/contracts/live" "$snapshot_filter_root/deployments/testnet"
-touch \
-  "$snapshot_filter_root/contracts/live/current.ko" \
-  "$snapshot_filter_root/contracts/live/wrong_env.ko" \
-  "$snapshot_filter_root/contracts/live/stale_chain.ko" \
-  "$snapshot_filter_root/contracts/live/missing_generated.ko" \
-  "$snapshot_filter_root/contracts/live/hash_mismatch.ko" \
-  "$snapshot_filter_root/contracts/live/raw_manifest.ko"
-cat > "$snapshot_filter_root/deployments/testnet/chain.latest.json" <<'EOF'
-{
-  "generated_at": "20260623T005959Z",
-  "environment": "testnet",
-  "torii_url": "https://taira.example.invalid",
-  "chain": "filter-chain",
-  "block_1_hash": "filter-block-1"
-}
-EOF
+touch "$snapshot_filter_root/contracts/live/current.ko"
 cat > "$snapshot_filter_root/deployments/testnet/live.current.deploy.json" <<'EOF'
-{
-  "contract_key": "live.current",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "contract_address": "tairac1current",
-  "deploy_nonce": 1,
-  "code_hash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash_hex": "2222222222222222222222222222222222222222222222222222222222222222",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "filter-chain", "block_1_hash": "filter-block-1"}
-}
+{"contract_key":"live.current","contract_address":"tairac1invalid","dataspace":"0","deploy_nonce":1}
 EOF
 cat > "$snapshot_filter_root/deployments/testnet/live.current.manifest.json" <<'EOF'
-{
-  "contract_key": "live.current",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "code_hash": "hash:1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash": "hash:2222222222222222222222222222222222222222222222222222222222222222",
-  "entrypoints": []
-}
+{"contract_key":"live.current","generated_at":"20260623T010000Z","environment":"testnet","code_hash":"hash:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB#ABA2","abi_hash":"hash:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD#F071","entrypoints":[]}
 EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.stale_chain.deploy.json" <<'EOF'
-{
-  "contract_key": "live.stale_chain",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "contract_address": "tairac1stalechain",
-  "deploy_nonce": 4,
-  "code_hash_hex": "3333333333333333333333333333333333333333333333333333333333333333",
-  "abi_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "filter-chain", "block_1_hash": "old-block"}
-}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.stale_chain.manifest.json" <<'EOF'
-{
-  "contract_key": "live.stale_chain",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "code_hash": "hash:3333333333333333333333333333333333333333333333333333333333333333",
-  "abi_hash": "hash:4444444444444444444444444444444444444444444444444444444444444444",
-  "entrypoints": []
-}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.raw_manifest.deploy.json" <<'EOF'
-{
-  "contract_key": "live.raw_manifest",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "contract_address": "tairac1rawmanifest",
-  "deploy_nonce": 5,
-  "code_hash_hex": "5555555555555555555555555555555555555555555555555555555555555555",
-  "abi_hash_hex": "6666666666666666666666666666666666666666666666666666666666666666",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "filter-chain", "block_1_hash": "filter-block-1"}
-}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.raw_manifest.manifest.json" <<'EOF'
-{
-  "code_hash": "hash:5555555555555555555555555555555555555555555555555555555555555555",
-  "abi_hash": "hash:6666666666666666666666666666666666666666666666666666666666666666",
-  "entrypoints": []
-}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.missing_generated.deploy.json" <<'EOF'
-{
-  "contract_key": "live.missing_generated",
-  "environment": "testnet",
-  "contract_address": "tairac1missinggenerated",
-  "deploy_nonce": 6,
-  "code_hash_hex": "7777777777777777777777777777777777777777777777777777777777777777",
-  "abi_hash_hex": "8888888888888888888888888888888888888888888888888888888888888888",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "filter-chain", "block_1_hash": "filter-block-1"}
-}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.missing_generated.manifest.json" <<'EOF'
-{
-  "contract_key": "live.missing_generated",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "code_hash": "hash:7777777777777777777777777777777777777777777777777777777777777777",
-  "abi_hash": "hash:8888888888888888888888888888888888888888888888888888888888888888",
-  "entrypoints": []
-}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.hash_mismatch.deploy.json" <<'EOF'
-{
-  "contract_key": "live.hash_mismatch",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "contract_address": "tairac1hashmismatch",
-  "deploy_nonce": 7,
-  "code_hash_hex": "9999999999999999999999999999999999999999999999999999999999999999",
-  "abi_hash_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "filter-chain", "block_1_hash": "filter-block-1"}
-}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.hash_mismatch.manifest.json" <<'EOF'
-{
-  "contract_key": "live.hash_mismatch",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "code_hash": "hash:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  "abi_hash": "hash:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  "entrypoints": []
-}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.wrong_env.deploy.json" <<'EOF'
-{"contract_key":"live.wrong_env","environment":"production","contract_address":"tairac1wrongenv","deploy_nonce":3}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/live.wrong_env.manifest.json" <<'EOF'
-{"entrypoints":[]}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/old.deleted.deploy.json" <<'EOF'
-{"contract_key":"old.deleted","contract_address":"tairac1deleted","deploy_nonce":2}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/old.deleted.manifest.json" <<'EOF'
-{"entrypoints":[]}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/orphan.deleted.manifest.json" <<'EOF'
-{"entrypoints":[]}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/soraswap.bundle.deploy.json" <<'EOF'
-{"bundle_name":"soraswap","contracts":[{"name":"old.deleted","contract_address":"tairac1deleted"}]}
-EOF
-cat > "$snapshot_filter_root/deployments/testnet/soraswap.foundation.bundle.deploy.json" <<'EOF'
-{
-  "bundle_name": "soraswap-foundation",
-  "contract_key": "live.current",
-  "generated_at": "20260623T010001Z",
-  "environment": "testnet",
-  "contract_address": "tairac1foundationaggregate",
-  "deploy_nonce": 99,
-  "code_hash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash_hex": "2222222222222222222222222222222222222222222222222222222222222222",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "filter-chain", "block_1_hash": "filter-block-1"},
-  "contracts": [{"name": "live.current", "contract_address": "tairac1foundationaggregate"}]
-}
-EOF
+deployment_records_filter_output="$TMP_DIR/deployment-record-filter.out"
+deployment_records_filter_status=0
+(
+  export SORASWAP_ROOT="$snapshot_filter_root"
+  deployment_records_json_for_env testnet
+) >"$deployment_records_filter_output" 2>&1 || deployment_records_filter_status="$?"
+[[ "$deployment_records_filter_status" != "0" ]]
+rg -Fq 'missing or invalid current deployment record for testnet/live.current' "$deployment_records_filter_output"
+
 deployment_records_filter_json="$TMP_DIR/deployment-record-filter.json"
 (
   export SORASWAP_ROOT="$snapshot_filter_root"
+  deployment_record_matches_current_evidence() {
+    [[ "$1" == "$snapshot_filter_root/deployments/testnet/live.current.deploy.json"
+      && "$2" == "testnet"
+      && "$3" == "live.current" ]]
+  }
   deployment_records_json_for_env testnet
 ) >"$deployment_records_filter_json"
-jq -e 'length == 1 and .[0].contract_key == "live.current" and .[0].environment == "testnet"' "$deployment_records_filter_json" >/dev/null
-jq 'del(.generated_at, .environment, .contract_key)' "$snapshot_filter_root/deployments/testnet/live.current.manifest.json" \
-  > "$TMP_DIR/live-current-raw-manifest.json"
-mv "$TMP_DIR/live-current-raw-manifest.json" "$snapshot_filter_root/deployments/testnet/live.current.manifest.json"
-(
-  export SORASWAP_ROOT="$snapshot_filter_root"
-  deployment_records_json_for_env testnet
-) >"$deployment_records_filter_json"
-jq -e 'length == 0' "$deployment_records_filter_json" >/dev/null
-cat > "$snapshot_filter_root/deployments/testnet/live.current.manifest.json" <<'EOF'
-{
-  "contract_key": "live.current",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "code_hash": "hash:1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash": "hash:2222222222222222222222222222222222222222222222222222222222222222",
-  "entrypoints": []
-}
+jq -e 'length == 1 and .[0].contract_key == "live.current"' "$deployment_records_filter_json" >/dev/null
+
+cat > "$snapshot_filter_root/deployments/testnet/old.deleted.deploy.json" <<'EOF'
+{"contract_key":"old.deleted"}
+EOF
+cat > "$snapshot_filter_root/deployments/testnet/old.deleted.manifest.json" <<'EOF'
+{"contract_key":"old.deleted"}
+EOF
+cat > "$snapshot_filter_root/deployments/testnet/orphan.deleted.manifest.json" <<'EOF'
+{"contract_key":"orphan.deleted"}
 EOF
 (
   export SORASWAP_ROOT="$snapshot_filter_root"
-  [[ "$(max_deploy_nonce_for_env_records testnet '{"torii_url":"https://taira.example.invalid","chain":"filter-chain","block_1_hash":"filter-block-1"}')" == "1" ]]
-)
-(
-  export SORASWAP_ROOT="$snapshot_filter_root"
+  deployment_record_matches_current_evidence() {
+    [[ "$1" == "$snapshot_filter_root/deployments/testnet/live.current.deploy.json"
+      && "$2" == "testnet"
+      && "$3" == "live.current" ]]
+  }
   cleanup_stale_deployment_records_for_env testnet
 )
 [[ -f "$snapshot_filter_root/deployments/testnet/live.current.deploy.json" ]]
 [[ -f "$snapshot_filter_root/deployments/testnet/live.current.manifest.json" ]]
-[[ -f "$snapshot_filter_root/deployments/testnet/soraswap.bundle.deploy.json" ]]
-[[ -f "$snapshot_filter_root/deployments/testnet/soraswap.foundation.bundle.deploy.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.stale_chain.deploy.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.stale_chain.manifest.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.missing_generated.deploy.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.missing_generated.manifest.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.hash_mismatch.deploy.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.hash_mismatch.manifest.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.raw_manifest.deploy.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.raw_manifest.manifest.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.wrong_env.deploy.json" ]]
-[[ ! -e "$snapshot_filter_root/deployments/testnet/live.wrong_env.manifest.json" ]]
 [[ ! -e "$snapshot_filter_root/deployments/testnet/old.deleted.deploy.json" ]]
 [[ ! -e "$snapshot_filter_root/deployments/testnet/old.deleted.manifest.json" ]]
 [[ ! -e "$snapshot_filter_root/deployments/testnet/orphan.deleted.manifest.json" ]]
-
 resolver_filter_root="$TMP_DIR/deployed-contract-resolver-filter"
 mkdir -p "$resolver_filter_root/deployments/testnet"
-cat > "$resolver_filter_root/deployments/testnet/chain.latest.json" <<'EOF'
-{
-  "generated_at": "20260623T005959Z",
-  "environment": "testnet",
-  "torii_url": "https://taira.example.invalid",
-  "chain": "resolver-chain",
-  "block_1_hash": "resolver-block-1"
-}
-EOF
 cat > "$resolver_filter_root/deployments/testnet/contracts.latest.json" <<'EOF'
 {
   "generated_at": "20260623T010000Z",
   "environment": "testnet",
+  "status": "completed",
   "chain_fingerprint": {
     "torii_url": "https://taira.example.invalid",
     "chain": "resolver-chain",
@@ -2655,8 +2360,9 @@ cat > "$resolver_filter_root/deployments/testnet/contracts.latest.json" <<'EOF'
     {
       "contract_key": "live.current",
       "environment": "testnet",
-      "contract_address": "tairac1snapshot",
-      "dataspace": "snapshotspace"
+      "contract_address": "tairac1forbiddenfallback",
+      "dataspace_alias": "forbidden",
+      "dataspace_id": "99"
     }
   ]
 }
@@ -2664,179 +2370,64 @@ EOF
 cat > "$resolver_filter_root/deployments/testnet/live.current.deploy.json" <<'EOF'
 {
   "contract_key": "live.current",
-  "environment": "production",
-  "contract_address": "tairac1wrongenv",
-  "dataspace": "wrongspace"
+  "contract_address": "tairac1currentrecord",
+  "dataspace_alias": "universal",
+  "dataspace_id": "0"
 }
 EOF
 (
   export SORASWAP_ROOT="$resolver_filter_root"
-  [[ "$(deployed_contract_id_for_env testnet live.current)" == "tairac1snapshot" ]]
-  [[ "$(deployed_contract_dataspace_for_env testnet live.current)" == "snapshotspace" ]]
-)
-jq '.contracts[0].environment = "production"' "$resolver_filter_root/deployments/testnet/contracts.latest.json" \
-  > "$TMP_DIR/resolver-wrong-snapshot-env.json"
-mv "$TMP_DIR/resolver-wrong-snapshot-env.json" "$resolver_filter_root/deployments/testnet/contracts.latest.json"
-(
-  export SORASWAP_ROOT="$resolver_filter_root"
-  [[ "$(deployed_contract_id_for_env testnet live.current)" == "live.current" ]]
-  [[ "$(deployed_contract_dataspace_for_env testnet live.current)" == "universal" ]]
-)
-jq '.contracts[0].environment = "testnet"' "$resolver_filter_root/deployments/testnet/contracts.latest.json" \
-  > "$TMP_DIR/resolver-current-snapshot-env.json"
-mv "$TMP_DIR/resolver-current-snapshot-env.json" "$resolver_filter_root/deployments/testnet/contracts.latest.json"
-jq '.chain_fingerprint.block_1_hash = "stale-block"' "$resolver_filter_root/deployments/testnet/contracts.latest.json" \
-  > "$TMP_DIR/resolver-wrong-snapshot-chain.json"
-mv "$TMP_DIR/resolver-wrong-snapshot-chain.json" "$resolver_filter_root/deployments/testnet/contracts.latest.json"
-(
-  export SORASWAP_ROOT="$resolver_filter_root"
-  [[ "$(deployed_contract_id_for_env testnet live.current)" == "live.current" ]]
-  [[ "$(deployed_contract_dataspace_for_env testnet live.current)" == "universal" ]]
-)
-jq '.chain_fingerprint.block_1_hash = "resolver-block-1"' "$resolver_filter_root/deployments/testnet/contracts.latest.json" \
-  > "$TMP_DIR/resolver-current-snapshot-chain.json"
-mv "$TMP_DIR/resolver-current-snapshot-chain.json" "$resolver_filter_root/deployments/testnet/contracts.latest.json"
-jq '.chain_fingerprint.torii_url = "https://wrong-taira.example.invalid"' "$resolver_filter_root/deployments/testnet/contracts.latest.json" \
-  > "$TMP_DIR/resolver-wrong-snapshot-url.json"
-mv "$TMP_DIR/resolver-wrong-snapshot-url.json" "$resolver_filter_root/deployments/testnet/contracts.latest.json"
-(
-  export SORASWAP_ROOT="$resolver_filter_root"
-  [[ "$(deployed_contract_id_for_env testnet live.current)" == "live.current" ]]
-  [[ "$(deployed_contract_dataspace_for_env testnet live.current)" == "universal" ]]
-)
-jq '.chain_fingerprint.torii_url = "https://taira.example.invalid"' "$resolver_filter_root/deployments/testnet/contracts.latest.json" \
-  > "$TMP_DIR/resolver-current-snapshot-url.json"
-mv "$TMP_DIR/resolver-current-snapshot-url.json" "$resolver_filter_root/deployments/testnet/contracts.latest.json"
-jq '.environment = "testnet" | .chain_fingerprint = {"torii_url":"https://taira.example.invalid","chain":"resolver-chain","block_1_hash":"resolver-block-1"}' "$resolver_filter_root/deployments/testnet/live.current.deploy.json" \
-  > "$TMP_DIR/resolver-current-env-record.json"
-mv "$TMP_DIR/resolver-current-env-record.json" "$resolver_filter_root/deployments/testnet/live.current.deploy.json"
-cat > "$resolver_filter_root/deployments/testnet/live.current.manifest.json" <<'EOF'
-{
-  "contract_key": "live.current",
-  "generated_at": "20260623T010100Z",
-  "environment": "testnet",
-  "code_hash": "hash:1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash": "hash:2222222222222222222222222222222222222222222222222222222222222222",
-  "entrypoints": []
-}
-EOF
-(
-  export SORASWAP_ROOT="$resolver_filter_root"
-  [[ "$(deployed_contract_id_for_env testnet live.current)" == "tairac1snapshot" ]]
-  [[ "$(deployed_contract_dataspace_for_env testnet live.current)" == "snapshotspace" ]]
-)
-jq '.generated_at = "20260623T010100Z" | .code_hash_hex = "1111111111111111111111111111111111111111111111111111111111111111" | .abi_hash_hex = "2222222222222222222222222222222222222222222222222222222222222222"' "$resolver_filter_root/deployments/testnet/live.current.deploy.json" \
-  > "$TMP_DIR/resolver-generated-record.json"
-mv "$TMP_DIR/resolver-generated-record.json" "$resolver_filter_root/deployments/testnet/live.current.deploy.json"
-cat > "$resolver_filter_root/deployments/testnet/live.current.manifest.json" <<'EOF'
-{
-  "code_hash": "hash:1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash": "hash:2222222222222222222222222222222222222222222222222222222222222222",
-  "entrypoints": []
-}
-EOF
-(
-  export SORASWAP_ROOT="$resolver_filter_root"
-  [[ "$(deployed_contract_id_for_env testnet live.current)" == "tairac1snapshot" ]]
-  [[ "$(deployed_contract_dataspace_for_env testnet live.current)" == "snapshotspace" ]]
-)
-cat > "$resolver_filter_root/deployments/testnet/live.current.manifest.json" <<'EOF'
-{
-  "contract_key": "live.current",
-  "generated_at": "20260623T010100Z",
-  "environment": "testnet",
-  "code_hash": "hash:1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash": "hash:2222222222222222222222222222222222222222222222222222222222222222",
-  "entrypoints": []
-}
-EOF
-(
-  export SORASWAP_ROOT="$resolver_filter_root"
-  [[ "$(deployed_contract_id_for_env testnet live.current)" == "tairac1wrongenv" ]]
-  [[ "$(deployed_contract_dataspace_for_env testnet live.current)" == "wrongspace" ]]
-)
-jq '.chain_fingerprint.block_1_hash = "old-block"' "$resolver_filter_root/deployments/testnet/live.current.deploy.json" \
-  > "$TMP_DIR/resolver-stale-env-record.json"
-mv "$TMP_DIR/resolver-stale-env-record.json" "$resolver_filter_root/deployments/testnet/live.current.deploy.json"
-(
-  export SORASWAP_ROOT="$resolver_filter_root"
-  [[ "$(deployed_contract_id_for_env testnet live.current)" == "tairac1snapshot" ]]
-  [[ "$(deployed_contract_dataspace_for_env testnet live.current)" == "snapshotspace" ]]
-)
-
-manifest_recovery_root="$TMP_DIR/manifest-recovery-root"
-mkdir -p "$manifest_recovery_root/contracts/live" "$manifest_recovery_root/deployments/testnet" "$manifest_recovery_root/scripts"
-touch "$manifest_recovery_root/contracts/live/current.ko"
-cat > "$manifest_recovery_root/scripts/compile_contracts.sh" <<'EOF'
-#!/bin/sh
-printf 'compiled\n' >> "$SORASWAP_MANIFEST_RECOVERY_COMPILE_LOG"
-EOF
-chmod +x "$manifest_recovery_root/scripts/compile_contracts.sh"
-clear_generated_executable_metadata "$manifest_recovery_root/scripts/compile_contracts.sh"
-cat > "$manifest_recovery_root/deployments/testnet/live.current.deploy.json" <<'EOF'
-{
-  "contract_key": "live.current",
-  "generated_at": "20260623T010000Z",
-  "environment": "testnet",
-  "contract_address": "tairac1current",
-  "deploy_nonce": 1,
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"},
-  "response": {
-    "ok": true,
-    "contract_address": "tairac1current",
-    "deploy_nonce": 1,
-    "code_hash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
-    "abi_hash_hex": "2222222222222222222222222222222222222222222222222222222222222222"
+  deployment_record_matches_current_evidence() {
+    [[ "$1" == "$resolver_filter_root/deployments/testnet/live.current.deploy.json" \
+      && "$2" == "testnet" \
+      && "$3" == "live.current" ]]
   }
-}
-EOF
-cat > "$manifest_recovery_root/deployments/testnet/live.current.manifest.json" <<'EOF'
-{
-  "code_hash": "hash:1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash": "hash:2222222222222222222222222222222222222222222222222222222222222222",
-  "entrypoints": []
-}
-EOF
-manifest_recovery_compile_log="$TMP_DIR/manifest-recovery-compile.log"
-manifest_recovery_recover_log="$TMP_DIR/manifest-recovery-recover.log"
-manifest_recovery_refresh_log="$TMP_DIR/manifest-recovery-refresh.log"
+  [[ "$(deployed_contract_id_for_env testnet live.current)" == "tairac1currentrecord" ]]
+  [[ "$(deployed_contract_dataspace_alias_for_env testnet live.current)" == "universal" ]]
+  [[ "$(deployed_contract_dataspace_id_for_env testnet live.current)" == "0" ]]
+)
 (
-  export SORASWAP_ROOT="$manifest_recovery_root"
-  export SORASWAP_CHAIN_FINGERPRINT_JSON='{"torii_url":"https://taira.example.invalid","chain":"fixture-chain","block_1_hash":"fixture-block"}'
-  export SORASWAP_MANIFEST_RECOVERY_COMPILE_LOG="$manifest_recovery_compile_log"
+  export SORASWAP_ROOT="$resolver_filter_root"
+  deployment_record_matches_current_evidence() { return 1; }
+  ! deployed_contract_id_for_env testnet live.current
+  ! deployed_contract_dataspace_alias_for_env testnet live.current
+  ! deployed_contract_dataspace_id_for_env testnet live.current
+) >/dev/null 2>&1
+
+strict_records_root="$TMP_DIR/strict-deployment-records-root"
+mkdir -p "$strict_records_root/deployments/testnet"
+cat > "$strict_records_root/deployments/testnet/live.current.deploy.json" <<'EOF'
+{"contract_key":"live.current"}
+EOF
+strict_records_failure_output="$TMP_DIR/strict-deployment-records-failure.out"
+strict_records_unexpected_live="$TMP_DIR/strict-deployment-records-unexpected-live"
+strict_records_unexpected_refresh="$TMP_DIR/strict-deployment-records-unexpected-refresh"
+(
+  export SORASWAP_ROOT="$strict_records_root"
+  expected_contract_ids() { printf '%s\n' 'live.current'; }
+  deployment_manifest_matches_environment() { return 0; }
+  manifest_code_hash_hex() { printf '%064d\n' 1; }
+  deployment_record_matches_current_evidence() { return 1; }
+  live_contract_deployment_from_record() { touch "$strict_records_unexpected_live"; }
+  refresh_deployment_records_snapshot_latest_for_env() { touch "$strict_records_unexpected_refresh"; }
+  ! ensure_deployment_records_current testnet "$clean_config_fixture"
+) >"$strict_records_failure_output" 2>&1
+rg -Fq 'current testnet deployment evidence is missing or invalid for live.current; run the exact ivm_contract_deploy workflow' "$strict_records_failure_output"
+[[ ! -e "$strict_records_unexpected_live" ]]
+[[ ! -e "$strict_records_unexpected_refresh" ]]
+
+strict_records_refresh_log="$TMP_DIR/strict-deployment-records-refresh.log"
+(
+  export SORASWAP_ROOT="$strict_records_root"
+  expected_contract_ids() { printf '%s\n' 'live.current'; }
+  deployment_manifest_matches_environment() { return 0; }
+  manifest_code_hash_hex() { printf '%064d\n' 1; }
+  deployment_record_matches_current_evidence() { return 0; }
   live_contract_deployment_from_record() { return 0; }
-  recover_deployment_records_from_live_aliases() { printf 'recovered %s %s\n' "$1" "$2" >> "$manifest_recovery_recover_log"; }
-  refresh_deployment_records_snapshot_latest_for_env() { printf 'refreshed %s\n' "$1" >> "$manifest_recovery_refresh_log"; }
+  refresh_deployment_records_snapshot_latest_for_env() { printf 'refreshed %s\n' "$1" >> "$strict_records_refresh_log"; }
   ensure_deployment_records_current testnet "$clean_config_fixture"
 )
-rg -q '^compiled$' "$manifest_recovery_compile_log"
-rg -q '^recovered testnet ' "$manifest_recovery_recover_log"
-rg -q '^refreshed testnet$' "$manifest_recovery_refresh_log"
-cat > "$manifest_recovery_root/deployments/testnet/live.current.manifest.json" <<'EOF'
-{
-  "contract_key": "live.current",
-  "generated_at": "20260623T010100Z",
-  "environment": "testnet",
-  "code_hash": "hash:1111111111111111111111111111111111111111111111111111111111111111",
-  "abi_hash": "hash:2222222222222222222222222222222222222222222222222222222222222222",
-  "entrypoints": []
-}
-EOF
-: > "$manifest_recovery_compile_log"
-: > "$manifest_recovery_recover_log"
-: > "$manifest_recovery_refresh_log"
-(
-  export SORASWAP_ROOT="$manifest_recovery_root"
-  export SORASWAP_CHAIN_FINGERPRINT_JSON='{"torii_url":"https://taira.example.invalid","chain":"fixture-chain","block_1_hash":"fixture-block"}'
-  export SORASWAP_MANIFEST_RECOVERY_COMPILE_LOG="$manifest_recovery_compile_log"
-  live_contract_deployment_from_record() { return 0; }
-  recover_deployment_records_from_live_aliases() { printf 'recovered %s %s\n' "$1" "$2" >> "$manifest_recovery_recover_log"; }
-  refresh_deployment_records_snapshot_latest_for_env() { printf 'refreshed %s\n' "$1" >> "$manifest_recovery_refresh_log"; }
-  ensure_deployment_records_current testnet "$clean_config_fixture"
-)
-[[ ! -s "$manifest_recovery_compile_log" ]]
-[[ ! -s "$manifest_recovery_recover_log" ]]
-rg -q '^refreshed testnet$' "$manifest_recovery_refresh_log"
+rg -q '^refreshed testnet$' "$strict_records_refresh_log"
 
 production_checklist_dry_run="$TMP_DIR/release-production-checklist.dry-run"
 make -C "$ROOT" -n release-production-checklist > "$production_checklist_dry_run"
@@ -2927,10 +2518,11 @@ rg -Fxq "config/production/*.toml" "$ROOT/.gitignore"
 rg -Fxq "!config/production/*.toml.example" "$ROOT/.gitignore"
 shell_syntax_output="$TMP_DIR/check-shell-syntax.out"
 typeset -a shell_syntax_root_args
-shell_syntax_root_args=()
-if [[ "$prepare_status_doc_closeout" == "1" ]]; then
-  shell_syntax_root_args=(--prepare-status-doc-closeout)
-fi
+# Generated operator evidence is intentionally ignored by git and may change
+# independently of this hermetic helper suite. Exercise status-doc freshness on
+# the dedicated fixture roots below instead of coupling the root syntax pass to
+# whichever local preflight was run most recently.
+shell_syntax_root_args=(--prepare-status-doc-closeout)
 SORASWAP_ROOT="$ROOT" run_repo_zsh_script "$ROOT/scripts/check_shell_syntax.sh" "${shell_syntax_root_args[@]}" > "$shell_syntax_output"
 rg -q "shell syntax ok: .* scripts checked" "$shell_syntax_output"
 rg -q "python syntax ok: .* files checked" "$shell_syntax_output"
@@ -2961,7 +2553,6 @@ rg -q "release status docs ok: .* current evidence mentions checked" "$shell_syn
 rg -q "documented markdown links ok: .* repo-local links checked" "$shell_syntax_output"
 rg -q "generated evidence paths ok: .* generated JSON artifacts checked" "$shell_syntax_output"
 rg -q "generated evidence redaction ok: .* generated JSON artifacts checked" "$shell_syntax_output"
-rg -q "repo temporary files ok: no stale deploy manifests found" "$shell_syntax_output"
 release_closeout_dry_run="$TMP_DIR/release-closeout.dry-run"
 make -C "$ROOT" -n test-release-closeout > "$release_closeout_dry_run"
 rg -q "./tests/release_closeout_smoke.sh" "$release_closeout_dry_run"
@@ -2985,22 +2576,6 @@ SORASWAP_ROOT="$shell_syntax_bad_root" run_repo_zsh_script "$ROOT/scripts/check_
   > "$shell_syntax_bad_output" 2>&1 || shell_syntax_bad_status="$?"
 [[ "$shell_syntax_bad_status" != "0" ]]
 rg -q "shell syntax check failed: tests/bad.sh" "$shell_syntax_bad_output"
-shell_syntax_stale_temp_root="$TMP_DIR/check-shell-syntax-stale-temp-root"
-mkdir -p "$shell_syntax_stale_temp_root/scripts" "$shell_syntax_stale_temp_root/tests"
-cat > "$shell_syntax_stale_temp_root/scripts/good.sh" <<'EOF'
-#!/bin/zsh
-set -euo pipefail
-echo ok
-EOF
-touch "$shell_syntax_stale_temp_root/.soraswap-contract-app-chunk-1.abcd12"
-touch "$shell_syntax_stale_temp_root/.soraswap-foundation-manifest.ef3456"
-shell_syntax_stale_temp_output="$TMP_DIR/check-shell-syntax-stale-temp.out"
-shell_syntax_stale_temp_status=0
-SORASWAP_ROOT="$shell_syntax_stale_temp_root" run_repo_zsh_script "$ROOT/scripts/check_shell_syntax.sh" \
-  > "$shell_syntax_stale_temp_output" 2>&1 || shell_syntax_stale_temp_status="$?"
-[[ "$shell_syntax_stale_temp_status" != "0" ]]
-rg -q "repo temporary file check failed: stale deploy manifest .soraswap-contract-app-chunk-1.abcd12" "$shell_syntax_stale_temp_output"
-rg -q "repo temporary file check failed: stale deploy manifest .soraswap-foundation-manifest.ef3456" "$shell_syntax_stale_temp_output"
 contract_source_bad_root="$TMP_DIR/check-shell-syntax-bad-contract-source-root"
 mkdir -p "$contract_source_bad_root/scripts" "$contract_source_bad_root/tests" "$contract_source_bad_root/contracts/dlmm"
 cat > "$contract_source_bad_root/scripts/good.sh" <<'EOF'
@@ -4313,9 +3888,6 @@ rg -q "make check-shell-syntax" "$ROOT/docs/release/production_readiness_checkli
 rg -q "non-mutating release preflight" "$ROOT/README.md"
 rg -q "embedded placeholder fragments such as .*TODO.*TBD.*changeme.*replace_me.*replaceme" "$ROOT/README.md"
 rg -q "SORASWAP_TAIRA_REPAIR_REASON.*SORASWAP_TAIRA_REPAIR_SNAPSHOT_POLICY.*SORASWAP_TAIRA_REPAIR_OPERATOR.*local process listings" "$ROOT/README.md"
-rg -q "SORASWAP_TAIRA_REPAIR_VOLATILE_DIST.*SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN.*SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA.*SORASWAP_TAIRA_REPAIR_VOLATILE_TORII_PORTS" "$ROOT/README.md"
-rg -q "SORASWAP_TAIRA_REPAIR_PLATFORM.*darwin.*linux.*manual" "$ROOT/README.md"
-rg -q "unique numeric comma-separated port list" "$ROOT/README.md"
 rg -q "artifacts/telemetry/defi_2026_primitives_latest.json" "$ROOT/README.md"
 rg -q "launch-ready intent, n3x vault, solver-operator, hook-order, margin, and RWA evidence" "$ROOT/README.md"
 rg -q "SCCP recent-message and remote transaction-history queries are capped at .*100.*from.*offset.*10000" "$ROOT/README.md"
@@ -4332,70 +3904,59 @@ rg -q 'release-taira.*release-production.*SORASWAP_RWA_\*_REF.*only when.*SORASW
 rg -q "make release-checklist.*make release-production-checklist" "$ROOT/AGENTS.md"
 ! rg -q "initial scaffold and first Kotodama contract slice" "$ROOT/AGENTS.md"
 rg -q "RELEASE_CHECKLIST_INTERNAL_TOKEN.*make release-checklist.*make release-taira.*make release-production" "$ROOT/README.md"
-rg -q "make refresh-testnet-chain.*make refresh-production-chain.*rejecting wrong-environment configs.*placeholder/local/wildcard/example endpoints.*Taira configs whose chain does not match.*SORASWAP_TESTNET_CHAIN_ID.*Taira's canonical chain id" "$ROOT/README.md"
+rg -Fq 'Taira client configs must set chain `fc56984b-2be7-431d-840e-21514d1883f0` exactly; no testnet chain-id override is accepted' "$ROOT/README.md"
+rg -Fq 'hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94' "$ROOT/README.md"
+rg -q 'profile = "taira".*chain_discriminant = 369.*no testnet discriminant override is accepted' "$ROOT/README.md"
 rg -q 'local/wildcard/example endpoints.*127\.0\.0\.1.*0\.0\.0\.0.*\[::1\].*\[::\].*example\.com' "$ROOT/README.md"
-rg -q "release runners, public preflight, and standalone public wrappers reject cross-environment configs.*default ignored paths.*config/testnet/taira.client.toml.*config/production/production.client.toml.*Taira paths also refuse configs whose chain does not match the expected Taira chain.*SORASWAP_TESTNET_CHAIN_ID" "$ROOT/README.md"
+rg -q 'release runners, public preflight, and standalone public wrappers reject cross-environment configs.*default ignored paths.*config/testnet/taira.client.toml.*config/production/production.client.toml.*Taira paths require the exact canonical chain, NetworkId, and account profile/discriminant with no reset override' "$ROOT/README.md"
 rg -q 'Manual `SORASWAP_RWA_COMPLIANCE_CHAIN_JSON` overrides.*assertion against current evidence, not a substitute' "$ROOT/README.md"
 rg -q "control-character-free, non-placeholder, non-local/wildcard, non-reserved-domain references" "$ROOT/README.md"
 rg -q "Missing, placeholder, local/wildcard endpoint, reserved-domain, or control-character RWA references stop the runner before the Taira prerequisite.*enabled RWA launch" "$ROOT/README.md"
-rg -q "Last updated: 2026-06-28" "$ROOT/roadmap.md"
-rg -q "2026-06-26 reran .*make release-checklist.*make release-production-checklist" "$ROOT/roadmap.md"
-rg -q "artifacts/telemetry/defi_2026_primitives_latest.json" "$ROOT/roadmap.md"
-rg -q "2026-06-25 reran the local browser/simulation acceptance batch" "$ROOT/roadmap.md"
-rg -q "2,007 generated JSON artifacts with 0 rewrites" "$ROOT/roadmap.md"
-rg -q "20260625T171955Z.*20260625T175012Z.*20260625T181707Z" "$ROOT/roadmap.md"
-rg -q "2,047 generated JSON artifacts with 0 rewrites" "$ROOT/roadmap.md"
-rg -q "2026-06-26 reran focused validation after bridge status-kind hardening and generated interface refresh" "$ROOT/roadmap.md"
-rg -q "106 contract-console Python tests, 11 contract-console Playwright tests, 35 trader UI Python tests, and 7 trader UI Playwright tests" "$ROOT/roadmap.md"
-rg -q "bridge runbooks now document exact .*status_kind.* matching and replay-rejection detail requirements" "$ROOT/roadmap.md"
-rg -q "deployments/production/preflight.latest.json.*20260708T183136Z.*status: \"blocked\"" "$ROOT/roadmap.md"
-rg -q "config/production/production.client.toml.*production Torii root and chain id.*nested_call_probe.latest_exists" "$ROOT/roadmap.md"
-rg -q "2026-07-05 hardened mutation-enabled public UI startup.*oracle_keypair_verified: true.*112 tests.*39 tests" "$ROOT/roadmap.md"
-rg -q "2026-06-26 hardened read-only chain refresh config validation.*wrong-environment configs.*placeholder/local/wildcard/example endpoints.*Taira configs whose chain id does not match.*SORASWAP_TESTNET_CHAIN_ID.*Taira's canonical chain id" "$ROOT/roadmap.md"
-rg -q "Manual chain JSON and chain-only inputs now have to match the ready preflight plus saved chain evidence" "$ROOT/roadmap.md"
-rg -q "20260625T171955Z.*20260625T175012Z.*20260625T181707Z" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "2,047 generated JSON artifacts with 0 rewrites" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "2026-06-26 reran .*make release-checklist.*make release-production-checklist" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "2026-06-26 reran focused release-guard validation after bridge status-kind hardening and generated interface refresh" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "106 contract-console Python tests, 11 contract-console Playwright tests, 35 trader UI Python tests, and 7 trader UI Playwright tests" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "2026-06-26 aligned the contract-console and operator runbooks with the exact bridge evidence rules" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "deployments/production/preflight.latest.json.*20260708T183136Z.*status: \"blocked\"" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "no saved production .*chain.latest.json.*nested_call_probe.latest_exists: false" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "2026-07-05 hardened mutation-enabled public UI startup.*oracle_keypair_verified: true.*112 tests.*39 tests" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "2026-06-26 hardened read-only chain refresh config validation.*wrong-environment configs.*placeholder/local/wildcard/example endpoints.*Taira configs whose chain id does not match.*SORASWAP_TESTNET_CHAIN_ID.*Taira's canonical chain id" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q 'Manual `SORASWAP_RWA_COMPLIANCE_CHAIN_JSON` values and chain-only evidence are assertions against that ready preflight plus saved chain evidence' "$ROOT/docs/release/production_readiness_checklist.md"
+rg -Fq 'Last updated: 2026-08-24' "$ROOT/roadmap.md"
+rg -q 'deployments/testnet/preflight\.latest\.json` has `status: "blocked"`.*native MCP.*HTTP `200`.*capability metadata is incomplete' "$ROOT/roadmap.md"
+rg -Fq 'fc56984b-2be7-431d-840e-21514d1883f0' "$ROOT/roadmap.md"
+rg -Fq 'hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94' "$ROOT/roadmap.md"
+rg -q 'Current-chain .*release evidence are absent' "$ROOT/roadmap.md"
+rg -Fq 'Historical success is not reusable.' "$ROOT/roadmap.md"
+rg -Fq 'fc56984b-2be7-431d-840e-21514d1883f0' "$ROOT/docs/release/production_readiness_checklist.md"
+rg -Fq 'hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94' "$ROOT/docs/release/production_readiness_checklist.md"
+rg -q 'preflight\.latest\.json.*status: "blocked".*HTTP `200`.*capability metadata is incomplete' "$ROOT/docs/release/production_readiness_checklist.md"
+rg -q 'No local chain, deploy, contracts, or smoke release evidence is retained' "$ROOT/docs/release/production_readiness_checklist.md"
+rg -Fq 'generated_at: "2026-08-23T15:41:53.820Z"' "$ROOT/docs/release/production_readiness_checklist.md"
+rg -q 'current 20-contract manifest.*one fresh local chain fingerprint' "$ROOT/docs/release/production_readiness_checklist.md"
+rg -Fq 'dataspace_alias: "universal"` plus `dataspace_id: "0"' "$ROOT/docs/release/production_readiness_checklist.md"
 rg -q "status: \"not_applicable\".*rwa_release_enabled: false.*status: \"completed\".*control-character-free, non-placeholder, non-local/wildcard, non-reserved-domain external references" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "20260625T171955Z.*20260625T175012Z.*20260625T181707Z" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q "2,047 generated JSON artifacts with 0 rewrites" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q "release-evidence notes updated 2026-07-10" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q "2026-06-26 reran .*make release-checklist.*make release-production-checklist" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q "2026-06-26 after bridge status-kind hardening and generated interface refresh" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q "106 contract-console Python tests, 11 contract-console Playwright tests, 35 trader UI Python tests, and 7 trader UI Playwright tests" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q "deployments/production/preflight.latest.json.*20260708T183136Z.*status: \"blocked\"" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q "no saved production .*chain.latest.json.*nested_call_probe.latest_exists: false" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q "oracle_keypair_verified: true.*112 tests.*39 tests" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q "read-only refresh targets reject wrong-environment configs.*placeholder/local/wildcard/example endpoints.*Taira configs whose chain id does not match.*SORASWAP_TESTNET_CHAIN_ID.*Taira's canonical chain id" "$ROOT/docs/release/smart_contract_production_audit.md"
-rg -q 'Manual `SORASWAP_RWA_COMPLIANCE_CHAIN_JSON` and chain-only inputs now have to match the ready preflight plus saved chain evidence' "$ROOT/docs/release/smart_contract_production_audit.md"
+rg -Fq 'Date: 2026-08-24' "$ROOT/docs/release/smart_contract_production_audit.md"
+rg -q 'first-release manifest contains the current 20-contract Kotodama surface.*no completed local deployment evidence is retained' "$ROOT/docs/release/smart_contract_production_audit.md"
+rg -q 'preflight\.latest\.json.*native MCP HTTP `200`.*remains blocked.*no saved chain snapshot.*complete MCP capability metadata' "$ROOT/docs/release/smart_contract_production_audit.md"
+rg -q 'There is no compatibility or replay-success path that can promote the retained artifacts' "$ROOT/docs/release/smart_contract_production_audit.md"
+rg -Fq 'generated_at: "2026-08-23T15:41:53.820Z"' "$ROOT/docs/release/smart_contract_production_audit.md"
+rg -q 'exactly covers 20 current contract sources and 13 Kotodama test files in universal dataspace' "$ROOT/docs/release/smart_contract_production_audit.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make taira-preflight" "$ROOT/docs/release/taira_devex_critique.md"
-rg -q "Current 2026-07-10 Status" "$ROOT/docs/release/taira_devex_critique.md"
-rg -q "make release-checklist.*2026-07-09.*make release-production-checklist" "$ROOT/docs/release/taira_devex_critique.md"
+rg -q "Current 2026-08-24 Status" "$ROOT/docs/release/taira_devex_critique.md"
+rg -q 'preflight\.latest\.json.*status: "blocked".*native MCP HTTP `200`.*incomplete MCP capability metadata' "$ROOT/docs/release/taira_devex_critique.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make taira-preflight" "$ROOT/docs/release/taira_operator_runbook.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make release-taira" "$ROOT/docs/release/taira_operator_runbook.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make testnet-nested-call-probe" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "export SORASWAP_ENABLE_RWA_RELEASE=1" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "SORASWAP_RWA_ISSUER_APPROVAL_REF=<external approval id or URL>" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "When .*SORASWAP_ENABLE_RWA_RELEASE=1.*validates the five .*SORASWAP_RWA_\\*_REF.*missing.*placeholder.*local/wildcard endpoint.*reserved-domain.*control-character" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "not_applicable.*DEX-only release mode.*completed external-reference evidence" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX.*SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX.*SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS.*SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT.*SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS.*SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_COUNT.*SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_DELAY_SECS.*SORASWAP_PUBLIC_TX_WAIT_QUEUED_STALL_MAX_MS.*SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS.*SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS.*SORASWAP_CONTRACT_CALL_RETRY_COUNT.*SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS.*SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT.*SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "Edge TCP Exhaustion Check" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "tcp_pcbcount.*TIME_WAIT.*EADDRNOTAVAIL.*Can't assign requested address.*loopback Torii" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "Address already in use.*os error 48.*no live .*irohad.*SO_REUSEADDR.*without .*SO_REUSEPORT" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "embedded placeholder fragments such as .*TODO.*TBD.*changeme.*replace_me.*replaceme" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "Use environment variables, not CLI flags, for sensitive incident notes or operator tokens" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "default ignored paths.*config/testnet/taira.client.toml.*config/production/production.client.toml.*Taira configs whose chain does not match the expected Taira chain.*SORASWAP_TESTNET_CHAIN_ID.*stale generic .*CHAIN.*SORASWAP_PRODUCTION_CHAIN_ID" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "exported internal checklist prerequisite flags .*SORASWAP_RELEASE_CHECKLIST_TAIRA_PREREQ_ONLY.*SORASWAP_RELEASE_CHECKLIST_INTERNAL_PRODUCTION_PREREQ" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "private .*RELEASE_CHECKLIST_INTERNAL_TOKEN" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "contract_call_transaction_preserves_three_hop_transfer_authorities" "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq '  taira doctor \' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq -- '  --public-root https://taira.sora.org \' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq '  taira write-canary \' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq -- '  --onboarding-token-file /private/runtime/onboarding.token \' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq -- '  --use-config-signer \' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq -- '  --write-config /private/runtime/taira-canary-client.toml \' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'NetworkId-aware transaction format, explicit fee' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'payment, signed onboarding/faucet flow, and typed transaction status.' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'export SORASWAP_ORACLE_CLIENT_CONFIG=config/testnet/oracle.client.toml' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'chain ID `fc56984b-2be7-431d-840e-21514d1883f0`' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'NetworkId `hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94`' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'account chain discriminant `369`' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'There is no predecessor rollout bundle, daemon alias, host-service installer,' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'rollback wrapper, or shell compatibility layer in this flow.' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'dataspace_alias: "universal"` plus `dataspace_id: "0"' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'SoraSwap does not use `/v1/contracts/deploy`, contract-app bundles, split' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'or older signing DTOs.' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq "The signed mutating-smoke gate requires the self-contained options factory's" "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq "It also requires perps' own collateral-pool" "$ROOT/docs/release/taira_operator_runbook.md"
 rg -q "SCCP recent-message and remote transaction-history reads are capped at .*100.*from.*offset.*10000" "$ROOT/docs/release/contract_console_runbook.md"
 rg -q "raw GET proxy query strings are capped at .*4096.*32" "$ROOT/docs/release/contract_console_runbook.md"
 rg -q "browser POST APIs reject caller-supplied .*token/API-key.*password.*at any nesting level" "$ROOT/docs/release/contract_console_runbook.md"
@@ -4405,62 +3966,38 @@ rg -q "History-like read proxies cap raw GET query strings at .*4096.*32.*SCCP r
 rg -q "Browser POST APIs reject caller-supplied .*token/API-key.*password.*at any nesting level" "$ROOT/docs/release/contract_console_security_review.md"
 rg -q "malformed .*Content-Length.*invalid UTF-8.*larger than .*1 MiB" "$ROOT/docs/release/contract_console_security_review.md"
 rg -q "local Torii proxy responses are capped at .*10 MiB" "$ROOT/docs/release/contract_console_security_review.md"
-rg -q "no SoraSwap rollout verification steps selected" "$ROOT/../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh"
-rg -q "SoraSwap nested-call probe, deploy, and smoke steps require --allow-testnet-mutations" "$ROOT/../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh"
-rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make -C.*testnet-nested-call-probe" "$ROOT/../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh"
-verify_rollout_no_allow_output="$TMP_DIR/verify-rollout-no-allow.out"
-verify_rollout_no_allow_status=0
-bash "$ROOT/../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh" \
-  --skip-local-regressions \
-  --skip-mcp-check \
-  --skip-sorafs-check \
-  --skip-trader-app-api-check \
-  --soraswap-root "$ROOT" \
-  --soraswap-client-config "$TMP_DIR/missing-taira-client.toml" \
-  >"$verify_rollout_no_allow_output" 2>&1 || verify_rollout_no_allow_status="$?"
-[[ "$verify_rollout_no_allow_status" != "0" ]]
-rg -q "SoraSwap nested-call probe, deploy, and smoke steps require --allow-testnet-mutations" "$verify_rollout_no_allow_output"
-! rg -q "SoraSwap nested call probe" "$verify_rollout_no_allow_output"
-verify_rollout_deploy_no_allow_output="$TMP_DIR/verify-rollout-deploy-no-allow.out"
-verify_rollout_deploy_no_allow_status=0
-bash "$ROOT/../iroha/configs/soranexus/taira/verify_soraswap_rollout.sh" \
-  --skip-local-regressions \
-  --skip-mcp-check \
-  --skip-sorafs-check \
-  --skip-trader-app-api-check \
-  --skip-nested-call \
-  --run-deploy \
-  --soraswap-root "$ROOT" \
-  --soraswap-client-config "$TMP_DIR/missing-taira-client.toml" \
-  >"$verify_rollout_deploy_no_allow_output" 2>&1 || verify_rollout_deploy_no_allow_status="$?"
-[[ "$verify_rollout_deploy_no_allow_status" != "0" ]]
-rg -q "SoraSwap nested-call probe, deploy, and smoke steps require --allow-testnet-mutations" "$verify_rollout_deploy_no_allow_output"
-! rg -q "SoraSwap deploy-testnet" "$verify_rollout_deploy_no_allow_output"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make smoke-testnet" "$ROOT/docs/release/contract_console_runbook.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make test-contract-console-testnet" "$ROOT/docs/release/contract_console_runbook.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make smoke-testnet.*no longer calls" "$ROOT/docs/release/contract_console_runbook.md"
 rg -q 'contract_console_smoke\.latest\.json\.status == "completed"' "$ROOT/docs/release/contract_console_runbook.md"
 rg -Fq 'exact `status_kind` values of `Committed` or `Applied`' "$ROOT/docs/release/contract_console_runbook.md"
 rg -Fq 'substring statuses such as `NotApplied` do not satisfy the release gate' "$ROOT/docs/release/contract_console_runbook.md"
-rg -Fq 'A generic `Rejected` without matching detail is insufficient' "$ROOT/docs/release/contract_console_runbook.md"
+rg -Fq '`message_selection` identifies a previously unconsumed finalized transfer' "$ROOT/docs/release/contract_console_runbook.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make test-contract-console-testnet" "$ROOT/docs/interface_specs/bridge.md"
-rg -Fq 'Release evidence accepts the normal apply path only when proof and message transaction statuses are exact `Applied` or `Committed`' "$ROOT/docs/interface_specs/bridge.md"
-rg -Fq 'substring status such as `NotApplied`' "$ROOT/docs/interface_specs/bridge.md"
+rg -Fq 'Release evidence requires a fresh, previously unconsumed message whose proof and message transaction statuses are exact `Applied` or `Committed`' "$ROOT/docs/interface_specs/bridge.md"
+rg -Fq 'Rejected, replayed, skipped, or substring statuses such as `NotApplied` do not satisfy the first-release gate' "$ROOT/docs/interface_specs/bridge.md"
 rg -Fq 'Bridge submission status evidence is exact' "$ROOT/docs/release/contract_console_security_review.md"
-rg -Fq 'substring values such as `NotApplied` or generic `Rejected` records do not satisfy the release gate' "$ROOT/docs/release/contract_console_security_review.md"
+rg -Fq 'Replayed, skipped, rejected, and substring values such as `NotApplied` do not satisfy the release gate' "$ROOT/docs/release/contract_console_security_review.md"
 python3 - "$ROOT/docs/interface_specs/generated.md" <<'PY'
 import sys
 from pathlib import Path
 
 text = Path(sys.argv[1]).read_text()
-for section_name in ("options.manager", "options.factory", "options.shout_option"):
-    marker = f"## {section_name}"
-    start = text.find(marker)
-    assert start >= 0, f"missing generated section {section_name}"
-    next_start = text.find("\n## ", start + len(marker))
-    body = text[start:] if next_start < 0 else text[start:next_start]
-    assert "### configure_oracle_stale_slots" in body, f"missing stale-slot admin entrypoint for {section_name}"
-    assert "### oracle_stale_slots" in body, f"missing stale-slot view entrypoint for {section_name}"
+options_marker = "## options.factory"
+options_start = text.find(options_marker)
+assert options_start >= 0, "missing generated options factory section"
+options_next = text.find("\n## ", options_start + len(options_marker))
+options_body = text[options_start:] if options_next < 0 else text[options_start:options_next]
+assert "### configure_oracle_stale_slots" in options_body, "missing options factory stale-slot admin entrypoint"
+assert "### oracle_stale_slots" in options_body, "missing options factory stale-slot view entrypoint"
+for retired_section in (
+    "options.manager",
+    "options.vault",
+    "options.shout_option",
+    "options.outperformance_option",
+    "risk.risk_vault",
+):
+    assert f"## {retired_section}" not in text, f"retired generated section remains: {retired_section}"
 launchpad_marker = "## launchpad.sale_factory"
 launchpad_start = text.find(launchpad_marker)
 assert launchpad_start >= 0, "missing generated launchpad sale factory section"
@@ -4473,8 +4010,8 @@ hooks_start = text.find(hooks_marker)
 assert hooks_start >= 0, "missing generated DLMM hook manager section"
 hooks_next = text.find("\n## ", hooks_start + len(hooks_marker))
 hooks_body = text[hooks_start:] if hooks_next < 0 else text[hooks_start:hooks_next]
-assert "### schedule_twamm_v2" in hooks_body, "missing canonical TWAMM v2 entrypoint"
-assert "### schedule_twamm\n" not in hooks_body, "legacy TWAMM scheduling entrypoint must stay removed"
+assert "### schedule_twamm\n" in hooks_body, "missing canonical TWAMM entrypoint"
+assert "### schedule_twamm_v2" not in hooks_body, "versioned TWAMM compatibility entrypoint must stay removed"
 n3x_marker = "## n3x.n3x_hub"
 n3x_start = text.find(n3x_marker)
 assert n3x_start >= 0, "missing generated n3x hub section"
@@ -4497,7 +4034,8 @@ perps_body = text[perps_start:] if perps_next < 0 else text[perps_start:perps_ne
 assert "### admin_repair_orphan_position\n" not in perps_body, "manual perps orphan repair entrypoint must stay removed"
 PY
 ! rg -q "kotoage fn contribute\\(" "$ROOT/contracts/launchpad/sale_factory.ko"
-! rg -q "kotoage fn schedule_twamm\\(" "$ROOT/contracts/dlmm_hooks/hook_manager.ko"
+rg -q "kotoage fn schedule_twamm\\(" "$ROOT/contracts/dlmm_hooks/hook_manager.ko"
+! rg -q "kotoage fn schedule_twamm_v2\\(" "$ROOT/contracts/dlmm_hooks/hook_manager.ko"
 ! rg -q "kotoage fn warm_write\\(" "$ROOT/contracts/dlmm/dlmm_pool.ko"
 ! rg -q "kotoage fn repair_active_bin\\(" "$ROOT/contracts/dlmm/dlmm_pool.ko"
 ! rg -q "kotoage fn repair_zero_supply_state\\(" "$ROOT/contracts/n3x/n3x_hub.ko"
@@ -4507,156 +4045,61 @@ PY
 ! rg -q '`warm_write()' "$ROOT/docs/interface_specs/dlmm.md"
 ! rg -q "repair_zero_supply_state" "$ROOT/scripts/bootstrap_contract_state.sh" "$ROOT/docs/interface_specs/n3x_hub.md" "$ROOT/docs/state_layouts/n3x_hub.md"
 ! rg -q "admin_repair_orphan_position" "$ROOT/scripts/bootstrap_contract_state.sh" "$ROOT/docs/interface_specs/perps.md" "$ROOT/docs/state_layouts/perps.md"
-rg -Fq '`fee_reserve_state() -> (int, int, int, int, int)`' "$ROOT/docs/interface_specs/n3x_hub.md"
-rg -Fq '"$dlmm_hooks_manager_contract" schedule_twamm_v2' "$ROOT/scripts/smoke_local.sh"
-rg -Fq '"$dlmm_hooks_manager_contract" schedule_twamm_v2' "$ROOT/scripts/smoke_public_mutating.sh"
-! rg -Fq '"$dlmm_hooks_manager_contract" schedule_twamm "$(' "$ROOT/scripts/smoke_local.sh"
-! rg -Fq '"$dlmm_hooks_manager_contract" schedule_twamm "$(' "$ROOT/scripts/smoke_public_mutating.sh"
+rg -Fq '`fee_reserve_state() -> (quantity, quantity, quantity, quantity, quantity)`' "$ROOT/docs/interface_specs/n3x_hub.md"
+rg -Fq '"$dlmm_hooks_manager_contract" schedule_twamm' "$ROOT/scripts/smoke_local.sh"
+rg -Fq '"$dlmm_hooks_manager_contract" schedule_twamm' "$ROOT/scripts/smoke_public_mutating.sh"
+! rg -Fq '"$dlmm_hooks_manager_contract" schedule_twamm_v2' "$ROOT/scripts/smoke_local.sh"
+! rg -Fq '"$dlmm_hooks_manager_contract" schedule_twamm_v2' "$ROOT/scripts/smoke_public_mutating.sh"
 ! rg -Fq '"schedule_twamm": "dlmm_hook_twamm_scheduled"' "$ROOT/tests/run_trader_fixture_server.py"
 rg -Fq 'Recorded allocations through `contribute_recorded(...)` are the only purchase path.' "$ROOT/docs/interface_specs/launchpad.md"
 rg -Fq 'only `contribute_recorded(...)` creates allocations' "$ROOT/docs/state_layouts/launchpad.md"
 rg -Fq 'recorded allocations through `contribute_recorded(...)` are the only purchase path' "$ROOT/docs/parity/migration_register.md"
-rg -Fq '`schedule_twamm_v2(...)` is the canonical TWAMM scheduling entrypoint' "$ROOT/docs/interface_specs/dlmm_hooks.md"
-rg -Fq 'Release evidence schedules TWAMM through canonical `schedule_twamm_v2(...)`' "$ROOT/docs/parity/migration_register.md"
-rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make smoke-testnet" "$ROOT/docs/state_layouts/dlmm.md"
-rg -Fq '`hajimari(...)` is asset-agnostic for generic pool instantiation' "$ROOT/docs/state_layouts/dlmm.md"
+rg -Fq '`schedule_twamm(...)` is the canonical TWAMM scheduling entrypoint' "$ROOT/docs/interface_specs/dlmm_hooks.md"
+rg -Fq 'Release evidence schedules TWAMM through canonical `schedule_twamm(...)`' "$ROOT/docs/parity/migration_register.md"
+rg -Fq 'immutable binding: `BaseAsset`, `QuoteAsset`, `VaultAccount`, `LaunchpadExecutorAccount`, `InitializationBin`' "$ROOT/docs/state_layouts/dlmm.md"
+rg -Fq 'The first-release deployment rejects mismatched existing state rather than migrating or rebinding it.' "$ROOT/docs/state_layouts/dlmm.md"
 rg -Fq 'view fn configured_base_asset() -> AssetDefinitionId {' "$ROOT/contracts/dlmm/dlmm_pool.ko"
 rg -Fq 'view fn configured_quote_asset() -> AssetDefinitionId {' "$ROOT/contracts/dlmm/dlmm_pool.ko"
 rg -Fq 'view fn configured_vault_account() -> AccountId {' "$ROOT/contracts/dlmm/dlmm_pool.ko"
-rg -Fq 'The typed `configured_*` views expose the generic stored base, quote, and vault values' "$ROOT/docs/interface_specs/dlmm.md"
-rg -Fq 'SoraSwap production deployment anchors its deployable AMM instance on `xor#universal`' "$ROOT/docs/state_layouts/dlmm.md"
-rg -Fq 'pool lifecycle initializer is asset-agnostic at `hajimari(...)`' "$ROOT/README.md"
-rg -Fq 'reviewed Taira validation-fee instance fixes canonical XOR as base and canonical SBD as quote' "$ROOT/README.md"
+rg -Fq 'Pool assets, custody, launchpad executor, launchpad bin, fees, and risk limits are fixed at `hajimari(...)`' "$ROOT/docs/interface_specs/dlmm.md"
+rg -Fq 'immutable binding: `BaseAsset`, `QuoteAsset`, `VaultAccount`, `LaunchpadExecutorAccount`, `InitializationBin`' "$ROOT/docs/state_layouts/dlmm.md"
+rg -Fq 'Pool instances are asset-agnostic at `hajimari(...)`' "$ROOT/README.md"
+rg -Fq 'the Taira release binds every deployed pair explicitly in its immutable deployment record' "$ROOT/README.md"
 rg -Fq 'Single-address Kotodama DLMM instances are asset-agnostic at `hajimari(...)`' "$ROOT/docs/parity/migration_register.md"
-rg -Fq 'authorize("CanInvokeContractEntrypoint")' "$ROOT/validation_fee/autonomous_payout.ko.template"
-! rg -Fq 'authorize("ValidationFeePayout")' "$ROOT/validation_fee/autonomous_payout.ko.template"
 rg -Fq 'grant_seiyaku_kotoage_permission("owner", "seed_bin")' "$ROOT/tests/kotodama/dlmm_pool_v1_regressions.test.ko"
 rg -Fq 'grant_seiyaku_kotoage_permission("owner", "renounce_admin")' "$ROOT/tests/kotodama/dlmm_pool_v1_regressions.test.ko"
-rg -Fq 'grant_seiyaku_kotoage_permission("public_trader", "swap_exact_in_quote_public")' "$ROOT/tests/kotodama/dlmm_pool_v1_regressions.test.ko"
+! rg -Fq 'swap_exact_in_quote_public' "$ROOT/contracts/dlmm/dlmm_pool.ko"
+! rg -Fq 'swap_exact_in_base_for' "$ROOT/contracts/dlmm/dlmm_pool.ko"
+! rg -Fq 'swap_exact_in_quote_for' "$ROOT/contracts/dlmm/dlmm_pool.ko"
 rg -Fq 'account_has_exact_permission_json()' "$ROOT/scripts/common.sh"
 rg -Fq 'ensure_exact_account_permission_json()' "$ROOT/scripts/common.sh"
 rg -Fq 'revoke_exact_account_permission_json()' "$ROOT/scripts/common.sh"
-rg -Fq 'fc56984b-2be7-431d-840e-21514d1883f0' "$ROOT/scripts/bootstrap_validation_fee_pool.sh"
-rg -Fq 'TAIRA_VALIDATION_FEE_CHAIN_DISCRIMINANT=369' "$ROOT/scripts/bootstrap_validation_fee_pool.sh"
-rg -Fq 'SORASWAP_VALIDATION_FEE_POOL_APPLY=1' "$ROOT/scripts/bootstrap_validation_fee_pool.sh"
-rg -Fq 'SORASWAP_VALIDATION_FEE_POOL_WORK_JOURNAL_DIR' "$ROOT/scripts/bootstrap_validation_fee_pool.sh"
-rg -Fq 'SORASWAP_VALIDATION_FEE_POOL_PREPARED_LEDGER_DIR' "$ROOT/scripts/bootstrap_validation_fee_pool.sh"
-rg -Fq 'bootstrap_append_event' "$ROOT/scripts/bootstrap_validation_fee_pool.sh"
-! rg -Fq 'status: "already_completed"' "$ROOT/scripts/bootstrap_validation_fee_pool.sh"
-rg -Fq 'validation_fee_contract_call_with_evidence' "$ROOT/scripts/bootstrap_validation_fee_pool.sh"
-rg -Fq 'validation_fee_grant_exact_permission_with_evidence' "$ROOT/scripts/validation_fee_evidence.sh"
-rg -Fq 'validation_fee_revoke_exact_permission_with_evidence' "$ROOT/scripts/validation_fee_evidence.sh"
-rg -Fq 'validation_fee_prepare_split_deploy_one_write_json' "$ROOT/scripts/apply_validation_fee_deployment.sh"
-rg -Fq 'validation_fee_submit_prepared_transaction_one_write_json' "$ROOT/scripts/apply_validation_fee_deployment.sh"
-rg -Fq 'SORASWAP_VALIDATION_FEE_DEPLOY_APPLY=1' "$ROOT/scripts/apply_validation_fee_deployment.sh"
-rg -Fq 'protected_permission_topology' "$ROOT/scripts/apply_validation_fee_deployment.sh"
-validation_fee_pool_plan="$(
-  SORASWAP_VALIDATION_FEE_POOL_CONTRACT_ADDRESS='tairac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9ggff82m7' \
-  SORASWAP_VALIDATION_FEE_POOL_SUBJECT_ACCOUNT_ID='testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV' \
-  SORASWAP_VALIDATION_FEE_PAYOUT_CONTRACT_ADDRESS='tairac1qyqqqqqqqqqqqqpn5nlue8hfgvj9t4fhvfetfar428qk2xs4l5dzm' \
-  SORASWAP_VALIDATION_FEE_PAYOUT_SUBJECT_ACCOUNT_ID='testuﾛ1PｵEmｷjMZZﾑﾙeｱﾁﾎﾅﾂﾊmECepdbﾎｳ2uWﾃｸﾊﾘvｵi2ｦP1Y18A' \
-    zsh "$ROOT/scripts/bootstrap_validation_fee_pool.sh" plan
-)"
-jq -e '
-  .status == "undeployed_plan"
-  and .network == "taira"
-  and .chain_id == "fc56984b-2be7-431d-840e-21514d1883f0"
-  and .chain_discriminant == 369
-  and .pool.base_asset_definition_id == "6TEAJqbb8oEPmLncoNiMRbLEK6tw"
-  and .pool.quote_asset_definition_id == "7ZepsJTHCVLKsrFFNZGSRGZgvBhv"
-  and .payout_contract_address
-    == "tairac1qyqqqqqqqqqqqqpn5nlue8hfgvj9t4fhvfetfar428qk2xs4l5dzm"
-  and (.operations | map(.entrypoint))
-    == ["hajimari", "seed_bin", "seed_bin", "seed_bin", "renounce_admin"]
-  and [.operations[1:4][].arguments.position_id]
-    == ["validation_fee_seed_bin_0", "validation_fee_seed_bin_1", "validation_fee_seed_bin_2"]
-  and [.operations[1:4][].arguments.bin_id] == [0, 1, 2]
-  and all(.operations[1:4][].arguments; .base_amount == 1000 and .quote_amount == 1000)
-  and (.temporary_permissions | map(.name))
-    == [
-      "CanInvokeContractEntrypoint",
-      "CanInvokeContractEntrypoint",
-      "CanInvokeContractEntrypoint",
-      "CanTransferAsset",
-      "CanTransferAsset"
-    ]
-  and .temporary_permissions[0].entrypoint == "hajimari"
-  and (.protected_runtime_permissions | map(.name))
-    == [
-      "CanInvokeContractEntrypoint",
-      "CanInvokeContractEntrypoint",
-      "CanTransferAsset"
-    ]
-  and (.protected_runtime_permissions | map(.holder))
-    == [
-      "testuﾛ1PｵEmｷjMZZﾑﾙeｱﾁﾎﾅﾂﾊmECepdbﾎｳ2uWﾃｸﾊﾘvｵi2ｦP1Y18A",
-      "testuﾛ1PｵEmｷjMZZﾑﾙeｱﾁﾎﾅﾂﾊmECepdbﾎｳ2uWﾃｸﾊﾘvｵi2ｦP1Y18A",
-      "testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV"
-    ]
-  and .protected_runtime_permissions[0].entrypoint
-    == "autonomous_validation_fee_tick"
-  and .protected_runtime_permissions[1].entrypoint
-    == "swap_exact_in_quote_public"
-  and all(
-    .protected_runtime_permissions[];
-    .required_absent_before_enactment == true
-    and .sole_direct_holder == true
-    and .role_holders == false
-    and .provisioned_by == "protected_core_validation_fee_lifecycle"
-    and .external_bootstrap_action == "none"
-    and .post_activation_verification == "required"
-  )
-' >/dev/null <<<"$validation_fee_pool_plan"
-validation_fee_pool_apply_without_gate_output="$TMP_DIR/validation-fee-pool-apply-without-gate.out"
-validation_fee_pool_apply_without_gate_status=0
-(
-  SORASWAP_VALIDATION_FEE_POOL_CONTRACT_ADDRESS='tairac1qyqqqqqqqqqqqq95fes93ygegsv5enq9mqsz6x4lv4vp9ggff82m7' \
-  SORASWAP_VALIDATION_FEE_POOL_SUBJECT_ACCOUNT_ID='testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV' \
-  SORASWAP_VALIDATION_FEE_PAYOUT_CONTRACT_ADDRESS='tairac1qyqqqqqqqqqqqqpn5nlue8hfgvj9t4fhvfetfar428qk2xs4l5dzm' \
-  SORASWAP_VALIDATION_FEE_PAYOUT_SUBJECT_ACCOUNT_ID='testuﾛ1PｵEmｷjMZZﾑﾙeｱﾁﾎﾅﾂﾊmECepdbﾎｳ2uWﾃｸﾊﾘvｵi2ｦP1Y18A' \
-    zsh "$ROOT/scripts/bootstrap_validation_fee_pool.sh" apply
-) >"$validation_fee_pool_apply_without_gate_output" 2>&1 || validation_fee_pool_apply_without_gate_status="$?"
-[[ "$validation_fee_pool_apply_without_gate_status" != "0" ]]
-rg -Fq 'apply requires SORASWAP_PUBLIC_ENV=testnet' "$validation_fee_pool_apply_without_gate_output"
 rg -q "SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make smoke-production" "$ROOT/docs/release/contract_console_runbook.md"
 rg -q "SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make test-contract-console-production" "$ROOT/docs/release/contract_console_runbook.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make deploy-testnet" "$ROOT/README.md"
-rg -q 'fresh `SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make deploy-testnet` run' "$ROOT/README.md"
+rg -Fq 'deploys every contract independently through `ivm_contract_deploy`' "$ROOT/README.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make smoke-testnet.*canonical signed Taira rehearsal" "$ROOT/README.md"
 rg -Fq 'Successful reports carry top-level `status: "completed"`, `environment: "local"`, and non-null `chain_fingerprint` metadata' "$ROOT/README.md"
 rg -q 'smoke\.latest\.json` with `status: "completed"' "$ROOT/README.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make test-contract-console-testnet" "$ROOT/README.md"
-rg -Fq 'exact proof and message `status_kind` values of `Applied` or `Committed`' "$ROOT/README.md"
-rg -Fq 'substring statuses such as `NotApplied` and generic `Rejected` records are not release evidence' "$ROOT/README.md"
-rg -q "selected-environment provenance, successful response/instance proof, and code/ABI hash evidence" "$ROOT/README.md"
+rg -Fq 'exact `Applied` or `Committed` proof/message statuses' "$ROOT/README.md"
+rg -Fq 'Rejected or replayed messages are diagnostic failures and cannot satisfy first-release evidence.' "$ROOT/README.md"
+rg -Fq 'validates the returned transaction/address/code evidence against live Torii state' "$ROOT/README.md"
 rg -q "code/ABI-hash-inconsistent per-contract" "$ROOT/README.md"
 rg -q 'both reports marked `status: "completed"`' "$ROOT/README.md"
 rg -q 'trader_readonly\.latest\.json` and `deployments/testnet/trader\.latest\.json` with `status: "completed"`' "$ROOT/README.md"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make release-taira" "$ROOT/README.md"
-rg -q "contract-state bootstrap, and deployment-record snapshot phases all completed" "$ROOT/README.md"
-rg -q "current supported nested-call evidence plus current readonly-smoke verification for mutating smoke" "$ROOT/README.md"
-rg -q "mutating smoke first-release module transaction and state evidence plus risk-vault views, perps-liquidation transaction hashes with numeric positive liquidation counters, and 2026 primitive transaction/rejection evidence" "$ROOT/README.md"
+rg -Fq 'completed preflight, compile, nested-call-probe, deploy, bootstrap, and deployment-record snapshot phases' "$ROOT/README.md"
+rg -q 'current release-ready preflight baseline before deploy, RWA, smoke, contract-console, trader, and trader API phases can advance' "$ROOT/README.md"
+rg -Fq 'self-contained options-factory state plus oracle-authorized `publish_shout_mark` transactions' "$ROOT/README.md"
 rg -q "local contracts no older than local deploy, local smoke no older than both local deploy and contracts" "$ROOT/README.md"
 rg -Fq 'SORASWAP_LOCAL_ACCEPTANCE_IROHA_ROOT`, `SORASWAP_LOCAL_ACCEPTANCE_BUNDLE_DIR`, `SORASWAP_LOCAL_ACCEPTANCE_EXPECTED_GIT_SHA' "$ROOT/README.md"
-rg -Fq 'zero wrapper/process timeouts so their internally scoped cleanup is not replaced by a name-wide timeout signal path' "$ROOT/README.md"
+rg -Fq 'both isolated targets force `SORASWAP_ISOLATED_LOCAL_UP_TIMEOUT_SECS`, `SORASWAP_ISOLATED_DEPLOY_TIMEOUT_SECS`, `SORASWAP_ISOLATED_SMOKE_TIMEOUT_SECS`, and `SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS` to `0`' "$ROOT/README.md"
 rg -Fq 'The scrub also removes every inherited generic `IROHA*` and `KAGAMI*` variable' "$ROOT/README.md"
-rg -q 'trader reports with full account-scoped required-route probes including `authority`, list `limit`, and swap-candle `bucket_secs` evidence plus signed numeric `route_swap` delta evidence' "$ROOT/README.md"
-rg -q "contract-console bridge settlement with governed-route provenance and valid submission status" "$ROOT/README.md"
-rg -Fq 'exact `Applied` or `Committed` proof/message statuses on the normal apply path' "$ROOT/README.md"
-rg -Fq 'Replay fallback evidence must decode to replay/duplicate/consumed/proof-overlap or current bridge assertion semantics' "$ROOT/README.md"
-rg -q "completed trader API report with deployment-record, snapshot-check, CID probe success, manifest-match count checks, exact route-manifest, and SoraFS receipt evidence" "$ROOT/README.md"
-rg -q "contract-state bootstrap, and deployment-record snapshot phases" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "deployment_records_snapshot.detail.snapshot.*current contracts timestamp" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "every per-contract deploy record plus manifest must carry matching code/ABI hashes" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q 'contract-console report must have `status: "completed"`' "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "Mutating smoke must have .*reference the current supported nested-call probe" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "current readonly-smoke verification" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "first-release module transaction and state evidence plus risk-vault views, perps-liquidation transaction hashes plus numeric positive liquidation counters, and 2026 primitive transaction/rejection evidence" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q 'Trader reports must prove all required route probes with account-scoped query parameters .*`authority`.*`limit`.*`bucket_secs`.* signed numeric `route_swap` evidence' "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q "contract-console report must have .*prove governed-route provenance plus a valid proof/message submission outcome" "$ROOT/docs/release/taira_operator_runbook.md"
-rg -Fq 'Contract-console bridge status validation is exact' "$ROOT/docs/release/taira_operator_runbook.md"
-rg -Fq 'substring values such as `NotApplied` and generic rejection records do not pass the release gates' "$ROOT/docs/release/taira_operator_runbook.md"
-rg -q 'Trader API publication must have `status: "completed"` and prove the exact route manifest, matching SoraFS pin/registry receipts, and numeric matching CID probe attempt, success, and manifest-match counts' "$ROOT/docs/release/taira_operator_runbook.md"
+rg -Fq 'records the resulting 64-hex transaction hash plus XOR/USDT balance deltas' "$ROOT/README.md"
+rg -Fq 'fresh, previously unconsumed, proof-driven `finalize_inbound` submission' "$ROOT/README.md"
+rg -q 'exact expected trader route method/path/adapter set.*matching SoraFS manifest-registration and provider-preparation evidence' "$ROOT/README.md"
+rg -Fq "Retired risk-vault state and duplicate options-product" "$ROOT/docs/release/taira_operator_runbook.md"
 rg -q "SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make deploy-production" "$ROOT/README.md"
 rg -q "SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make release-production" "$ROOT/README.md"
 rg -q "make release-production-checklist" "$ROOT/README.md"
@@ -4692,11 +4135,11 @@ if missing or unknown:
     )
 PY
 rg -q "contract-state bootstrap, and deployment-record snapshot phases all completed" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "code hash, ABI hash, successful deploy response, matching live instance evidence" "$ROOT/docs/release/production_readiness_checklist.md"
+rg -Fq 'its address, nonce, code hash, and manifest ABI hash must agree with live state and the compiled manifest' "$ROOT/docs/release/production_readiness_checklist.md"
 rg -q "rejects missing manifest sources and stale or missing generated outputs" "$ROOT/README.md"
 rg -q "generated headings and interface paths still match the manifest" "$ROOT/README.md"
 rg -q "compiled artifact drift" "$ROOT/docs/release/production_readiness_checklist.md"
-rg -q "generated interface doc drift checks" "$ROOT/docs/release/production_readiness_checklist.md"
+rg -Fq '`docs/interface_specs/generated.md` must match `iroha.contracts.toml` contract headings and generated interface paths' "$ROOT/docs/release/production_readiness_checklist.md"
 rg -q "Manifest tooling allowed stale generated contract outputs" "$ROOT/docs/release/smart_contract_production_audit.md"
 rg -q "stale compiled-artifact fixtures" "$ROOT/docs/release/smart_contract_production_audit.md"
 rg -q 'contract_console_smoke\.latest\.json` exists, has `status: "completed"`' "$ROOT/docs/release/production_readiness_checklist.md"
@@ -4959,13 +4402,13 @@ cat > "$checklist_preflight_blocked_fixture_root/deployments/testnet/preflight.l
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
-  "endpoint": {"mcp_http_status": "200", "mcp": {"enabled": true, "metadata_valid": true, "protocol_version": "2025-06-18", "server_name": "iroha-torii-mcp", "server_version": "0.0.0-dev", "tool_count": 12, "toolset_version": "fixture-tools-v1"}, "health_issues": [], "health": {"status": {"http_status": "200", "json_available": true}, "sumeragi": {"http_status": "200", "json_available": true}}},
+  "endpoint": {"mcp_http_status": "200", "mcp": {"enabled": true, "metadata_valid": true, "protocol_version": "2025-06-18", "server_name": "iroha-torii-mcp", "server_version": "0.0.0-dev", "tool_count": 12, "toolset_version": "fixture-tools-v1"}, "health_issues": [], "health": {"status": {"http_status": "200", "json_available": true}, "sumeragi": {"http_status": "200", "json_available": true}, "sumeragi_diagnostics": {"http_status": "200", "json_available": true}}},
   "chain": {
     "fingerprint_available": true,
     "saved_snapshot_exists": true,
@@ -4995,12 +4438,15 @@ cat > "$checklist_preflight_blocked_fixture_root/deployments/testnet/nested_call
     "sumeragi": {
       "summary": {
         "height": 44,
-        "tx_queue": {
-          "depth": 2,
-          "saturated": false,
-          "saturated_by_age": true
-        },
-        "view_change_last_cause": null
+        "last_committed_height": 43,
+        "blocker": null
+      }
+    },
+    "sumeragi_diagnostics": {
+      "summary": {
+        "tx_queue_depth": 2,
+        "tx_queue_saturated": false,
+        "tx_queue_saturated_by_age": true
       }
     }
   }
@@ -5068,10 +4514,9 @@ checklist_preflight_blocked_status=0
 rg -q "preflight.latest.json is not ready for the current Taira chain" "$checklist_preflight_blocked_output"
 rg -q "blocker: fixture nested probe blocker" "$checklist_preflight_blocked_output"
 rg -q "nested-call probe: diagnostics include redacted signer material" "$checklist_preflight_blocked_output"
-rg -q "nested-call health: height=44 queue_depth=2 saturated=false saturated_by_age=true view_change=none" "$checklist_preflight_blocked_output"
+rg -q "nested-call health: height=44 last_committed=43 queue_depth=2 saturated=false saturated_by_age=true blocker=none" "$checklist_preflight_blocked_output"
 rg -q "next runtime check: roll public Taira with the sibling ../iroha router and nested-transfer runtime fixes" "$checklist_preflight_blocked_output"
-rg -q "verify_soraswap_rollout.sh --public-root" "$checklist_preflight_blocked_output"
-rg -q -- "--allow-testnet-mutations" "$checklist_preflight_blocked_output"
+rg -Fq 'iroha -c "$SORASWAP_CLIENT_CONFIG" taira doctor --public-root "$PUBLIC_TORII_ROOT" --json' "$checklist_preflight_blocked_output"
 ! rg -q "taira-state-repair-plan" "$checklist_preflight_blocked_output"
 rg -q "missing release artifacts still required after preflight clears" "$checklist_preflight_blocked_output"
 rg -q "rwa_compliance.latest.json" "$checklist_preflight_blocked_output"
@@ -5087,36 +4532,34 @@ jq '.blockers = ["Taira public finality path has queued writes stalled: tx_queue
     | .chain.fingerprint.torii_url = "https://taira.example.invalid"
     | .endpoint.health_issues = [
         "transaction queue is saturated",
-        "transaction queue is age-saturated with oldest queued age 473399ms, at or above SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS=30000",
-        "sumeragi payload status is missing_local_payload",
-        "sumeragi worker is idle while the transaction queue is non-empty"
+        "transaction queue is age-saturated with oldest queued age 473399ms, at or above SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS=30000"
       ]
-    | .endpoint.health_summary = "blocks=15202 sumeragi_height=15203 commit_qc=15202 highest_qc=15202 queue=8 tx_queue_depth=8 tx_queue_saturated=true saturated_by_age=true oldest_queued_age_ms=473399 time_since_last_block_ms=3872188 phase=prepare rbc_status=disabled payload_status=missing_local_payload view_change=unknown missing_qc_total=443 quorum_timeout_total=1752 missing_payload_total=1 worker_stage=idle"
+    | .endpoint.health_summary = "blocks=15202 sumeragi_height=15203 last_committed=15202 queue=8 tx_queue_depth=8 tx_queue_saturated=true saturated_by_age=true oldest_queued_age_ms=473399 time_since_last_block_ms=3872188 phase=prepare body_state=pending_apply restart_required=false no_progress_age_ms=473399 blocker=none"
     | .endpoint.health.status.summary = {
         "blocks": 15202,
         "queue_size": 8,
         "queue_queued": 8,
-        "tx_queue_saturated": true,
         "time_since_last_block_ms": 3872188
       }
     | .endpoint.health.sumeragi.summary = {
+        "protocol_version": 4,
         "height": 15203,
-        "commit_qc_height": 15202,
-        "highest_qc_height": 15202,
+        "last_committed_height": 15202,
         "phase": "prepare",
-        "rbc_status": "disabled",
-        "payload_status": "missing_local_payload",
-        "tx_queue": {
-          "depth": 8,
-          "saturated": false,
-          "saturated_by_age": true,
-          "oldest_queued_age_ms": 473399
-        },
-        "view_change_last_cause": null,
-        "missing_qc_total": 443,
-        "quorum_timeout_total": 1752,
-        "missing_payload_total": 1,
-        "worker_stage": "idle"
+        "body_state": "pending_apply",
+        "restart_required": false,
+        "no_progress_age_ms": 473399,
+        "blocker": null
+      }
+    | .endpoint.health.sumeragi_diagnostics = {
+        "http_status": "200",
+        "json_available": true,
+        "summary": {
+          "tx_queue_depth": 8,
+          "tx_queue_saturated": true,
+          "tx_queue_saturated_by_age": true,
+          "tx_queue_oldest_queued_age_ms": 473399
+        }
       }
     | .nested_call_probe = {
         "latest_exists": true,
@@ -5146,17 +4589,12 @@ checklist_preflight_health_blocked_status=0
 rg -q "preflight.latest.json is not ready for the current Taira chain" "$checklist_preflight_health_blocked_output"
 rg -q "blocker: Taira public finality path has queued writes stalled" "$checklist_preflight_health_blocked_output"
 rg -Fq "nested-call probe: state bytes roundtrip, minimal nested call_contract(...), and multi-hop nested AssetOps relay all succeeded" "$checklist_preflight_health_blocked_output"
-rg -q "next operator repair plan: prepare a non-mutating volatile consensus quarantine plan with:" "$checklist_preflight_health_blocked_output"
-rg -q "make taira-state-repair-plan" "$checklist_preflight_health_blocked_output"
-rg -q "SORASWAP_TAIRA_REPAIR_VOLATILE_DIST" "$checklist_preflight_health_blocked_output"
-rg -q "SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN" "$checklist_preflight_health_blocked_output"
-rg -q "SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA" "$checklist_preflight_health_blocked_output"
-rg -q "do not run the generated --apply command" "$checklist_preflight_health_blocked_output"
-rg -q "next public health check: wait for stable Taira finality/write health, then rerun:" "$checklist_preflight_health_blocked_output"
+rg -q "next public health check: inspect current Taira health with:" "$checklist_preflight_health_blocked_output"
+rg -Fq 'iroha -c "$SORASWAP_CLIENT_CONFIG" taira doctor --public-root "$PUBLIC_TORII_ROOT" --json' "$checklist_preflight_health_blocked_output"
+rg -q "after Taira finality/write health is stable, rerun:" "$checklist_preflight_health_blocked_output"
 rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make taira-preflight" "$checklist_preflight_health_blocked_output"
 ! rg -q "next runtime check: roll public Taira" "$checklist_preflight_health_blocked_output"
 ! rg -q "next signed probe:" "$checklist_preflight_health_blocked_output"
-! rg -q "verify_soraswap_rollout.sh" "$checklist_preflight_health_blocked_output"
 ! rg -q "release checklist: make" "$checklist_preflight_health_blocked_output"
 
 checklist_ready_preflight_health_issues_root="$TMP_DIR/release-checklist-ready-preflight-health-issues-root"
@@ -5267,7 +4705,7 @@ checklist_blocked_missing_probe_status=0
 rg -q "next signed probe: SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make testnet-nested-call-probe" "$checklist_blocked_missing_probe_output"
 rg -q "refresh nested-call evidence with: SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make testnet-nested-call-probe" "$checklist_blocked_missing_probe_output"
 ! rg -q "next runtime check: roll public Taira" "$checklist_blocked_missing_probe_output"
-! rg -q "verify_soraswap_rollout.sh" "$checklist_blocked_missing_probe_output"
+! rg -q "taira doctor" "$checklist_blocked_missing_probe_output"
 ! rg -Fq "$checklist_blocked_missing_probe_root" "$checklist_blocked_missing_probe_output"
 
 checklist_wrong_env_probe_hint_root="$TMP_DIR/release-checklist-wrong-env-probe-hint-root"
@@ -5297,7 +4735,7 @@ checklist_wrong_env_probe_hint_status=0
 rg -q "next signed probe: SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make testnet-nested-call-probe" "$checklist_wrong_env_probe_hint_output"
 ! rg -q "nested-call health:" "$checklist_wrong_env_probe_hint_output"
 ! rg -q "next runtime check: roll public Taira" "$checklist_wrong_env_probe_hint_output"
-! rg -q "verify_soraswap_rollout.sh" "$checklist_wrong_env_probe_hint_output"
+! rg -q "taira doctor" "$checklist_wrong_env_probe_hint_output"
 ! rg -Fq "$checklist_wrong_env_probe_hint_root" "$checklist_wrong_env_probe_hint_output"
 
 checklist_stale_chain_hint_root="$TMP_DIR/release-checklist-stale-chain-hint-root"
@@ -5463,13 +4901,13 @@ cat > "$checklist_production_preflight_blocked_fixture_root/deployments/producti
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
-  "endpoint": {"mcp_http_status": "200", "mcp": {"enabled": true, "metadata_valid": true, "protocol_version": "2025-06-18", "server_name": "iroha-torii-mcp", "server_version": "0.0.0-dev", "tool_count": 12, "toolset_version": "fixture-tools-v1"}, "health_issues": [], "health": {"status": {"http_status": "200", "json_available": true}, "sumeragi": {"http_status": "200", "json_available": true}}},
+  "endpoint": {"mcp_http_status": "200", "mcp": {"enabled": true, "metadata_valid": true, "protocol_version": "2025-06-18", "server_name": "iroha-torii-mcp", "server_version": "0.0.0-dev", "tool_count": 12, "toolset_version": "fixture-tools-v1"}, "health_issues": [], "health": {"status": {"http_status": "200", "json_available": true}, "sumeragi": {"http_status": "200", "json_available": true}, "sumeragi_diagnostics": {"http_status": "200", "json_available": true}}},
   "chain": {
     "fingerprint_available": true,
     "saved_snapshot_exists": true,
@@ -5496,12 +4934,15 @@ cat > "$checklist_production_preflight_blocked_fixture_root/deployments/producti
     "sumeragi": {
       "summary": {
         "height": 55,
-        "tx_queue": {
-          "depth": 3,
-          "saturated": false,
-          "saturated_by_age": false
-        },
-        "view_change_last_cause": null
+        "last_committed_height": 54,
+        "blocker": null
+      }
+    },
+    "sumeragi_diagnostics": {
+      "summary": {
+        "tx_queue_depth": 3,
+        "tx_queue_saturated": false,
+        "tx_queue_saturated_by_age": false
       }
     }
   }
@@ -5520,8 +4961,157 @@ rg -q "missing required release artifact: deployments/testnet/chain.latest.json"
 rg -q "next setup: make refresh-testnet-chain" "$checklist_production_preflight_blocked_output"
 rg -q "then refresh signed probe evidence: SORASWAP_ALLOW_TESTNET_MUTATIONS=1 make testnet-nested-call-probe" "$checklist_production_preflight_blocked_output"
 ! rg -q "SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make production-nested-call-probe" "$checklist_production_preflight_blocked_output"
-! rg -q "verify_soraswap_rollout.sh" "$checklist_production_preflight_blocked_output"
+! rg -q "taira doctor" "$checklist_production_preflight_blocked_output"
 ! rg -q "release checklist: make" "$checklist_production_preflight_blocked_output"
+
+checklist_current_deployment_record_json() {
+  local contract_key="$1"
+  local contract_source="$2"
+  local contract_alias="$3"
+  local contract_address="$4"
+  local deploy_nonce="$5"
+  local code_hash="$6"
+  local abi_hash="$7"
+  local record_environment="${8:-testnet}"
+  local torii_url="${9:-https://taira.example.invalid}"
+  local chain_id="${10:-fixture-chain}"
+  local block_1_hash="${11:-fixture-block}"
+  local chain_discriminant="${12:-369}"
+  local next_deploy_nonce=$(( deploy_nonce + 1 ))
+  local fee_quote
+
+  fee_quote='{"intent":{"payer":"authority","value":{"charge_limits":[],"gas_limit":2000000}},"observation":{"ledger_time_ms":1000,"next_block_height":2,"route_dataspace_id":0},"components":[],"capacities":[],"decision":{"status":"accepted","value":{"debit_source":{"kind":"account","value":"fixture-authority"}}}}'
+  jq -cn \
+    --arg contract_key "$contract_key" \
+    --arg contract_source "$contract_source" \
+    --arg contract_alias "$contract_alias" \
+    --arg contract_address "$contract_address" \
+    --argjson deploy_nonce "$deploy_nonce" \
+    --argjson next_deploy_nonce "$next_deploy_nonce" \
+    --arg code_hash "$code_hash" \
+    --arg abi_hash "$abi_hash" \
+    --arg record_environment "$record_environment" \
+    --arg torii_url "$torii_url" \
+    --arg chain_id "$chain_id" \
+    --arg block_1_hash "$block_1_hash" \
+    --argjson chain_discriminant "$chain_discriminant" \
+    --argjson fee_quote "$fee_quote" \
+    '
+      def deployment_state:
+        {
+          authority: "fixture-authority",
+          contract_alias: $contract_alias,
+          deploy_nonce: ($deploy_nonce | tostring),
+          dataspace_alias: "universal",
+          dataspace_id: "0",
+          previous_contract_address: null,
+          observed_block_height: "1",
+          observed_block_hash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          ledger_time_ms: "1000",
+          chain_discriminant: ($chain_discriminant | tostring)
+        };
+      def response:
+        {
+          ok: true,
+          submitted: true,
+          torii_url: $torii_url,
+          chain_id: $chain_id,
+          authority: "fixture-authority",
+          chain_discriminant: $chain_discriminant,
+          dataspace: "0",
+          contract_alias: $contract_alias,
+          contract_address: $contract_address,
+          contract_subject_account: "fixture-contract-subject",
+          deploy_nonce: $deploy_nonce,
+          next_deploy_nonce: $next_deploy_nonce,
+          code_hash_hex: $code_hash,
+          register_manifest_tx_hash: "hash:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB#ABA2",
+          commit_deployment_tx_hash: "hash:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD#F071",
+          expected_previous_contract_address: null,
+          deployment_state: deployment_state,
+          fee_quotes: [$fee_quote, $fee_quote, $fee_quote],
+          operation_receipt: {
+            operation_kind: "contract_deploy",
+            status: "committed",
+            transport: "ivm-contract-deploy-helper",
+            torii_url: $torii_url,
+            chain_id: $chain_id,
+            authority: "fixture-authority",
+            chain_discriminant: $chain_discriminant,
+            dataspace: "0",
+            contract_alias: $contract_alias,
+            contract_address: $contract_address,
+            contract_subject_account: "fixture-contract-subject",
+            code_hash_hex: $code_hash,
+            abi_hash_hex: null,
+            tx_hash_hex: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            entrypoint: null,
+            entrypoint_hash_hex: null,
+            gas_limit: 2000000,
+            gas_used: null,
+            fee_payment: $fee_quote.intent,
+            fee_quotes: [$fee_quote, $fee_quote, $fee_quote],
+            payload_digest_hex: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            deployment_state: deployment_state
+          },
+          terminal_kind: "Committed",
+          final: {
+            kind: "Committed",
+            hash: "hash:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD#F071"
+          },
+          register_bytes_tx_strategy: "native_chunks",
+          register_bytes_chunk_size: 65536,
+          register_bytes_chunk_count: 1,
+          register_bytes_stage_tx_hashes: [],
+          register_bytes_tx_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        };
+      {
+        contract_key: $contract_key,
+        generated_at: "20260622T000570Z",
+        environment: $record_environment,
+        contract_source: $contract_source,
+        contract_alias: $contract_alias,
+        dataspace_alias: "universal",
+        dataspace_id: "0",
+        contract_address: $contract_address,
+        deploy_nonce: $deploy_nonce,
+        code_hash_hex: $code_hash,
+        abi_hash_hex: $abi_hash,
+        deploy_strategy: "ivm_contract_deploy",
+        chain_fingerprint: {
+          torii_url: $torii_url,
+          chain: $chain_id,
+          block_1_hash: $block_1_hash
+        },
+        response: response
+      }
+    '
+}
+
+checklist_router_deployment_record="$(checklist_current_deployment_record_json \
+  "dlmm.dlmm_router" \
+  "contracts/dlmm/dlmm_router.ko" \
+  "dlmm_router::dlmm.universal" \
+  "tairac1routerfixture" \
+  2 \
+  "0000000000000000000000000000000000000000000000000000000000000002" \
+  "0000000000000000000000000000000000000000000000000000000000000000")"
+checklist_n3x_deployment_record="$(checklist_current_deployment_record_json \
+  "n3x.n3x_hub" \
+  "contracts/n3x/n3x_hub.ko" \
+  "n3x_hub::n3x.universal" \
+  "tairac1n3xfixture" \
+  1 \
+  "0000000000000000000000000000000000000000000000000000000000000001" \
+  "0000000000000000000000000000000000000000000000000000000000000000")"
+checklist_stale_deployment_record="$(checklist_current_deployment_record_json \
+  "options.series_manager" \
+  "contracts/options/series_manager.ko" \
+  "series_manager::options.universal" \
+  "tairac1stale" \
+  99 \
+  "9999999999999999999999999999999999999999999999999999999999999999" \
+  "0000000000000000000000000000000000000000000000000000000000000000")"
 
 checklist_contract_fixture_root="$TMP_DIR/release-checklist-contract-root"
 mkdir -p \
@@ -5551,11 +5141,11 @@ cat > "$checklist_contract_fixture_root/deployments/testnet/preflight.latest.jso
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
   "endpoint": {"mcp_http_status": "200", "mcp": {"enabled": true, "metadata_valid": true, "protocol_version": "2025-06-18", "server_name": "iroha-torii-mcp", "server_version": "0.0.0-dev", "tool_count": 12, "toolset_version": "fixture-tools-v1"}, "health_issues": [], "health": {"status": {"http_status": "200", "json_available": true}, "sumeragi": {"http_status": "200", "json_available": true}}},
   "chain": {
@@ -5606,22 +5196,19 @@ cat > "$checklist_contract_fixture_root/deployments/testnet/deploy.latest.json" 
   }
 }
 EOF
-cat > "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json" <<'EOF'
-{
-  "generated_at": "20260622T000570Z",
-  "environment": "testnet",
-  "status": "completed",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"},
-  "contracts": [
-    {
-      "contract_key": "dlmm.dlmm_router",
-      "environment": "testnet",
-      "contract_address": "tairac1routerfixture",
-      "deploy_nonce": 2
-    }
-  ]
-}
-EOF
+jq -n \
+  --argjson router "$checklist_router_deployment_record" \
+  '{
+    generated_at: "20260622T000570Z",
+    environment: "testnet",
+    status: "completed",
+    chain_fingerprint: {
+      torii_url: "https://taira.example.invalid",
+      chain: "fixture-chain",
+      block_1_hash: "fixture-block"
+    },
+    contracts: [$router]
+  }' > "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json"
 for artifact in \
   nested_call_probe.latest.json \
   smoke.latest.json \
@@ -5926,7 +5513,7 @@ mv "$TMP_DIR/contracts-degraded-status.json" "$checklist_contract_fixture_root/d
   run_release_checklist
 ) >"$checklist_contracts_status_output" 2>&1 || checklist_contracts_status="$?"
 [[ "$checklist_contracts_status" != "0" ]]
-rg -q "deployments/testnet/contracts.latest.json is not completed" "$checklist_contracts_status_output"
+rg -q "deployments/testnet/contracts.latest.json does not match the closed current deployment-evidence schema" "$checklist_contracts_status_output"
 ! rg -q "release checklist: make" "$checklist_contracts_status_output"
 jq '.status = "completed"' "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json" \
   > "$TMP_DIR/contracts-completed-status.json"
@@ -6003,6 +5590,22 @@ write_checklist_deploy_record() {
   local code_hash="${5:-$(printf '%064x' "$deploy_nonce")}"
   local abi_hash="${6:-$(printf '%064x' 0)}"
   local manifest_path="${output_path%.deploy.json}.manifest.json"
+  local contract_source contract_alias deployment_record
+
+  case "$contract_key" in
+    dlmm.dlmm_router)
+      contract_source="contracts/dlmm/dlmm_router.ko"
+      contract_alias="dlmm_router::dlmm.universal"
+      ;;
+    n3x.n3x_hub)
+      contract_source="contracts/n3x/n3x_hub.ko"
+      contract_alias="n3x_hub::n3x.universal"
+      ;;
+    *)
+      contract_source="contracts/${contract_key//.//}.ko"
+      contract_alias="${contract_key}.universal"
+      ;;
+  esac
 
   cat > "$manifest_path" <<EOF
 {
@@ -6015,69 +5618,31 @@ write_checklist_deploy_record() {
 }
 EOF
 
-  cat > "$output_path" <<EOF
-{
-  "contract_key": "$contract_key",
-  "generated_at": "20260622T000570Z",
-  "environment": "testnet",
-  "contract_address": "$contract_address",
-  "deploy_nonce": $deploy_nonce,
-  "code_hash_hex": "$code_hash",
-  "abi_hash_hex": "$abi_hash",
-  "deploy_strategy": "bundle",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"},
-  "bundle_receipt": {
-    "name": "$contract_key",
-    "status": "deployed",
-    "contract_address": "$contract_address",
-    "deploy_nonce": $deploy_nonce,
-    "code_hash_hex": "$code_hash",
-    "abi_hash_hex": "$abi_hash"
-  },
-  "response": {
-    "ok": true,
-    "contract_address": "$contract_address",
-    "deploy_nonce": $deploy_nonce,
-    "code_hash_hex": "$code_hash",
-    "abi_hash_hex": "$abi_hash"
-  },
-  "instance": {
-    "contract_id": "$contract_address",
-    "contract_address": "$contract_address",
-    "deploy_nonce": $deploy_nonce,
-    "code_hash_hex": "$code_hash",
-    "abi_hash_hex": "$abi_hash"
-  }
-}
-EOF
+  deployment_record="$(checklist_current_deployment_record_json \
+    "$contract_key" \
+    "$contract_source" \
+    "$contract_alias" \
+    "$contract_address" \
+    "$deploy_nonce" \
+    "$code_hash" \
+    "$abi_hash")"
+  printf '%s\n' "$deployment_record" > "$output_path"
 }
 
-cat > "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json" <<'EOF'
-{
-  "generated_at": "20260622T000570Z",
-  "environment": "testnet",
-  "status": "completed",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"},
-  "contracts": [
-    {
-      "contract_key": "dlmm.dlmm_router",
-      "environment": "testnet",
-      "contract_address": "tairac1routerfixture",
-      "deploy_nonce": 2,
-      "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000002",
-      "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+jq -n \
+  --argjson router "$checklist_router_deployment_record" \
+  --argjson n3x "$checklist_n3x_deployment_record" \
+  '{
+    generated_at: "20260622T000570Z",
+    environment: "testnet",
+    status: "completed",
+    chain_fingerprint: {
+      torii_url: "https://taira.example.invalid",
+      chain: "fixture-chain",
+      block_1_hash: "fixture-block"
     },
-    {
-      "contract_key": "n3x.n3x_hub",
-      "environment": "testnet",
-      "contract_address": "tairac1n3xfixture",
-      "deploy_nonce": 1,
-      "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000001",
-      "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
-    }
-  ]
-}
-EOF
+    contracts: [$router, $n3x]
+  }' > "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json"
 write_checklist_deploy_record \
   "$checklist_contract_fixture_root/deployments/testnet/n3x.n3x_hub.deploy.json" \
   "n3x.n3x_hub" \
@@ -6093,25 +5658,16 @@ checklist_contract_status=0
 rg -q "missing required release artifact: deployments/testnet/dlmm.dlmm_router.deploy.json" "$checklist_contract_output"
 ! rg -q "release checklist: make" "$checklist_contract_output"
 
-cat > "$checklist_contract_fixture_root/deployments/testnet/dlmm.dlmm_router.deploy.json" <<'EOF'
-{
-  "contract_key": "dlmm.dlmm_router",
-  "generated_at": "20260622T000570Z",
-  "environment": "testnet",
-  "contract_address": "tairac1routerfixture",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"}
-}
-EOF
-cat > "$checklist_contract_fixture_root/deployments/testnet/dlmm.dlmm_router.manifest.json" <<'EOF'
-{
-  "contract_key": "dlmm.dlmm_router",
-  "generated_at": "20260622T000570Z",
-  "environment": "testnet",
-  "code_hash": "hash:0000000000000000000000000000000000000000000000000000000000000002",
-  "abi_hash": "hash:0000000000000000000000000000000000000000000000000000000000000000",
-  "entrypoints": []
-}
-EOF
+write_checklist_deploy_record \
+  "$checklist_contract_fixture_root/deployments/testnet/dlmm.dlmm_router.deploy.json" \
+  "dlmm.dlmm_router" \
+  "tairac1routerfixture" \
+  2
+jq 'del(.deploy_nonce)' \
+  "$checklist_contract_fixture_root/deployments/testnet/dlmm.dlmm_router.deploy.json" \
+  > "$TMP_DIR/dlmm-router-without-nonce.json"
+mv "$TMP_DIR/dlmm-router-without-nonce.json" \
+  "$checklist_contract_fixture_root/deployments/testnet/dlmm.dlmm_router.deploy.json"
 checklist_contract_nonce_output="$TMP_DIR/release-checklist-contract-nonce-missing.out"
 checklist_contract_nonce_status=0
 (
@@ -6119,7 +5675,7 @@ checklist_contract_nonce_status=0
   run_release_checklist
 ) >"$checklist_contract_nonce_output" 2>&1 || checklist_contract_nonce_status="$?"
 [[ "$checklist_contract_nonce_status" != "0" ]]
-rg -q "dlmm.dlmm_router.deploy.json deploy nonce is missing from contracts.latest.json or the deployment record" "$checklist_contract_nonce_output"
+rg -q "dlmm.dlmm_router.deploy.json does not match the closed current deployment-evidence schema" "$checklist_contract_nonce_output"
 ! rg -Fq "$checklist_contract_fixture_root" "$checklist_contract_nonce_output"
 ! rg -q "release checklist: make" "$checklist_contract_nonce_output"
 
@@ -6205,7 +5761,7 @@ jq '.contracts += [.contracts[0]]' \
   run_release_checklist
 ) >"$checklist_duplicate_contract_snapshot_output" 2>&1 || checklist_duplicate_contract_snapshot_status="$?"
 [[ "$checklist_duplicate_contract_snapshot_status" != "0" ]]
-rg -q "contracts.latest.json contains duplicate contract snapshots: dlmm.dlmm_router" "$checklist_duplicate_contract_snapshot_output"
+rg -q "deployments/testnet/contracts.latest.json does not match the closed current deployment-evidence schema" "$checklist_duplicate_contract_snapshot_output"
 ! rg -q "release checklist: make" "$checklist_duplicate_contract_snapshot_output"
 cp "$TMP_DIR/checklist-contracts-complete-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json"
 checklist_contract_manifest_key_output="$TMP_DIR/release-checklist-contract-manifest-key.out"
@@ -6224,7 +5780,7 @@ jq '.contract_key = "n3x.n3x_hub"' "$checklist_contract_fixture_root/deployments
   > "$TMP_DIR/n3x-manifest-correct-key.json"
 mv "$TMP_DIR/n3x-manifest-correct-key.json" "$checklist_contract_fixture_root/deployments/testnet/n3x.n3x_hub.manifest.json"
 stale_contracts_json="$TMP_DIR/contracts-with-stale-entry.json"
-jq '.contracts += [{"contract_key":"options.series_manager","environment":"testnet","contract_address":"tairac1stale","deploy_nonce":99}]' \
+jq --argjson stale "$checklist_stale_deployment_record" '.contracts += [$stale]' \
   "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json" \
   > "$stale_contracts_json"
 mv "$stale_contracts_json" "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json"
@@ -6238,69 +5794,22 @@ checklist_stale_contract_status=0
 rg -q "contracts.latest.json contains stale or unknown contract snapshots: options.series_manager" "$checklist_stale_contract_output"
 ! rg -q "release checklist: make" "$checklist_stale_contract_output"
 
-cat > "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json" <<'EOF'
-{
-  "generated_at": "20260622T000570Z",
-  "environment": "testnet",
-  "status": "completed",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"},
-  "contracts": [
-    {
-      "contract_key": "dlmm.dlmm_router",
-      "environment": "testnet",
-      "contract_address": "tairac1routerfixture",
-      "deploy_nonce": 2,
-      "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000002",
-      "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+jq -n \
+  --argjson router "$checklist_router_deployment_record" \
+  --argjson n3x "$checklist_n3x_deployment_record" \
+  '{
+    generated_at: "20260622T000570Z",
+    environment: "testnet",
+    status: "completed",
+    chain_fingerprint: {
+      torii_url: "https://taira.example.invalid",
+      chain: "fixture-chain",
+      block_1_hash: "fixture-block"
     },
-    {
-      "contract_key": "n3x.n3x_hub",
-      "environment": "testnet",
-      "contract_address": "tairac1n3xfixture",
-      "deploy_nonce": 1,
-      "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000001",
-      "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
-    }
-  ]
-}
-EOF
-cat > "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json" <<'EOF'
-{
-  "ok": true,
-  "generated_at": "20260622T000570Z",
-  "environment": "testnet",
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"},
-  "bundle_digest": "fixture-bundle-digest",
-  "contracts": [
-    {
-      "name": "dlmm.dlmm_router",
-      "status": "deployed",
-      "contract_address": "tairac1routerfixture",
-      "deploy_nonce": 2,
-      "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000002",
-      "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
-    },
-    {
-      "name": "n3x.n3x_hub",
-      "status": "deployed",
-      "contract_address": "tairac1n3xfixture",
-      "deploy_nonce": 1,
-      "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000001",
-      "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
-    }
-  ]
-}
-EOF
-cat > "$checklist_contract_fixture_root/deployments/testnet/options.series_manager.deploy.json" <<'EOF'
-{
-  "contract_key": "options.series_manager",
-  "generated_at": "20260622T000570Z",
-  "environment": "testnet",
-  "contract_address": "tairac1stale",
-  "deploy_nonce": 99,
-  "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"}
-}
-EOF
+    contracts: [$router, $n3x]
+  }' > "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json"
+printf '%s\n' "$checklist_stale_deployment_record" \
+  > "$checklist_contract_fixture_root/deployments/testnet/options.series_manager.deploy.json"
 checklist_stale_deploy_output="$TMP_DIR/release-checklist-stale-deploy.out"
 checklist_stale_deploy_status=0
 (
@@ -6309,7 +5818,6 @@ checklist_stale_deploy_status=0
 ) >"$checklist_stale_deploy_output" 2>&1 || checklist_stale_deploy_status="$?"
 [[ "$checklist_stale_deploy_status" != "0" ]]
 rg -q "options.series_manager.deploy.json is stale or unknown for current contracts/" "$checklist_stale_deploy_output"
-! rg -q "soraswap.bundle.deploy.json" "$checklist_stale_deploy_output"
 ! rg -q "release checklist: make" "$checklist_stale_deploy_output"
 rm -f "$checklist_contract_fixture_root/deployments/testnet/options.series_manager.deploy.json"
 cat > "$checklist_contract_fixture_root/deployments/testnet/options.series_manager.manifest.json" <<'EOF'
@@ -6337,74 +5845,6 @@ cat > "$checklist_contract_fixture_root/deployments/testnet/nested_call_probe.la
   "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"}
 }
 EOF
-cp "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json" "$TMP_DIR/checklist-bundle-receipt-baseline.json"
-checklist_bundle_generated_at_output="$TMP_DIR/release-checklist-bundle-generated-at.out"
-checklist_bundle_generated_at_status=0
-jq 'del(.generated_at)' \
-  "$TMP_DIR/checklist-bundle-receipt-baseline.json" \
-  > "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
-(
-  export SORASWAP_ROOT="$checklist_contract_fixture_root"
-  run_release_checklist
-) >"$checklist_bundle_generated_at_output" 2>&1 || checklist_bundle_generated_at_status="$?"
-[[ "$checklist_bundle_generated_at_status" != "0" ]]
-rg -q "soraswap.bundle.deploy.json is missing generated_at" "$checklist_bundle_generated_at_output"
-! rg -q "release checklist: make" "$checklist_bundle_generated_at_output"
-cp "$TMP_DIR/checklist-bundle-receipt-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
-checklist_bundle_mismatch_output="$TMP_DIR/release-checklist-bundle-mismatch.out"
-checklist_bundle_mismatch_status=0
-jq '.contracts[0].deploy_nonce = 99' \
-  "$TMP_DIR/checklist-bundle-receipt-baseline.json" \
-  > "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
-(
-  export SORASWAP_ROOT="$checklist_contract_fixture_root"
-  run_release_checklist
-) >"$checklist_bundle_mismatch_output" 2>&1 || checklist_bundle_mismatch_status="$?"
-[[ "$checklist_bundle_mismatch_status" != "0" ]]
-rg -q "soraswap.bundle.deploy.json does not match chain.latest.json or contracts.latest.json" "$checklist_bundle_mismatch_output"
-! rg -q "release checklist: make" "$checklist_bundle_mismatch_output"
-cp "$TMP_DIR/checklist-bundle-receipt-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
-checklist_bundle_chain_output="$TMP_DIR/release-checklist-bundle-chain.out"
-checklist_bundle_chain_status=0
-jq '.chain_fingerprint.block_1_hash = "other-block"' \
-  "$TMP_DIR/checklist-bundle-receipt-baseline.json" \
-  > "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
-(
-  export SORASWAP_ROOT="$checklist_contract_fixture_root"
-  run_release_checklist
-) >"$checklist_bundle_chain_output" 2>&1 || checklist_bundle_chain_status="$?"
-[[ "$checklist_bundle_chain_status" != "0" ]]
-rg -q "soraswap.bundle.deploy.json does not match chain.latest.json or contracts.latest.json" "$checklist_bundle_chain_output"
-! rg -q "release checklist: make" "$checklist_bundle_chain_output"
-cp "$TMP_DIR/checklist-bundle-receipt-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
-checklist_bundle_sensitive_output="$TMP_DIR/release-checklist-bundle-sensitive.out"
-checklist_bundle_sensitive_status=0
-jq '.diagnostics = {"stderr": "bundle retained --api-token checklist-bundle-token"}' \
-  "$TMP_DIR/checklist-bundle-receipt-baseline.json" \
-  > "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
-(
-  export SORASWAP_ROOT="$checklist_contract_fixture_root"
-  run_release_checklist
-) >"$checklist_bundle_sensitive_output" 2>&1 || checklist_bundle_sensitive_status="$?"
-[[ "$checklist_bundle_sensitive_status" != "0" ]]
-rg -q "soraswap.bundle.deploy.json contains unredacted sensitive diagnostics" "$checklist_bundle_sensitive_output"
-! rg -q "checklist-bundle-token" "$checklist_bundle_sensitive_output"
-! rg -q "release checklist: make" "$checklist_bundle_sensitive_output"
-cp "$TMP_DIR/checklist-bundle-receipt-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
-checklist_bundle_path_leak_output="$TMP_DIR/release-checklist-bundle-path-leak.out"
-checklist_bundle_path_leak_status=0
-jq '.diagnostics = {"stderr": "wrote file:///private/tmp/soraswap-bundle/receipt.json"}' \
-  "$TMP_DIR/checklist-bundle-receipt-baseline.json" \
-  > "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
-(
-  export SORASWAP_ROOT="$checklist_contract_fixture_root"
-  run_release_checklist
-) >"$checklist_bundle_path_leak_output" 2>&1 || checklist_bundle_path_leak_status="$?"
-[[ "$checklist_bundle_path_leak_status" != "0" ]]
-rg -q "soraswap.bundle.deploy.json contains local filesystem path diagnostics" "$checklist_bundle_path_leak_output"
-! rg -q "file:///private/tmp/soraswap-bundle/receipt.json" "$checklist_bundle_path_leak_output"
-! rg -q "release checklist: make" "$checklist_bundle_path_leak_output"
-cp "$TMP_DIR/checklist-bundle-receipt-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/soraswap.bundle.deploy.json"
 checklist_contract_snapshot_environment_output="$TMP_DIR/release-checklist-contract-snapshot-environment.out"
 checklist_contract_snapshot_environment_status=0
 jq '.contracts[0].environment = "production"' \
@@ -6416,7 +5856,7 @@ mv "$TMP_DIR/contracts-wrong-entry-environment.json" "$checklist_contract_fixtur
   run_release_checklist
 ) >"$checklist_contract_snapshot_environment_output" 2>&1 || checklist_contract_snapshot_environment_status="$?"
 [[ "$checklist_contract_snapshot_environment_status" != "0" ]]
-rg -q "contracts.latest.json contains contract snapshots for the wrong environment: dlmm.dlmm_router" "$checklist_contract_snapshot_environment_output"
+rg -q "deployments/testnet/contracts.latest.json does not match the closed current deployment-evidence schema" "$checklist_contract_snapshot_environment_output"
 ! rg -q "release checklist: make" "$checklist_contract_snapshot_environment_output"
 jq '.contracts[0].environment = "testnet"' \
   "$checklist_contract_fixture_root/deployments/testnet/contracts.latest.json" \
@@ -6433,7 +5873,7 @@ mv "$TMP_DIR/dlmm-router-wrong-environment.json" "$checklist_contract_fixture_ro
   run_release_checklist
 ) >"$checklist_contract_environment_output" 2>&1 || checklist_contract_environment_status="$?"
 [[ "$checklist_contract_environment_status" != "0" ]]
-rg -q "dlmm.dlmm_router.deploy.json was not recorded for selected environment testnet" "$checklist_contract_environment_output"
+rg -q "dlmm.dlmm_router.deploy.json does not match the closed current deployment-evidence schema" "$checklist_contract_environment_output"
 ! rg -Fq "$checklist_contract_fixture_root" "$checklist_contract_environment_output"
 ! rg -q "release checklist: make" "$checklist_contract_environment_output"
 jq '.environment = "testnet"' \
@@ -6469,7 +5909,7 @@ mv "$TMP_DIR/dlmm-router-failed-response.json" "$checklist_contract_fixture_root
   run_release_checklist
 ) >"$checklist_contract_proof_output" 2>&1 || checklist_contract_proof_status="$?"
 [[ "$checklist_contract_proof_status" != "0" ]]
-rg -q "dlmm.dlmm_router.deploy.json does not include successful deploy response, instance, bundle receipt, and code/ABI hash evidence" "$checklist_contract_proof_output"
+rg -q "dlmm.dlmm_router.deploy.json does not match the closed current deployment-evidence schema" "$checklist_contract_proof_output"
 ! rg -q "release checklist: make" "$checklist_contract_proof_output"
 jq '.response.ok = true' \
   "$checklist_contract_fixture_root/deployments/testnet/dlmm.dlmm_router.deploy.json" \
@@ -6506,13 +5946,17 @@ fixture_smoke_tx_hashes_json="$(jq -cn \
   --arg perps_close_position "$(fixture_tx_hash 51)" \
   --arg perps_open_liquidation_position "$(fixture_tx_hash 52)" \
   --arg options_buy_shout "$(fixture_tx_hash 53)" \
-  --arg options_record_shout "$(fixture_tx_hash 54)" \
+  --arg options_publish_shout_mark "$(fixture_tx_hash 54)" \
+  --arg options_publish_shout_final_mark "$(fixture_tx_hash 73)" \
   --arg options_exercise_shout "$(fixture_tx_hash 55)" \
   --arg options_buy_outperformance "$(fixture_tx_hash 56)" \
   --arg options_settle_outperformance_series "$(fixture_tx_hash 57)" \
   --arg options_exercise_outperformance "$(fixture_tx_hash 58)" \
   --arg cover_register_policy "$(fixture_tx_hash 59)" \
-  --arg cover_stale_reset_observation "$(fixture_tx_hash 60)" \
+  --arg cover_trigger_1 "$(fixture_tx_hash 60)" \
+  --arg cover_trigger_2 "$(fixture_tx_hash 74)" \
+  --arg cover_trigger_3 "$(fixture_tx_hash 75)" \
+  --arg cover_trigger_4 "$(fixture_tx_hash 76)" \
   --arg cover_route_claim "$(fixture_tx_hash 61)" \
   --arg automation_enqueue "$(fixture_tx_hash 62)" \
   --arg automation_assign_executor "$(fixture_tx_hash 63)" \
@@ -6579,13 +6023,17 @@ fixture_smoke_tx_hashes_json="$(jq -cn \
     perps_close_position: $perps_close_position,
     perps_open_liquidation_position: $perps_open_liquidation_position,
     options_buy_shout: $options_buy_shout,
-    options_record_shout: $options_record_shout,
+    options_publish_shout_mark: $options_publish_shout_mark,
+    options_publish_shout_final_mark: $options_publish_shout_final_mark,
     options_exercise_shout: $options_exercise_shout,
     options_buy_outperformance: $options_buy_outperformance,
     options_settle_outperformance_series: $options_settle_outperformance_series,
     options_exercise_outperformance: $options_exercise_outperformance,
     cover_register_policy: $cover_register_policy,
-    cover_stale_reset_observation: $cover_stale_reset_observation,
+    cover_trigger_1: $cover_trigger_1,
+    cover_trigger_2: $cover_trigger_2,
+    cover_trigger_3: $cover_trigger_3,
+    cover_trigger_4: $cover_trigger_4,
     cover_route_claim: $cover_route_claim,
     automation_enqueue: $automation_enqueue,
     automation_assign_executor: $automation_assign_executor,
@@ -6680,20 +6128,17 @@ jq -cn \
       launchpad_activation_state: [1,10],
       referral_mirror_member: [1,3,7000,3000],
       farms_mirror_position: [1,2,20,39],
-      options_shout_series: [1,1,1,40],
-      options_outperformance_series: [1,2,2,40],
+      options_factory_config: ["usdt#soraswap.universal","fixture-options-factory","fixture-options-oracle",0,3,213,5,8,0],
+      options_factory_shout_series: [1,1,30000,400,10000,0,0,9500,1500,0],
+      options_factory_outperformance_series: [1,2,20000,500,10000,0,0,9500,1500,200],
+      options_factory_automation: [1,213,5,8,0,0,0],
+      options_factory_shout_position: [1,1,1,40,2,0,2,3,1],
+      options_factory_outperformance_position: [1,2,2,40,2,0,2,3,1],
+      perps_collateral_pool: ["fixture-perps-account",200,0,200],
       cover_policy_state: [1,4,90,110],
       automation_mirror_job: [1,1,123456,1],
       conditional_escrow_state: [1,5,419,7],
-      epoch_auction_state: [1,2,66,78],
-      risk_bucket_1: [1,331,0,0],
-      risk_bucket_2: [1,147,0,0],
-      risk_bucket_3: [1,3,0,0],
-      risk_vault_state: [481,0,0,387],
-      risk_bucket_1_liability: [2,0,0,5],
-      risk_bucket_1_liquidation_liability: [2,0,0,12],
-      risk_bucket_2_shout_liability: [2,0,0,7],
-      risk_bucket_3_liability: [2,0,0,3]
+      epoch_auction_state: [1,2,66,78]
     }
   }' > "$checklist_contract_fixture_root/deployments/testnet/smoke.latest.json"
 cp "$checklist_contract_fixture_root/deployments/testnet/smoke.latest.json" "$TMP_DIR/smoke-baseline.json"
@@ -6716,11 +6161,35 @@ cat > "$checklist_contract_fixture_root/deployments/testnet/contract_console_smo
   "deploy_snapshot": {"generated_at": "20260622T000560Z", "environment": "testnet", "chain_fingerprint": {"torii_url": "https://taira.example.invalid", "chain": "fixture-chain", "block_1_hash": "fixture-block"}, "status": "completed"},
   "bridge": {
     "route_provenance": [1, "fixture-governance"],
-    "message_submit_entrypoint": "finalize_inbound",
-    "proof_driven_settlement": false,
-    "settlement_payload_supplied": true,
-    "submission_expectation": "apply",
-    "consumed_before_submit": 0
+    "torii_sccp_v1": false,
+    "destination_message_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "native_message_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "governed_route_provenance": {
+      "destination": {
+        "message_id_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+        "validated_by": "state_derived_sccp_proof_request",
+        "route_configuration_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "native": {
+        "message_id_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+        "validated_by": "authoritative_typed_sccp_registry",
+        "route_configuration_hash_hex": "6666666666666666666666666666666666666666666666666666666666666666",
+        "counterparty_chain": "fixture-counterparty"
+      }
+    },
+    "submission_expectation": "apply"
+  },
+  "discovery": {
+    "capabilities": {
+      "response_json": {
+        "registry_path": "/v1/sccp/registry",
+        "proof_request_path": "/v1/sccp/proof-requests/{message_id}",
+        "proof_submit_path": "/v1/bridge/proofs/submit",
+        "native_message_submit_path": "/v1/bridge/messages"
+      }
+    },
+    "registry": {"response_json": {}},
+    "proof_request": {"response_json": {}}
   },
   "submissions": {
     "proof_submit": {"tx_hash_hex": "000000000000000000000000000000000000000000000000000000000000001a"},
@@ -6880,10 +6349,14 @@ cat > "$checklist_contract_fixture_root/deployments/testnet/trader_api_bundle.la
     "manifest_match_count": 3,
     "attempt_count": 3
   },
-  "pin_summary": {
-    "manifest_id_hex": "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
-    "manifest_digest_hex": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-    "status": 409
+  "provider_ingest": {
+    "state": "awaiting_finalized_provider_assignment",
+    "queued": false,
+    "direct_http_ingest": false,
+    "prepare": {
+      "manifest_id_hex": "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
+      "manifest_digest_hex": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
   },
   "registry_submit": {
     "manifest_digest_hex": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -7233,19 +6706,19 @@ mv "$TMP_DIR/trader-api-wrong-routes.json" "$checklist_contract_fixture_root/dep
 rg -q "trader_api_bundle.latest.json does not expose the exact required trader API routes" "$trader_api_routes_output"
 ! rg -q "release checklist: make" "$trader_api_routes_output"
 cp "$TMP_DIR/trader-api-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/trader_api_bundle.latest.json"
-trader_api_receipt_output="$TMP_DIR/release-checklist-trader-api-receipt.out"
-trader_api_receipt_status=0
-jq 'del(.pin_summary)' \
+trader_api_provider_preparation_output="$TMP_DIR/release-checklist-trader-api-provider-preparation.out"
+trader_api_provider_preparation_status=0
+jq 'del(.provider_ingest)' \
   "$checklist_contract_fixture_root/deployments/testnet/trader_api_bundle.latest.json" \
-  > "$TMP_DIR/trader-api-without-pin.json"
-mv "$TMP_DIR/trader-api-without-pin.json" "$checklist_contract_fixture_root/deployments/testnet/trader_api_bundle.latest.json"
+  > "$TMP_DIR/trader-api-without-provider-preparation.json"
+mv "$TMP_DIR/trader-api-without-provider-preparation.json" "$checklist_contract_fixture_root/deployments/testnet/trader_api_bundle.latest.json"
 (
   export SORASWAP_ROOT="$checklist_contract_fixture_root"
   run_release_checklist
-) >"$trader_api_receipt_output" 2>&1 || trader_api_receipt_status="$?"
-[[ "$trader_api_receipt_status" != "0" ]]
-rg -q "trader_api_bundle.latest.json is missing matching SoraFS pin or registry receipts" "$trader_api_receipt_output"
-! rg -q "release checklist: make" "$trader_api_receipt_output"
+) >"$trader_api_provider_preparation_output" 2>&1 || trader_api_provider_preparation_status="$?"
+[[ "$trader_api_provider_preparation_status" != "0" ]]
+rg -q "trader_api_bundle.latest.json is missing matching provider preparation or manifest registration evidence" "$trader_api_provider_preparation_output"
+! rg -q "release checklist: make" "$trader_api_provider_preparation_output"
 cp "$TMP_DIR/trader-api-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/trader_api_bundle.latest.json"
 trader_api_probe_output="$TMP_DIR/release-checklist-trader-api-probe.out"
 trader_api_probe_status=0
@@ -7316,7 +6789,7 @@ mv "$TMP_DIR/trader-api-wrong-cid.json" "$checklist_contract_fixture_root/deploy
   run_release_checklist
 ) >"$trader_api_cid_output" 2>&1 || trader_api_cid_status="$?"
 [[ "$trader_api_cid_status" != "0" ]]
-rg -q "trader_api_bundle.latest.json content_cid does not match the pinned SoraFS manifest id" "$trader_api_cid_output"
+rg -q "trader_api_bundle.latest.json content_cid does not match the prepared manifest id" "$trader_api_cid_output"
 ! rg -q "release checklist: make" "$trader_api_cid_output"
 cp "$TMP_DIR/trader-api-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/trader_api_bundle.latest.json"
 trader_api_stale_output="$TMP_DIR/release-checklist-trader-api-stale.out"
@@ -7434,9 +6907,9 @@ checklist_bridge_proof_status=0
   run_release_checklist
 ) >"$checklist_bridge_proof_output" 2>&1 || checklist_bridge_proof_status="$?"
 [[ "$checklist_bridge_proof_status" != "0" ]]
-rg -q "contract_console_smoke.latest.json does not prove proof-driven bridge settlement without caller-supplied payload" "$checklist_bridge_proof_output"
+rg -q "contract_console_smoke.latest.json does not prove current Torii SCCP V1 governed proof admission" "$checklist_bridge_proof_output"
 ! rg -q "release checklist: make" "$checklist_bridge_proof_output"
-jq '.bridge.proof_driven_settlement = true | .bridge.settlement_payload_supplied = false' \
+jq '.bridge.torii_sccp_v1 = true' \
   "$checklist_contract_fixture_root/deployments/testnet/contract_console_smoke.latest.json" \
   > "$TMP_DIR/contract-console-proof-pass.json"
 mv "$TMP_DIR/contract-console-proof-pass.json" "$checklist_contract_fixture_root/deployments/testnet/contract_console_smoke.latest.json"
@@ -7473,7 +6946,6 @@ rg -q "contract_console_smoke.latest.json does not record valid bridge submissio
 	contract_console_replay_reason_output="$TMP_DIR/release-checklist-contract-console-replay-reason.out"
 	contract_console_replay_reason_status=0
 	jq '.bridge.submission_expectation = "replay_reject"
-  | .bridge.consumed_before_submit = 1
   | .submissions.proof_status = {"status_kind": "Skipped", "reason": "cached route"}
   | .submissions.message_status = {"status_kind": "Rejected", "rejection_reason": "unrelated failure"}' \
   "$TMP_DIR/contract-console-baseline.json" \
@@ -7483,7 +6955,7 @@ rg -q "contract_console_smoke.latest.json does not record valid bridge submissio
   run_release_checklist
 ) >"$contract_console_replay_reason_output" 2>&1 || contract_console_replay_reason_status="$?"
 [[ "$contract_console_replay_reason_status" != "0" ]]
-rg -q "contract_console_smoke.latest.json does not record a valid bridge submission outcome" "$contract_console_replay_reason_output"
+rg -q "contract_console_smoke.latest.json does not record valid bridge submission transaction hashes" "$contract_console_replay_reason_output"
 ! rg -q "release checklist: make" "$contract_console_replay_reason_output"
 cp "$TMP_DIR/contract-console-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/contract_console_smoke.latest.json"
 
@@ -7796,22 +7268,22 @@ jq '.tx_hashes.n3x_deposit_and_mint = "not-a-tx-hash"' \
   run_release_checklist
 ) >"$smoke_first_release_tx_output" 2>&1 || smoke_first_release_tx_status="$?"
 [[ "$smoke_first_release_tx_status" != "0" ]]
-rg -q "smoke.latest.json is missing first-release module mutation/state/risk evidence" "$smoke_first_release_tx_output"
+rg -q "smoke.latest.json is missing first-release module mutation/state and self-contained options oracle evidence" "$smoke_first_release_tx_output"
 ! rg -q "release checklist: make" "$smoke_first_release_tx_output"
 cp "$TMP_DIR/smoke-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/smoke.latest.json"
 
-smoke_first_release_risk_output="$TMP_DIR/release-checklist-smoke-first-release-risk.out"
-smoke_first_release_risk_status=0
-jq '.view_results.risk_bucket_2_shout_liability = [2, "0", 0, 7]' \
+smoke_first_release_oracle_output="$TMP_DIR/release-checklist-smoke-first-release-oracle.out"
+smoke_first_release_oracle_status=0
+jq '.view_results.options_factory_config[2] = .view_results.options_factory_config[1]' \
   "$TMP_DIR/smoke-baseline.json" \
   > "$checklist_contract_fixture_root/deployments/testnet/smoke.latest.json"
 (
   export SORASWAP_ROOT="$checklist_contract_fixture_root"
   run_release_checklist
-) >"$smoke_first_release_risk_output" 2>&1 || smoke_first_release_risk_status="$?"
-[[ "$smoke_first_release_risk_status" != "0" ]]
-rg -q "smoke.latest.json is missing first-release module mutation/state/risk evidence" "$smoke_first_release_risk_output"
-! rg -q "release checklist: make" "$smoke_first_release_risk_output"
+) >"$smoke_first_release_oracle_output" 2>&1 || smoke_first_release_oracle_status="$?"
+[[ "$smoke_first_release_oracle_status" != "0" ]]
+rg -q "smoke.latest.json is missing first-release module mutation/state and self-contained options oracle evidence" "$smoke_first_release_oracle_output"
+! rg -q "release checklist: make" "$smoke_first_release_oracle_output"
 cp "$TMP_DIR/smoke-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/smoke.latest.json"
 
 smoke_first_release_state_output="$TMP_DIR/release-checklist-smoke-first-release-state.out"
@@ -7824,7 +7296,7 @@ jq '.view_results.launchpad_mirror_sale = [1, 10, "10", 1]' \
   run_release_checklist
 ) >"$smoke_first_release_state_output" 2>&1 || smoke_first_release_state_status="$?"
 [[ "$smoke_first_release_state_status" != "0" ]]
-rg -q "smoke.latest.json is missing first-release module mutation/state/risk evidence" "$smoke_first_release_state_output"
+rg -q "smoke.latest.json is missing first-release module mutation/state and self-contained options oracle evidence" "$smoke_first_release_state_output"
 ! rg -q "release checklist: make" "$smoke_first_release_state_output"
 cp "$TMP_DIR/smoke-baseline.json" "$checklist_contract_fixture_root/deployments/testnet/smoke.latest.json"
 
@@ -7923,8 +7395,8 @@ case "$target" in
   test-local-foundation-isolated|test-local-isolated)
     pin_target_policy="isolated"
     if [ "$candidate_pin_enabled" -eq 1 ]; then
-      [ "${IROHAD_BIN:-}" = "$PIN_FIXTURE_BUNDLE/bin/irohad" ] \
-        || fail_release_env "$target irohad"
+      [ "${IROHA3D_BIN:-}" = "$PIN_FIXTURE_BUNDLE/bin/iroha3d" ] \
+        || fail_release_env "$target iroha3d"
       [ "${IROHA_BIN:-}" = "$PIN_FIXTURE_BUNDLE/bin/iroha" ] \
         || fail_release_env "$target iroha"
       [ "${KAGAMI_BIN:-}" = "$PIN_FIXTURE_ROOT/target/release/kagami" ] \
@@ -7939,10 +7411,8 @@ case "$target" in
         || fail_release_env "$target smoke timeout"
       [ "${SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS:-}" = "0" ] \
         || fail_release_env "$target testnet smoke timeout"
-      [ "${SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS:-}" = "0" ] \
-        || fail_release_env "$target contract-app process timeout"
     else
-      [ -z "${IROHAD_BIN:-}" ] || fail_release_env "$target unexpected irohad"
+      [ -z "${IROHA3D_BIN:-}" ] || fail_release_env "$target unexpected iroha3d"
       [ -z "${IROHA_BIN:-}" ] || fail_release_env "$target unexpected iroha"
       [ -z "${KAGAMI_BIN:-}" ] || fail_release_env "$target unexpected kagami"
       [ -z "${SORASWAP_SKIP_LOCALNET_TOOL_BUILD:-}" ] \
@@ -7955,12 +7425,10 @@ case "$target" in
         || fail_release_env "$target unexpected smoke timeout"
       [ -z "${SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS:-}" ] \
         || fail_release_env "$target unexpected testnet smoke timeout"
-      [ -z "${SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS:-}" ] \
-        || fail_release_env "$target unexpected contract-app process timeout"
     fi
     ;;
   *)
-    [ -z "${IROHAD_BIN:-}" ] || fail_release_env "$target unexpected irohad"
+    [ -z "${IROHA3D_BIN:-}" ] || fail_release_env "$target unexpected iroha3d"
     [ -z "${IROHA_BIN:-}" ] || fail_release_env "$target unexpected iroha"
     [ -z "${KAGAMI_BIN:-}" ] || fail_release_env "$target unexpected kagami"
     [ -z "${SORASWAP_SKIP_LOCALNET_TOOL_BUILD:-}" ] \
@@ -7973,8 +7441,6 @@ case "$target" in
       || fail_release_env "$target unexpected smoke timeout"
     [ -z "${SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS:-}" ] \
       || fail_release_env "$target unexpected testnet smoke timeout"
-    [ -z "${SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS:-}" ] \
-      || fail_release_env "$target unexpected contract-app process timeout"
     ;;
 esac
 
@@ -7984,15 +7450,14 @@ unset \
   SORASWAP_IROHA_ROOT \
   SORASWAP_IROHA_CLI_BIN \
   SORASWAP_SKIP_IROHA_CLI_BUILD \
-  IROHAD_BIN \
+  IROHA3D_BIN \
   IROHA_BIN \
   KAGAMI_BIN \
   SORASWAP_SKIP_LOCALNET_TOOL_BUILD \
   SORASWAP_ISOLATED_LOCAL_UP_TIMEOUT_SECS \
   SORASWAP_ISOLATED_DEPLOY_TIMEOUT_SECS \
   SORASWAP_ISOLATED_SMOKE_TIMEOUT_SECS \
-  SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS \
-  SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS
+  SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS
 
 for env_name in MAKEFLAGS MFLAGS GNUMAKEFLAGS MAKEFILES MAKEOVERRIDES; do
   eval "env_value=\${$env_name:-}"
@@ -8006,7 +7471,6 @@ for env_name in \
   SORASWAP_PRODUCTION_CLIENT_CONFIG \
   SORASWAP_TORII_URL \
 	  SORASWAP_TORII_API_TOKEN \
-	  SORASWAP_TORII_API_VERSION \
 	  CHAIN \
 	  ACCOUNT_CHAIN_DISCRIMINANT \
 	  IROHA_ACCOUNT_CHAIN_DISCRIMINANT \
@@ -8023,7 +7487,7 @@ for env_name in \
   SORASWAP_KOTO_LINT_BIN \
   SORASWAP_KOTO_TEST_BIN \
   SORASWAP_ACTIVE_IROHA_CLI_BIN \
-  SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN \
+  SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN \
   SORASWAP_ACTIVE_GOV_INSTRUCTION_BIN \
   SORASWAP_ACTIVE_SORAFS_CLI_BIN \
   SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD \
@@ -8033,14 +7497,6 @@ for env_name in \
   SORASWAP_FORCE_COMPILE \
   SORASWAP_KOTO_COMPILE_BIN_READY \
   SORASWAP_KOTO_LINT_BIN_READY \
-  SORASWAP_CONTRACT_APP_CHUNK_SIZE \
-  SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS \
-  SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS \
-  SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS \
-  SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS \
-  SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS \
-  SORASWAP_TESTNET_CHAIN_ID \
-  SORASWAP_TESTNET_CHAIN_DISCRIMINANT \
   SORASWAP_PRODUCTION_CHAIN_ID \
   SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT \
   SORASWAP_CHAIN_DISCRIMINANT \
@@ -8063,7 +7519,6 @@ for env_name in \
   SORASWAP_TAIRA_REPAIR_HEIGHT \
   SORASWAP_TAIRA_REPAIR_OPERATOR \
   SORASWAP_TAIRA_REPAIR_PARENT_ROOT \
-  SORASWAP_TAIRA_REPAIR_PLATFORM \
   SORASWAP_TAIRA_REPAIR_POST_ROOT \
   SORASWAP_TAIRA_REPAIR_REASON \
   SORASWAP_TAIRA_REPAIR_REPORT_DIR \
@@ -8071,10 +7526,6 @@ for env_name in \
   SORASWAP_TAIRA_REPAIR_STATUS_JSON \
   SORASWAP_TAIRA_REPAIR_TARGET_STORAGES \
   SORASWAP_TAIRA_REPAIR_TRACE_CONFIG \
-  SORASWAP_TAIRA_REPAIR_VOLATILE_DIST \
-  SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA \
-  SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN \
-  SORASWAP_TAIRA_REPAIR_VOLATILE_TORII_PORTS \
 	    SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK \
   SORASWAP_INIT_CONTRACT_STATE \
   SORASWAP_PREFLIGHT_SKIP_EXISTING_NESTED_PROBE_CHECK \
@@ -8087,12 +7538,9 @@ for env_name in \
   SORASWAP_TORII_READ_RETRY_DELAY_SECS \
   SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS \
   SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS \
-  SORASWAP_CONTRACT_CALL_RETRY_COUNT \
-  SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS \
   SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT \
   SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS \
   SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX \
-  SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX \
   SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS \
   SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT \
   SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS \
@@ -8164,11 +7612,11 @@ for env_name in \
   SORASWAP_PRODUCTION_XOR_TOPUP_MAX_ATTEMPTS \
   SORASWAP_PRODUCTION_XOR_TOPUP_MAX_USDT_IN \
   SORASWAP_PRODUCTION_XOR_TOPUP_BUFFER \
-  SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS \
-  SORASWAP_ORACLE_PUBLIC_KEY_HEX \
-  SORASWAP_ORACLE_PRIVATE_KEY_HEX \
-  SORASWAP_ORACLE_PYTHON_BIN \
-  SORASWAP_ORACLE_SCHEME \
+  SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE \
+  SORASWAP_ORACLE_CLIENT_CONFIG \
+  SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG \
+  SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED \
+  SORASWAP_ACTIVE_ORACLE_ACCOUNT \
   SORASWAP_LAST_ORACLE_SLOT \
   SORASWAP_RWA_COMPLIANCE_CHAIN_JSON \
   SORASWAP_RWA_COMPLIANCE_REPORT_DIR \
@@ -8287,22 +7735,9 @@ cat > "$checklist_contract_fixture_root/deployments/local/deploy.latest.json" <<
 	    "deploy": {
 	      "status": "completed",
 	      "detail": {
-	        "bundle_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	        "strategy": "ivm_contract_deploy_per_contract",
 	        "contract_count": 2,
-	        "deploy_scope": "full",
-	        "chunked": true,
-	        "chunk_count": 1,
-	        "chunks": [
-	          {
-	            "index": 1,
-	            "bundle_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-	            "contract_count": 2,
-	            "contracts": [
-	              "dlmm.dlmm_router",
-	              "n3x.n3x_hub"
-	            ]
-	          }
-	        ]
+	        "deploy_scope": "full"
 	      }
 	    },
 	    "bootstrap_contract_state": {"status": "completed"},
@@ -8312,76 +7747,48 @@ cat > "$checklist_contract_fixture_root/deployments/local/deploy.latest.json" <<
 EOF
 cp "$checklist_contract_fixture_root/deployments/local/deploy.latest.json" \
   "$TMP_DIR/local-deploy-valid.json"
-cat > "$checklist_contract_fixture_root/deployments/local/contracts.latest.json" <<'EOF'
-{
-  "generated_at": "20260622T000570Z",
-  "environment": "local",
-  "status": "completed",
-  "chain_fingerprint": {
-    "torii_url": "http://127.0.0.1:18080",
-    "chain": "local-chain",
-    "block_1_hash": "local-block-1"
-  },
-  "contracts": [
-    {
-      "contract_key": "dlmm.dlmm_router",
-      "environment": "local",
-      "contract_address": "localc1router",
-      "deploy_nonce": 1,
-      "code_hash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
-      "abi_hash_hex": "2222222222222222222222222222222222222222222222222222222222222222",
-      "chain_fingerprint": {
-        "torii_url": "http://127.0.0.1:18080",
-        "chain": "local-chain",
-        "block_1_hash": "local-block-1"
-      }
+checklist_local_router_deployment_record="$(checklist_current_deployment_record_json \
+  "dlmm.dlmm_router" \
+  "contracts/dlmm/dlmm_router.ko" \
+  "dlmm_router::dlmm.universal" \
+  "localc1router" \
+  1 \
+  "1111111111111111111111111111111111111111111111111111111111111111" \
+  "2222222222222222222222222222222222222222222222222222222222222222" \
+  "local" \
+  "http://127.0.0.1:18080" \
+  "local-chain" \
+  "local-block-1" \
+  0)"
+checklist_local_n3x_deployment_record="$(checklist_current_deployment_record_json \
+  "n3x.n3x_hub" \
+  "contracts/n3x/n3x_hub.ko" \
+  "n3x_hub::n3x.universal" \
+  "localc1n3xhub" \
+  2 \
+  "3333333333333333333333333333333333333333333333333333333333333333" \
+  "4444444444444444444444444444444444444444444444444444444444444444" \
+  "local" \
+  "http://127.0.0.1:18080" \
+  "local-chain" \
+  "local-block-1" \
+  0)"
+jq -n \
+  --argjson router "$checklist_local_router_deployment_record" \
+  --argjson n3x "$checklist_local_n3x_deployment_record" \
+  '{
+    generated_at: "20260622T000570Z",
+    environment: "local",
+    status: "completed",
+    chain_fingerprint: {
+      torii_url: "http://127.0.0.1:18080",
+      chain: "local-chain",
+      block_1_hash: "local-block-1"
     },
-    {
-      "contract_key": "n3x.n3x_hub",
-      "environment": "local",
-      "contract_address": "localc1n3xhub",
-      "deploy_nonce": 2,
-      "code_hash_hex": "3333333333333333333333333333333333333333333333333333333333333333",
-      "abi_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444",
-      "chain_fingerprint": {
-        "torii_url": "http://127.0.0.1:18080",
-        "chain": "local-chain",
-        "block_1_hash": "local-block-1"
-      }
-    }
-  ]
-}
-EOF
+    contracts: [$router, $n3x]
+  }' > "$checklist_contract_fixture_root/deployments/local/contracts.latest.json"
 cp "$checklist_contract_fixture_root/deployments/local/contracts.latest.json" \
   "$TMP_DIR/local-contracts-valid.json"
-cat > "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json" <<'EOF'
-{
-  "ok": true,
-  "generated_at": "20260622T000570Z",
-  "environment": "local",
-  "chain_fingerprint": null,
-  "contracts": [
-    {
-      "name": "dlmm.dlmm_router",
-      "status": "deployed",
-      "contract_address": "localc1router",
-      "deploy_nonce": 1,
-      "code_hash_hex": "1111111111111111111111111111111111111111111111111111111111111111",
-      "abi_hash_hex": "2222222222222222222222222222222222222222222222222222222222222222"
-    },
-    {
-      "name": "n3x.n3x_hub",
-      "status": "deployed",
-      "contract_address": "localc1n3xhub",
-      "deploy_nonce": 2,
-      "code_hash_hex": "3333333333333333333333333333333333333333333333333333333333333333",
-      "abi_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444"
-    }
-  ]
-}
-EOF
-cp "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json" \
-  "$TMP_DIR/local-bundle-valid.json"
 jq -cn \
   --argjson tx_hashes "$fixture_smoke_tx_hashes_json" \
   '{
@@ -8424,27 +7831,23 @@ jq -cn \
 	      launchpad_activation_state: [1,10],
 	      referral_mirror_member: [1,3,7000,3000],
 	      farms_mirror_position: [1,2,20,39],
-	      options_shout_series: [1,1,1,40],
-	      options_outperformance_series: [1,2,2,40],
+	      options_factory_config: ["usdt#soraswap.universal","fixture-options-factory","fixture-options-oracle",0,3,213,5,8,0],
+	      options_factory_shout_series: [1,1,30000,400,10000,0,0,9500,1500,0],
+	      options_factory_outperformance_series: [1,2,20000,500,10000,0,0,9500,1500,200],
+	      options_factory_automation: [1,213,5,8,0,0,0],
+	      options_factory_shout_position: [1,1,1,40,2,0,2,3,1],
+	      options_factory_outperformance_position: [1,2,2,40,2,0,2,3,1],
+	      perps_collateral_pool: ["fixture-perps-account",200,0,200],
 	      cover_policy_state: [1,4,90,110],
 	      automation_mirror_job: [1,1,123456,1],
 	      conditional_escrow_state: [1,5,419,7],
-	      epoch_auction_state: [1,2,66,78],
-	      risk_bucket_1: [1,331,0,0],
-	      risk_bucket_2: [1,147,0,0],
-	      risk_bucket_3: [1,3,0,0],
-	      risk_vault_state: [481,0,0,387],
-	      risk_bucket_1_liability: [2,0,0,5],
-	      risk_bucket_1_liquidation_liability: [2,0,0,49],
-	      risk_bucket_2_shout_liability: [2,0,0,7],
-	      risk_bucket_3_liability: [2,0,0,3]
+	      epoch_auction_state: [1,2,66,78]
 	    },
 	    trigger_evidence: {
 	      registered_trigger_ids: [
 	        "soraswap_epoch_auction_close",
 	        "soraswap_twamm_tick",
 	        "soraswap_range_governor_tick",
-	        "soraswap_options_lifecycle_tick",
 	        "soraswap_options_factory_lifecycle_tick",
 	        "soraswap_cover_lifecycle_tick",
 	        "soraswap_launchpad_lifecycle_tick",
@@ -8456,7 +7859,6 @@ jq -cn \
 	        "soraswap_epoch_auction_close",
 	        "soraswap_twamm_tick",
 	        "soraswap_range_governor_tick",
-	        "soraswap_options_lifecycle_tick",
 	        "soraswap_options_factory_lifecycle_tick",
 	        "soraswap_cover_lifecycle_tick",
 	        "soraswap_launchpad_lifecycle_tick",
@@ -8501,72 +7903,6 @@ jq '.generated_at = "2026-06-22T00:00:00.000Z"' \
 mv "$TMP_DIR/defi-2026-primitives-valid.json" "$checklist_contract_fixture_root/artifacts/telemetry/defi_2026_primitives_latest.json"
 cp "$checklist_contract_fixture_root/artifacts/telemetry/defi_2026_primitives_latest.json" \
   "$TMP_DIR/defi-2026-primitives-valid.json"
-
-local_bundle_generated_at_output="$TMP_DIR/release-checklist-local-bundle-generated-at.out"
-local_bundle_generated_at_status=0
-jq 'del(.generated_at)' \
-  "$TMP_DIR/local-bundle-valid.json" \
-  > "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json"
-(
-  export SORASWAP_ROOT="$checklist_contract_fixture_root"
-  export PATH="$fake_make_dir:$PATH"
-  run_release_checklist
-) >"$local_bundle_generated_at_output" 2>&1 || local_bundle_generated_at_status="$?"
-[[ "$local_bundle_generated_at_status" != "0" ]]
-rg -q "soraswap.bundle.deploy.json is missing generated_at" "$local_bundle_generated_at_output"
-! rg -q "release checklist ok" "$local_bundle_generated_at_output"
-cp "$TMP_DIR/local-bundle-valid.json" \
-  "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json"
-
-local_bundle_mismatch_output="$TMP_DIR/release-checklist-local-bundle-mismatch.out"
-local_bundle_mismatch_status=0
-jq '.contracts[0].deploy_nonce = 99' \
-  "$TMP_DIR/local-bundle-valid.json" \
-  > "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json"
-(
-  export SORASWAP_ROOT="$checklist_contract_fixture_root"
-  export PATH="$fake_make_dir:$PATH"
-  run_release_checklist
-) >"$local_bundle_mismatch_output" 2>&1 || local_bundle_mismatch_status="$?"
-[[ "$local_bundle_mismatch_status" != "0" ]]
-rg -q "deployments/local/soraswap.bundle.deploy.json does not match chain.latest.json or contracts.latest.json" "$local_bundle_mismatch_output"
-! rg -q "release checklist ok" "$local_bundle_mismatch_output"
-cp "$TMP_DIR/local-bundle-valid.json" \
-  "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json"
-
-local_bundle_path_output="$TMP_DIR/release-checklist-local-bundle-path.out"
-local_bundle_path_status=0
-jq '.diagnostics = {"stderr": "wrote file://localhost/Users/operator/dev/soraswap/local-bundle.log"}' \
-  "$TMP_DIR/local-bundle-valid.json" \
-  > "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json"
-(
-  export SORASWAP_ROOT="$checklist_contract_fixture_root"
-  export PATH="$fake_make_dir:$PATH"
-  run_release_checklist
-) >"$local_bundle_path_output" 2>&1 || local_bundle_path_status="$?"
-[[ "$local_bundle_path_status" != "0" ]]
-rg -q "deployments/local/soraswap.bundle.deploy.json contains local filesystem path diagnostics" "$local_bundle_path_output"
-! rg -q "file://localhost/Users/operator/dev/soraswap/local-bundle.log" "$local_bundle_path_output"
-! rg -q "release checklist ok" "$local_bundle_path_output"
-cp "$TMP_DIR/local-bundle-valid.json" \
-  "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json"
-
-local_bundle_sensitive_output="$TMP_DIR/release-checklist-local-bundle-sensitive.out"
-local_bundle_sensitive_status=0
-jq '.diagnostics = {"stderr": "bundle retained --private-key local-bundle-secret"}' \
-  "$TMP_DIR/local-bundle-valid.json" \
-  > "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json"
-(
-  export SORASWAP_ROOT="$checklist_contract_fixture_root"
-  export PATH="$fake_make_dir:$PATH"
-  run_release_checklist
-) >"$local_bundle_sensitive_output" 2>&1 || local_bundle_sensitive_status="$?"
-[[ "$local_bundle_sensitive_status" != "0" ]]
-rg -q "deployments/local/soraswap.bundle.deploy.json contains unredacted sensitive diagnostics" "$local_bundle_sensitive_output"
-! rg -q "local-bundle-secret" "$local_bundle_sensitive_output"
-! rg -q "release checklist ok" "$local_bundle_sensitive_output"
-cp "$TMP_DIR/local-bundle-valid.json" \
-  "$checklist_contract_fixture_root/deployments/local/soraswap.bundle.deploy.json"
 
 telemetry_local_path_output="$TMP_DIR/release-checklist-telemetry-local-path.out"
 telemetry_local_path_status=0
@@ -8756,7 +8092,7 @@ jq '.contracts[0].chain_fingerprint.block_1_hash = "stale-local-block-1"' \
   run_release_checklist
 ) >"$local_contracts_entry_chain_output" 2>&1 || local_contracts_entry_chain_status="$?"
 [[ "$local_contracts_entry_chain_status" != "0" ]]
-rg -q "deployments/local/contracts.latest.json must record every local contract exactly once from the full isolated deploy" "$local_contracts_entry_chain_output"
+rg -q "deployments/local/contracts.latest.json does not match the closed current deployment-evidence schema" "$local_contracts_entry_chain_output"
 ! rg -q "release checklist ok" "$local_contracts_entry_chain_output"
 cp "$TMP_DIR/local-contracts-valid.json" \
   "$checklist_contract_fixture_root/deployments/local/contracts.latest.json"
@@ -8833,7 +8169,7 @@ jq '.contracts = [{"contract_key":"dlmm.dlmm_router","environment":"local"},{"co
   run_release_checklist
 ) >"$local_contracts_keys_output" 2>&1 || local_contracts_keys_status="$?"
 [[ "$local_contracts_keys_status" != "0" ]]
-rg -q "deployments/local/contracts.latest.json must record every local contract exactly once from the full isolated deploy" "$local_contracts_keys_output"
+rg -q "deployments/local/contracts.latest.json does not match the closed current deployment-evidence schema" "$local_contracts_keys_output"
 cp "$TMP_DIR/local-contracts-valid.json" \
   "$checklist_contract_fixture_root/deployments/local/contracts.latest.json"
 
@@ -8848,7 +8184,7 @@ jq '.contracts += [.contracts[0]]' \
   run_release_checklist
 ) >"$local_contracts_duplicate_output" 2>&1 || local_contracts_duplicate_status="$?"
 [[ "$local_contracts_duplicate_status" != "0" ]]
-rg -q "deployments/local/contracts.latest.json must record every local contract exactly once from the full isolated deploy" "$local_contracts_duplicate_output"
+rg -q "deployments/local/contracts.latest.json does not match the closed current deployment-evidence schema" "$local_contracts_duplicate_output"
 cp "$TMP_DIR/local-contracts-valid.json" \
   "$checklist_contract_fixture_root/deployments/local/contracts.latest.json"
 
@@ -8863,7 +8199,7 @@ jq 'del(.contracts[0].code_hash_hex)' \
   run_release_checklist
 ) >"$local_contracts_sparse_output" 2>&1 || local_contracts_sparse_status="$?"
 [[ "$local_contracts_sparse_status" != "0" ]]
-rg -q "deployments/local/contracts.latest.json must record every local contract exactly once from the full isolated deploy" "$local_contracts_sparse_output"
+rg -q "deployments/local/contracts.latest.json does not match the closed current deployment-evidence schema" "$local_contracts_sparse_output"
 cp "$TMP_DIR/local-contracts-valid.json" \
   "$checklist_contract_fixture_root/deployments/local/contracts.latest.json"
 
@@ -9022,7 +8358,6 @@ checklist_positive_output="$TMP_DIR/release-checklist-positive.out"
     SORASWAP_PRODUCTION_CLIENT_CONFIG \
     SORASWAP_TORII_URL \
 	    SORASWAP_TORII_API_TOKEN \
-	    SORASWAP_TORII_API_VERSION \
 	    CHAIN \
 	    ACCOUNT_CHAIN_DISCRIMINANT \
 	    IROHA_ACCOUNT_CHAIN_DISCRIMINANT \
@@ -9039,7 +8374,7 @@ checklist_positive_output="$TMP_DIR/release-checklist-positive.out"
     SORASWAP_KOTO_LINT_BIN \
     SORASWAP_KOTO_TEST_BIN \
     SORASWAP_ACTIVE_IROHA_CLI_BIN \
-    SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN \
+    SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN \
     SORASWAP_ACTIVE_GOV_INSTRUCTION_BIN \
     SORASWAP_ACTIVE_SORAFS_CLI_BIN \
     SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD \
@@ -9049,13 +8384,6 @@ checklist_positive_output="$TMP_DIR/release-checklist-positive.out"
     SORASWAP_FORCE_COMPILE \
     SORASWAP_KOTO_COMPILE_BIN_READY \
     SORASWAP_KOTO_LINT_BIN_READY \
-    SORASWAP_CONTRACT_APP_CHUNK_SIZE \
-    SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS \
-    SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS \
-    SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS \
-    SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS \
-    SORASWAP_TESTNET_CHAIN_ID \
-    SORASWAP_TESTNET_CHAIN_DISCRIMINANT \
     SORASWAP_PRODUCTION_CHAIN_ID \
     SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT \
     SORASWAP_CHAIN_DISCRIMINANT \
@@ -9077,7 +8405,6 @@ checklist_positive_output="$TMP_DIR/release-checklist-positive.out"
     SORASWAP_TAIRA_REPAIR_HEIGHT \
     SORASWAP_TAIRA_REPAIR_OPERATOR \
     SORASWAP_TAIRA_REPAIR_PARENT_ROOT \
-    SORASWAP_TAIRA_REPAIR_PLATFORM \
     SORASWAP_TAIRA_REPAIR_POST_ROOT \
     SORASWAP_TAIRA_REPAIR_REASON \
     SORASWAP_TAIRA_REPAIR_REPORT_DIR \
@@ -9085,10 +8412,6 @@ checklist_positive_output="$TMP_DIR/release-checklist-positive.out"
     SORASWAP_TAIRA_REPAIR_STATUS_JSON \
     SORASWAP_TAIRA_REPAIR_TARGET_STORAGES \
     SORASWAP_TAIRA_REPAIR_TRACE_CONFIG \
-    SORASWAP_TAIRA_REPAIR_VOLATILE_DIST \
-    SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA \
-    SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN \
-    SORASWAP_TAIRA_REPAIR_VOLATILE_TORII_PORTS \
 	    SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK \
     SORASWAP_INIT_CONTRACT_STATE \
     SORASWAP_PREFLIGHT_SKIP_EXISTING_NESTED_PROBE_CHECK \
@@ -9101,12 +8424,9 @@ checklist_positive_output="$TMP_DIR/release-checklist-positive.out"
     SORASWAP_TORII_READ_RETRY_DELAY_SECS \
     SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS \
     SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS \
-    SORASWAP_CONTRACT_CALL_RETRY_COUNT \
-    SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS \
     SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT \
     SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS \
     SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX \
-    SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX \
     SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS \
     SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT \
     SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS \
@@ -9178,11 +8498,11 @@ checklist_positive_output="$TMP_DIR/release-checklist-positive.out"
     SORASWAP_PRODUCTION_XOR_TOPUP_MAX_ATTEMPTS \
     SORASWAP_PRODUCTION_XOR_TOPUP_MAX_USDT_IN \
     SORASWAP_PRODUCTION_XOR_TOPUP_BUFFER \
-    SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS \
-    SORASWAP_ORACLE_PUBLIC_KEY_HEX \
-    SORASWAP_ORACLE_PRIVATE_KEY_HEX \
-    SORASWAP_ORACLE_PYTHON_BIN \
-    SORASWAP_ORACLE_SCHEME \
+    SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE \
+  SORASWAP_ORACLE_CLIENT_CONFIG \
+  SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG \
+  SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED \
+  SORASWAP_ACTIVE_ORACLE_ACCOUNT \
     SORASWAP_LAST_ORACLE_SLOT \
     SORASWAP_RWA_COMPLIANCE_CHAIN_JSON \
     SORASWAP_RWA_COMPLIANCE_REPORT_DIR \
@@ -9202,12 +8522,15 @@ checklist_positive_output="$TMP_DIR/release-checklist-positive.out"
     SORASWAP_PUBLISH_TRADER_API_BINDING \
     SORASWAP_TRADER_API_SERVICE_NAME \
     SORASWAP_TRADER_API_APP_ID; do
-    case "$release_env_leak_name" in
-      SORASWAP_RELEASE_ENV|SORASWAP_PUBLIC_ENV)
-        export "$release_env_leak_name=testnet"
-        ;;
-	      *)
-	        export "$release_env_leak_name=leaky"
+	    case "$release_env_leak_name" in
+	      SORASWAP_RELEASE_ENV|SORASWAP_PUBLIC_ENV)
+	        export "$release_env_leak_name=testnet"
+	        ;;
+	      SORASWAP_IROHA_ROOT)
+	        export "$release_env_leak_name=$FAKE_IROHA_ROOT"
+	        ;;
+		      *)
+		        export "$release_env_leak_name=leaky"
 	        ;;
     esac
   done
@@ -9270,7 +8593,7 @@ EOF
   bundle_name="taira-rollout-${git_sha[1,12]}-release"
   bundle="$pin_dir/bundle/$bundle_name"
   mkdir -p "$bundle/bin"
-  for binary_name in irohad iroha; do
+  for binary_name in iroha3d iroha; do
     printf '#!/bin/sh\n# Iroha Git SHA: %s\nexit 0\n' "$git_sha" > "$bundle/bin/$binary_name"
     chmod +x "$bundle/bin/$binary_name"
   done
@@ -9284,8 +8607,8 @@ EOF
       git_status_lines: [],
       cargo_profile: "release",
       bundle_name: $bundle_name,
-      irohad_features: ["embedded-soracloud-runtime", "sccp-test-fixtures"],
-      binaries: ["bin/irohad", "bin/iroha"],
+      iroha3d_features: ["embedded-soracloud-runtime", "sccp-test-fixtures"],
+      binaries: ["bin/iroha3d", "bin/iroha"],
       prebundle_checks: [
         {name: "soraswap_smart_contract_deploy_router_regression", skipped: false},
         {name: "soraswap_three_hop_nested_transfer_canary", skipped: false}
@@ -9293,7 +8616,7 @@ EOF
     }' > "$bundle/rollout.manifest.json"
   (
     cd "$bundle"
-    shasum -a 256 bin/iroha bin/irohad rollout.manifest.json > sha256sums.txt
+    shasum -a 256 bin/iroha bin/iroha3d rollout.manifest.json > sha256sums.txt
   )
   COPYFILE_DISABLE=1 tar -C "${bundle:h}" -czf "${bundle}.tar.gz" "${bundle:t}"
   printf '%s  %s\n' "$(shasum -a 256 "${bundle}.tar.gz" | awk '{print $1}')" "${bundle:t}.tar.gz" \
@@ -9635,10 +8958,10 @@ local_acceptance_pin_bundle_name="taira-rollout-fixture-${local_acceptance_pin_g
 local_acceptance_pin_bundle="$TMP_DIR/local-acceptance-pin-bundle/$local_acceptance_pin_bundle_name"
 mkdir -p "$local_acceptance_pin_bundle/bin"
 printf '#!/bin/sh\n# Iroha Git SHA: %s\nexit 0\n' "$local_acceptance_pin_git_sha" \
-  > "$local_acceptance_pin_bundle/bin/irohad"
+  > "$local_acceptance_pin_bundle/bin/iroha3d"
 printf '#!/bin/sh\n# Iroha Git SHA: %s\nexit 0\n' "$local_acceptance_pin_git_sha" \
   > "$local_acceptance_pin_bundle/bin/iroha"
-chmod +x "$local_acceptance_pin_bundle/bin/irohad" "$local_acceptance_pin_bundle/bin/iroha"
+chmod +x "$local_acceptance_pin_bundle/bin/iroha3d" "$local_acceptance_pin_bundle/bin/iroha"
 jq -n \
   --arg git_head "$local_acceptance_pin_git_sha" \
   --arg bundle_name "$local_acceptance_pin_bundle_name" \
@@ -9649,8 +8972,8 @@ jq -n \
     git_status_lines: [],
     cargo_profile: "release",
     bundle_name: $bundle_name,
-    irohad_features: ["embedded-soracloud-runtime", "sccp-test-fixtures"],
-    binaries: ["bin/irohad", "bin/iroha"],
+    iroha3d_features: ["embedded-soracloud-runtime", "sccp-test-fixtures"],
+    binaries: ["bin/iroha3d", "bin/iroha"],
     prebundle_checks: [
       {name: "soraswap_smart_contract_deploy_router_regression", skipped: false},
       {name: "soraswap_three_hop_nested_transfer_canary", skipped: false}
@@ -9663,7 +8986,7 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 with (root / "sha256sums.txt").open("w", encoding="utf-8") as output:
-    for relative in ("bin/iroha", "bin/irohad", "rollout.manifest.json"):
+    for relative in ("bin/iroha", "bin/iroha3d", "rollout.manifest.json"):
         digest = hashlib.sha256((root / relative).read_bytes()).hexdigest()
         output.write(f"{digest}  {relative}\n")
 PY
@@ -9675,7 +8998,7 @@ printf '%s  %s\n' \
   > "${local_acceptance_pin_bundle}.tar.gz.sha256"
 clear_generated_executable_metadata \
   "$local_acceptance_pin_iroha_root/target/release/kagami" \
-  "$local_acceptance_pin_bundle/bin/irohad" \
+  "$local_acceptance_pin_bundle/bin/iroha3d" \
   "$local_acceptance_pin_bundle/bin/iroha"
 
 local_acceptance_pin_fake_make_dir="$TMP_DIR/local-acceptance-pin-fake-make"
@@ -9717,7 +9040,7 @@ esac
 
 case "$target" in
   test-local-foundation-isolated|test-local-isolated)
-    [ "${IROHAD_BIN:-}" = "$PIN_FIXTURE_BUNDLE/bin/irohad" ] || fail "$target irohad"
+    [ "${IROHA3D_BIN:-}" = "$PIN_FIXTURE_BUNDLE/bin/iroha3d" ] || fail "$target iroha3d"
     [ "${IROHA_BIN:-}" = "$PIN_FIXTURE_BUNDLE/bin/iroha" ] || fail "$target iroha"
     [ "${KAGAMI_BIN:-}" = "$PIN_FIXTURE_ROOT/target/release/kagami" ] || fail "$target kagami"
     [ "${SORASWAP_SKIP_LOCALNET_TOOL_BUILD:-}" = "1" ] || fail "$target localnet build skip"
@@ -9725,10 +9048,9 @@ case "$target" in
     [ "${SORASWAP_ISOLATED_DEPLOY_TIMEOUT_SECS:-}" = "0" ] || fail "$target deploy timeout"
     [ "${SORASWAP_ISOLATED_SMOKE_TIMEOUT_SECS:-}" = "0" ] || fail "$target smoke timeout"
     [ "${SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS:-}" = "0" ] || fail "$target testnet smoke timeout"
-    [ "${SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS:-}" = "0" ] || fail "$target contract-app process timeout"
     ;;
   *)
-    [ -z "${IROHAD_BIN:-}" ] || fail "$target unexpected irohad"
+    [ -z "${IROHA3D_BIN:-}" ] || fail "$target unexpected iroha3d"
     [ -z "${IROHA_BIN:-}" ] || fail "$target unexpected iroha"
     [ -z "${KAGAMI_BIN:-}" ] || fail "$target unexpected kagami"
     [ -z "${SORASWAP_SKIP_LOCALNET_TOOL_BUILD:-}" ] || fail "$target unexpected localnet build skip"
@@ -9736,7 +9058,6 @@ case "$target" in
     [ -z "${SORASWAP_ISOLATED_DEPLOY_TIMEOUT_SECS:-}" ] || fail "$target unexpected deploy timeout"
     [ -z "${SORASWAP_ISOLATED_SMOKE_TIMEOUT_SECS:-}" ] || fail "$target unexpected smoke timeout"
     [ -z "${SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS:-}" ] || fail "$target unexpected testnet smoke timeout"
-    [ -z "${SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS:-}" ] || fail "$target unexpected contract-app process timeout"
     ;;
 esac
 
@@ -9789,7 +9110,7 @@ local_acceptance_pin_sha_status=0
 rg -Fq 'expected Iroha Git SHA must be 40 lowercase hexadecimal characters' "$local_acceptance_pin_sha_output"
 
 local_acceptance_pin_expected_checksums_sha256="$(/usr/bin/python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$local_acceptance_pin_bundle/sha256sums.txt")"
-local_acceptance_pin_expected_irohad_sha256="$(/usr/bin/python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$local_acceptance_pin_bundle/bin/irohad")"
+local_acceptance_pin_expected_iroha3d_sha256="$(/usr/bin/python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$local_acceptance_pin_bundle/bin/iroha3d")"
 local_acceptance_pin_expected_iroha_sha256="$(/usr/bin/python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$local_acceptance_pin_bundle/bin/iroha")"
 local_acceptance_pin_expected_kagami_sha256="$(/usr/bin/python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$local_acceptance_pin_iroha_root/target/release/kagami")"
 : > "$local_acceptance_pin_make_log"
@@ -9799,7 +9120,7 @@ local_acceptance_pin_positive_output="$TMP_DIR/release-checklist-local-acceptanc
   export SORASWAP_LOCAL_ACCEPTANCE_IROHA_ROOT="$local_acceptance_pin_iroha_root"
   export SORASWAP_LOCAL_ACCEPTANCE_BUNDLE_DIR="$local_acceptance_pin_bundle"
   export SORASWAP_LOCAL_ACCEPTANCE_EXPECTED_GIT_SHA="$local_acceptance_pin_git_sha"
-  export IROHAD_BIN="$TMP_DIR/stale-irohad"
+  export IROHA3D_BIN="$TMP_DIR/stale-iroha3d"
   export IROHA_BIN="$TMP_DIR/stale-iroha"
   export KAGAMI_BIN="$TMP_DIR/stale-kagami"
   export IROHA_UNLISTED_RELEASE_LOCAL_ACCEPTANCE_LEAK=leaky
@@ -9815,7 +9136,7 @@ rg -Fq 'local acceptance provenance: pinned' "$local_acceptance_pin_positive_out
 rg -Fq "iroha git sha: $local_acceptance_pin_git_sha" "$local_acceptance_pin_positive_output"
 rg -Fq "rollout bundle: $local_acceptance_pin_bundle_name" "$local_acceptance_pin_positive_output"
 rg -Fq "rollout checksums sha256: $local_acceptance_pin_expected_checksums_sha256" "$local_acceptance_pin_positive_output"
-rg -Fq "irohad sha256: $local_acceptance_pin_expected_irohad_sha256" "$local_acceptance_pin_positive_output"
+rg -Fq "iroha3d sha256: $local_acceptance_pin_expected_iroha3d_sha256" "$local_acceptance_pin_positive_output"
 rg -Fq "iroha sha256: $local_acceptance_pin_expected_iroha_sha256" "$local_acceptance_pin_positive_output"
 rg -Fq "kagami sha256: $local_acceptance_pin_expected_kagami_sha256" "$local_acceptance_pin_positive_output"
 ! rg -Fq "$local_acceptance_pin_iroha_root" "$local_acceptance_pin_positive_output"
@@ -9889,7 +9210,7 @@ local_acceptance_pin_toctou_before_status=0
   export PIN_FIXTURE_BUNDLE="$local_acceptance_pin_bundle"
   export PIN_FIXTURE_MAKE_LOG="$local_acceptance_pin_make_log"
   export PIN_FIXTURE_MUTATE_TARGET=check-shell-syntax
-  export PIN_FIXTURE_MUTATE_PATH="$local_acceptance_pin_bundle/bin/irohad"
+  export PIN_FIXTURE_MUTATE_PATH="$local_acceptance_pin_bundle/bin/iroha3d"
   fake_make_dir="$local_acceptance_pin_fake_make_dir"
   run_release_checklist
 ) >"$local_acceptance_pin_toctou_before_output" 2>&1 || local_acceptance_pin_toctou_before_status="$?"
@@ -9897,8 +9218,8 @@ local_acceptance_pin_toctou_before_status=0
 rg -Fq 'pinned local acceptance inputs failed revalidation before make lint' "$local_acceptance_pin_toctou_before_output"
 ! rg -q '^lint$' "$local_acceptance_pin_make_log"
 printf '#!/bin/sh\n# Iroha Git SHA: %s\nexit 0\n' "$local_acceptance_pin_git_sha" \
-  > "$local_acceptance_pin_bundle/bin/irohad"
-chmod +x "$local_acceptance_pin_bundle/bin/irohad"
+  > "$local_acceptance_pin_bundle/bin/iroha3d"
+chmod +x "$local_acceptance_pin_bundle/bin/iroha3d"
 
 : > "$local_acceptance_pin_make_log"
 local_acceptance_pin_toctou_after_output="$TMP_DIR/release-checklist-local-acceptance-pin-toctou-after.out"
@@ -10121,12 +9442,15 @@ jq '.supported = false
       sumeragi: {
         summary: {
           height: 55,
-          tx_queue: {
-            depth: 3,
-            saturated: false,
-            saturated_by_age: false
-          },
-          view_change_last_cause: null
+          last_committed_height: 54,
+          blocker: null
+        }
+      },
+      sumeragi_diagnostics: {
+        summary: {
+          tx_queue_depth: 3,
+          tx_queue_saturated: false,
+          tx_queue_saturated_by_age: false
         }
       }
     }' \
@@ -10166,11 +9490,11 @@ rg -q "release checklist: verifying Taira prerequisite for production" "$checkli
 rg -q "local acceptance: skipped" "$checklist_production_after_taira_blocked_output"
 rg -q "preflight.latest.json is not ready for the current production chain" "$checklist_production_after_taira_blocked_output"
 rg -q "blocker: fixture production nested probe blocker" "$checklist_production_after_taira_blocked_output"
-rg -q "nested-call health: height=55 queue_depth=3 saturated=false saturated_by_age=false view_change=none" "$checklist_production_after_taira_blocked_output"
+rg -q "nested-call health: height=55 last_committed=54 queue_depth=3 saturated=false saturated_by_age=false blocker=none" "$checklist_production_after_taira_blocked_output"
 rg -q "next runtime check: roll the production public runtime with the sibling ../iroha router and nested-transfer runtime fixes" "$checklist_production_after_taira_blocked_output"
 rg -q "SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make production-nested-call-probe" "$checklist_production_after_taira_blocked_output"
 rg -q "SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make production-preflight" "$checklist_production_after_taira_blocked_output"
-! rg -q "verify_soraswap_rollout.sh" "$checklist_production_after_taira_blocked_output"
+! rg -q "taira doctor" "$checklist_production_after_taira_blocked_output"
 ! rg -q "release checklist: make" "$checklist_production_after_taira_blocked_output"
 
 checklist_production_preflight_path_leak_root="$TMP_DIR/release-checklist-production-preflight-path-leak-root"
@@ -10262,17 +9586,12 @@ rg -q "unset SORASWAP_ALLOW_TESTNET_MUTATIONS SORASWAP_ALLOW_PRODUCTION_MUTATION
 	rg -q "unset SORASWAP_PUBLIC_ENV SORASWAP_RELEASE_ENV" "$ROOT/scripts/release_checklist.sh"
 	rg -q "unset SORASWAP_TORII_URL SORASWAP_TORII_API_TOKEN CHAIN" "$ROOT/scripts/release_checklist.sh"
 	rg -q "unset ACCOUNT_CHAIN_DISCRIMINANT IROHA_ACCOUNT_CHAIN_DISCRIMINANT" "$ROOT/scripts/release_checklist.sh"
-	rg -q "unset SORASWAP_TORII_API_VERSION" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_PROFILE SORASWAP_CONTRACTS_MANIFEST" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_IROHA_ROOT SORASWAP_IROHA_CLI_BIN SORASWAP_SORAFS_CLI_BIN" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_KOTO_COMPILE_BIN SORASWAP_KOTO_LINT_BIN SORASWAP_KOTO_TEST_BIN" "$ROOT/scripts/release_checklist.sh"
-rg -q "unset SORASWAP_ACTIVE_IROHA_CLI_BIN SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN" "$ROOT/scripts/release_checklist.sh"
+rg -q "unset SORASWAP_ACTIVE_IROHA_CLI_BIN SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD SORASWAP_SKIP_IROHA_CLI_BUILD" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_SKIP_KOTO_TOOL_BUILD SORASWAP_SKIP_LOCALNET_TOOL_BUILD SORASWAP_FORCE_COMPILE" "$ROOT/scripts/release_checklist.sh"
-rg -q "unset SORASWAP_CONTRACT_APP_CHUNK_SIZE SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS" "$ROOT/scripts/release_checklist.sh"
-rg -q "unset SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS" "$ROOT/scripts/release_checklist.sh"
-rg -q "unset SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS" "$ROOT/scripts/release_checklist.sh"
-rg -q "unset SORASWAP_TESTNET_CHAIN_ID SORASWAP_TESTNET_CHAIN_DISCRIMINANT" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_PRODUCTION_CHAIN_ID SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT SORASWAP_CHAIN_DISCRIMINANT" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_CHAIN_FINGERPRINT_ATTEMPTS SORASWAP_CHAIN_FINGERPRINT_SLEEP_SECS" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_BLOCK_HEIGHT_SAMPLE_ATTEMPTS" "$ROOT/scripts/release_checklist.sh"
@@ -10280,22 +9599,18 @@ rg -q "unset SORASWAP_PUBLIC_PREFLIGHT_REPORT_DIR SORASWAP_TAIRA_PREFLIGHT_REPOR
 rg -Fq 'unset SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS SORASWAP_PUBLIC_PREFLIGHT_QUEUED_STALL_MAX_MS' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'unset SORASWAP_TAIRA_DIRECT_VALIDATOR_HEALTH SORASWAP_TAIRA_DNS_RECORDS_JSON' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'unset SORASWAP_TAIRA_DIRECT_TORII_HOST SORASWAP_TAIRA_DIRECT_TORII_PORTS' "$ROOT/scripts/release_checklist.sh"
-rg -Fq 'unset SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS' "$ROOT/scripts/release_checklist.sh"
+rg -Fq 'unset SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'unset SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'unset SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_COUNT SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_DELAY_SECS' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'unset SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS SORASWAP_PUBLIC_TX_WAIT_QUEUED_STALL_MAX_MS' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'unset SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS' "$ROOT/scripts/release_checklist.sh"
-rg -Fq 'unset SORASWAP_CONTRACT_CALL_RETRY_COUNT SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'unset SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'unset SORASWAP_ISOLATED_LOCAL_UP_TIMEOUT_SECS SORASWAP_ISOLATED_DEPLOY_TIMEOUT_SECS' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'unset SORASWAP_ISOLATED_SMOKE_TIMEOUT_SECS SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS' "$ROOT/scripts/release_checklist.sh"
-rg -Fq 'unset SORASWAP_ISOLATED_DEPLOY_ARTIFACT_SNAPSHOT_DIR' "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID SORASWAP_TESTNET_FEE_ASSET_LABEL" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID SORASWAP_PRODUCTION_FEE_ASSET_LABEL" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_TAIRA_REPAIR_DONOR_STORAGE SORASWAP_TAIRA_REPAIR_HEIGHT SORASWAP_TAIRA_REPAIR_OPERATOR" "$ROOT/scripts/release_checklist.sh"
-rg -q "unset SORASWAP_TAIRA_REPAIR_PLATFORM SORASWAP_TAIRA_REPAIR_REPORT_DIR SORASWAP_TAIRA_REPAIR_SNAPSHOT_POLICY" "$ROOT/scripts/release_checklist.sh"
-rg -q "unset SORASWAP_TAIRA_REPAIR_VOLATILE_DIST SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA" "$ROOT/scripts/release_checklist.sh"
-rg -q "unset SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN SORASWAP_TAIRA_REPAIR_VOLATILE_TORII_PORTS" "$ROOT/scripts/release_checklist.sh"
+rg -q "unset SORASWAP_TAIRA_REPAIR_REPORT_DIR SORASWAP_TAIRA_REPAIR_SNAPSHOT_POLICY" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK SORASWAP_INIT_CONTRACT_STATE" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_RUN_TESTNET_SMOKE SORASWAP_RUN_CONTRACT_CONSOLE_LIVE_SMOKE" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_ASSERT_BOOTSTRAP_STATE" "$ROOT/scripts/release_checklist.sh"
@@ -10307,13 +9622,16 @@ rg -q "unset SORASWAP_DLMM_RANGE_GOVERNOR_CADENCE_SLOTS SORASWAP_DLMM_RANGE_GOVE
 rg -q "unset SORASWAP_DLMM_RANGE_GOVERNOR_TARGET_ACTIVE_BIN SORASWAP_DLMM_RANGE_GOVERNOR_MAX_ACTIVE_BIN_DRIFT SORASWAP_DLMM_RANGE_GOVERNOR_ENABLED" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_TWAMM_TRIGGER_CADENCE_SLOTS SORASWAP_TWAMM_TRIGGER_MAX_ORDERS_PER_TICK SORASWAP_TWAMM_TRIGGER_ENABLED" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_PUBLIC_DEPLOY_REUSE_CONTRACTS SORASWAP_TESTNET_DEPLOY_REUSE_CONTRACTS SORASWAP_PRODUCTION_DEPLOY_REUSE_CONTRACTS" "$ROOT/scripts/release_checklist.sh"
+rg -Fq 'unset SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE' "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_PUBLIC_BRIDGE_SOURCE_DOMAIN SORASWAP_PUBLIC_BRIDGE_DEST_DOMAIN" "$ROOT/scripts/release_checklist.sh"
-rg -q "unset SORASWAP_ORACLE_PYTHON_BIN SORASWAP_ORACLE_SCHEME SORASWAP_LAST_ORACLE_SLOT" "$ROOT/scripts/release_checklist.sh"
+rg -Fq "unset SORASWAP_ORACLE_CLIENT_CONFIG SORASWAP_LAST_ORACLE_SLOT" "$ROOT/scripts/release_checklist.sh"
+rg -Fq "unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED SORASWAP_ACTIVE_ORACLE_ACCOUNT" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_ENABLE_RWA_RELEASE" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_RWA_ISSUER_APPROVAL_REF SORASWAP_RWA_LEGAL_REVIEW_REF" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_RWA_COMPLIANCE_CHAIN_FILE SORASWAP_RWA_COMPLIANCE_PREFLIGHT_FILE" "$ROOT/scripts/release_checklist.sh"
 rg -q "unset SORASWAP_RWA_COMPLIANCE_NOTES" "$ROOT/scripts/release_checklist.sh"
 	rg -q "unset SORASWAP_TRADER_API_PROBE_ROOT SORASWAP_TRADER_API_PROBE_ATTEMPTS" "$ROOT/scripts/release_checklist.sh"
+	rg -Fq 'unset SORASWAP_TRADER_API_GATEWAY_PROPAGATION_ATTEMPTS SORASWAP_TRADER_API_GATEWAY_PROPAGATION_RETRY_DELAY_SECS' "$ROOT/scripts/release_checklist.sh"
 	rg -q "unset SORASWAP_TRADER_PUBLIC_RESPONSE_BODY_MAX_CHARS" "$ROOT/scripts/release_checklist.sh"
 	rg -q "internal production prerequisite token cannot be exported" "$ROOT/scripts/release_checklist.sh"
 	rg -q "unset RELEASE_CHECKLIST_INTERNAL_TOKEN" "$ROOT/scripts/release_checklist.sh"
@@ -10322,7 +9640,6 @@ rg -q "unset SORASWAP_RWA_COMPLIANCE_NOTES" "$ROOT/scripts/release_checklist.sh"
 		rg -q "clear_inherited_iroha_tool_env" "$ROOT/scripts/release_checklist.sh"
 		rg -Fq 'IROHA*|KAGAMI*)' "$ROOT/scripts/release_checklist.sh"
 		rg -q "clear_inherited_make_control_env" "$ROOT/scripts/release_checklist.sh"
-		rg -Fq 'export SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS=0' "$ROOT/scripts/release_checklist.sh"
 	awk '
 	  /clear_inherited_soraswap_env/ { scrub = NR }
 	  /clear_inherited_make_control_env/ { make_scrub = NR }
@@ -10368,7 +9685,7 @@ rg -q "export SORASWAP_RELEASE_ENV=testnet" "$ROOT/scripts/release_taira.sh"
 rg -q "export SORASWAP_PUBLIC_ENV=production" "$ROOT/scripts/release_production.sh"
 rg -q "export SORASWAP_RELEASE_ENV=production" "$ROOT/scripts/release_production.sh"
 ! rg -q '\$SORASWAP_ROOT/config/' "$ROOT/scripts/release_taira.sh" "$ROOT/scripts/release_production.sh"
-rg -q "SORASWAP_ALLOW_TESTNET_MUTATIONS=1 SORASWAP_SKIP_IROHA_CLI_BUILD=1 make taira-preflight" "$ROOT/scripts/taira_state_repair_plan.sh"
+rg -Fq 'iroha -c \"$SORASWAP_CLIENT_CONFIG\" taira doctor --public-root \"$PUBLIC_TORII_ROOT\" --json' "$ROOT/scripts/taira_state_repair_plan.sh"
 rg -q "test-contract-console" "$ROOT/scripts/release_checklist.sh"
 rg -q "test-contract-console-ui" "$ROOT/scripts/release_checklist.sh"
 rg -q "test-contract-console-integration" "$ROOT/scripts/release_checklist.sh"
@@ -10451,18 +9768,13 @@ rg -q "SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1 make release-production" "$ROOT/scr
 rg -Fq 'unset SORASWAP_CLIENT_CONFIG SORASWAP_PRODUCTION_CLIENT_CONFIG' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TORII_URL SORASWAP_TORII_API_TOKEN CHAIN' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset ACCOUNT_CHAIN_DISCRIMINANT IROHA_ACCOUNT_CHAIN_DISCRIMINANT' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_TORII_API_VERSION' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_ALLOW_TESTNET_MUTATIONS SORASWAP_ALLOW_PRODUCTION_MUTATIONS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_PROFILE SORASWAP_CONTRACTS_MANIFEST' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_IROHA_ROOT SORASWAP_IROHA_CLI_BIN SORASWAP_SORAFS_CLI_BIN' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_KOTO_COMPILE_BIN SORASWAP_KOTO_LINT_BIN SORASWAP_KOTO_TEST_BIN' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_ACTIVE_IROHA_CLI_BIN SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN' "$ROOT/scripts/release_production.sh"
+rg -Fq 'unset SORASWAP_ACTIVE_IROHA_CLI_BIN SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD SORASWAP_SKIP_IROHA_CLI_BUILD' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_SKIP_KOTO_TOOL_BUILD SORASWAP_SKIP_LOCALNET_TOOL_BUILD SORASWAP_FORCE_COMPILE' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_CONTRACT_APP_CHUNK_SIZE SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_TESTNET_CHAIN_ID SORASWAP_TESTNET_CHAIN_DISCRIMINANT' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_PRODUCTION_CHAIN_ID SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT SORASWAP_CHAIN_DISCRIMINANT' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_CHAIN_FINGERPRINT_ATTEMPTS SORASWAP_CHAIN_FINGERPRINT_SLEEP_SECS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_BLOCK_HEIGHT_SAMPLE_ATTEMPTS' "$ROOT/scripts/release_production.sh"
@@ -10470,18 +9782,17 @@ rg -Fq 'unset SORASWAP_PUBLIC_PREFLIGHT_REPORT_DIR SORASWAP_TAIRA_PREFLIGHT_REPO
 rg -Fq 'unset SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS SORASWAP_PUBLIC_PREFLIGHT_QUEUED_STALL_MAX_MS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TAIRA_DIRECT_VALIDATOR_HEALTH SORASWAP_TAIRA_DNS_RECORDS_JSON' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TAIRA_DIRECT_TORII_HOST SORASWAP_TAIRA_DIRECT_TORII_PORTS' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS' "$ROOT/scripts/release_production.sh"
+rg -Fq 'unset SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_COUNT SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_DELAY_SECS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS SORASWAP_PUBLIC_TX_WAIT_QUEUED_STALL_MAX_MS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_CONTRACT_CALL_RETRY_COUNT SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_ISOLATED_LOCAL_UP_TIMEOUT_SECS SORASWAP_ISOLATED_DEPLOY_TIMEOUT_SECS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_ISOLATED_SMOKE_TIMEOUT_SECS SORASWAP_ISOLATED_TESTNET_SMOKE_TIMEOUT_SECS' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_ISOLATED_DEPLOY_ARTIFACT_SNAPSHOT_DIR' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID SORASWAP_TESTNET_FEE_ASSET_LABEL' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID SORASWAP_PRODUCTION_FEE_ASSET_LABEL' "$ROOT/scripts/release_production.sh"
+rg -Fq 'unset SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_BOOTSTRAP_SCOPE SORASWAP_DEPLOY_SCOPE SORASWAP_SMOKE_SCOPE' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_ASSERT_BOOTSTRAP_STATE' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_EXPECTED_TRIGGER_SCOPE' "$ROOT/scripts/release_production.sh"
@@ -10491,16 +9802,14 @@ rg -Fq 'unset SORASWAP_DLMM_RANGE_GOVERNOR_CADENCE_SLOTS SORASWAP_DLMM_RANGE_GOV
 rg -Fq 'unset SORASWAP_DLMM_RANGE_GOVERNOR_TARGET_ACTIVE_BIN SORASWAP_DLMM_RANGE_GOVERNOR_MAX_ACTIVE_BIN_DRIFT SORASWAP_DLMM_RANGE_GOVERNOR_ENABLED' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TWAMM_TRIGGER_CADENCE_SLOTS SORASWAP_TWAMM_TRIGGER_MAX_ORDERS_PER_TICK SORASWAP_TWAMM_TRIGGER_ENABLED' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TAIRA_REPAIR_DONOR_STORAGE SORASWAP_TAIRA_REPAIR_HEIGHT SORASWAP_TAIRA_REPAIR_OPERATOR' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_TAIRA_REPAIR_PLATFORM SORASWAP_TAIRA_REPAIR_REPORT_DIR SORASWAP_TAIRA_REPAIR_SNAPSHOT_POLICY' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_TAIRA_REPAIR_VOLATILE_DIST SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN SORASWAP_TAIRA_REPAIR_VOLATILE_TORII_PORTS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_PUBLIC_BRIDGE_SOURCE_DOMAIN SORASWAP_PUBLIC_BRIDGE_DEST_DOMAIN' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_ORACLE_PYTHON_BIN SORASWAP_ORACLE_SCHEME SORASWAP_LAST_ORACLE_SLOT' "$ROOT/scripts/release_production.sh"
+rg -Fq 'unset SORASWAP_ORACLE_CLIENT_CONFIG SORASWAP_LAST_ORACLE_SLOT' "$ROOT/scripts/release_production.sh"
+rg -Fq 'unset SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED SORASWAP_ACTIVE_ORACLE_ACCOUNT' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_ENABLE_RWA_RELEASE' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_RWA_COMPLIANCE_CHAIN_FILE SORASWAP_RWA_COMPLIANCE_PREFLIGHT_FILE' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_RWA_COMPLIANCE_NOTES' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TRADER_API_REGISTRY_VISIBILITY_ATTEMPTS SORASWAP_TRADER_API_REGISTRY_VISIBILITY_RETRY_DELAY_SECS' "$ROOT/scripts/release_production.sh"
-rg -Fq 'unset SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_ATTEMPTS SORASWAP_TRADER_API_STORAGE_PIN_PROPAGATION_RETRY_DELAY_SECS' "$ROOT/scripts/release_production.sh"
+rg -Fq 'unset SORASWAP_TRADER_API_GATEWAY_PROPAGATION_ATTEMPTS SORASWAP_TRADER_API_GATEWAY_PROPAGATION_RETRY_DELAY_SECS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TRADER_PUBLIC_RESPONSE_BODY_MAX_CHARS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TRADER_PUBLIC_ROUTE_PROBE_ATTEMPTS SORASWAP_TRADER_PUBLIC_ROUTE_PROBE_RETRY_DELAY_SECS' "$ROOT/scripts/release_production.sh"
 rg -Fq 'unset SORASWAP_TAIRA_TRON_XOR_DIAGNOSTIC_AMOUNT SORASWAP_TAIRA_TRON_XOR_ASSET_KEY' "$ROOT/scripts/release_production.sh"
@@ -10629,7 +9938,6 @@ high_risk_patterns = [
     r"^SORASWAP_TORII_",
     r"^SORASWAP_(IROHA|KOTO|SORAFS)_",
     r"^SORASWAP_ISOLATED_",
-    r"^SORASWAP_CONTRACT_APP_CHUNK_",
     r"^SORASWAP_ACTIVE_(IROHA|SPLIT|GOV|SORAFS)_",
     r"^SORASWAP_SKIP_(IROHA|KOTO|LOCALNET).*TOOL_BUILD$",
     r"^SORASWAP_FORCE_COMPILE$",
@@ -10896,6 +10204,7 @@ ln -s "$ROOT/scripts" "$release_taira_phase_guard_root/scripts"
 ln -s "$ROOT/config" "$release_taira_phase_guard_root/config"
 cat > "$release_taira_phase_guard_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://taira.sora.org/"
 
 [account]
@@ -10953,8 +10262,7 @@ release_taira_phase_guard_status=0
   export SORASWAP_ROOT="$release_taira_phase_guard_root"
   export SORASWAP_CLIENT_CONFIG="$release_taira_phase_guard_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$(write_typed_oracle_fixture_config "$release_taira_phase_guard_root" "$release_taira_phase_guard_cfg" phase-guard)"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://phase-guard"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://phase-guard"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://phase-guard"
@@ -10988,6 +10296,7 @@ ln -s "$ROOT/scripts" "$release_taira_nested_guard_root/scripts"
 ln -s "$ROOT/config" "$release_taira_nested_guard_root/config"
 cat > "$release_taira_nested_guard_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://taira.sora.org/"
 
 [account]
@@ -11025,11 +10334,11 @@ case "$target" in
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
   "endpoint": {
     "mcp_http_status": "200",
@@ -11104,8 +10413,7 @@ release_taira_nested_guard_status=0
   export SORASWAP_ROOT="$release_taira_nested_guard_root"
   export SORASWAP_CLIENT_CONFIG="$release_taira_nested_guard_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$(write_typed_oracle_fixture_config "$release_taira_nested_guard_root" "$release_taira_nested_guard_cfg" nested-guard)"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://nested-guard"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://nested-guard"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://nested-guard"
@@ -11142,6 +10450,7 @@ ln -s "$ROOT/scripts" "$release_production_phase_guard_root/scripts"
 ln -s "$ROOT/config" "$release_production_phase_guard_root/config"
 cat > "$release_production_phase_guard_cfg" <<'EOF'
 chain = "fixture-production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://production.sora.org/"
 
 [account]
@@ -11201,8 +10510,7 @@ release_production_phase_guard_status=0
   export SORASWAP_ROOT="$release_production_phase_guard_root"
   export SORASWAP_CLIENT_CONFIG="$release_production_phase_guard_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$(write_typed_oracle_fixture_config "$release_production_phase_guard_root" "$release_production_phase_guard_cfg" production-phase-guard)"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://phase-guard"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://phase-guard"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://phase-guard"
@@ -11318,11 +10626,11 @@ cat > "$release_phase_guard_direct_dir/preflight.latest.json" <<'JSON'
   "warnings": ["fixture warning should block release wrapper"],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
   "endpoint": {
     "mcp_http_status": "200",
@@ -11367,11 +10675,11 @@ cat > "$release_phase_guard_direct_dir/preflight.latest.json" <<'JSON'
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
   "endpoint": {
     "mcp_http_status": "200",
@@ -11416,11 +10724,11 @@ cat > "$release_phase_guard_direct_dir/preflight.latest.json" <<'JSON'
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
   "endpoint": {
     "mcp_http_status": "200",
@@ -11475,11 +10783,11 @@ cat > "$release_phase_guard_direct_dir/preflight.latest.json" <<'JSON'
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
   "endpoint": {
     "mcp_http_status": "200",
@@ -11803,7 +11111,7 @@ JSON
   source "$ROOT/scripts/release_phase_guards.sh"
   release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" record-testnet-rwa-compliance
 )
-jq '.environment.oracle_keypair_verified = false' \
+jq '.environment.oracle_client_config_valid = false' \
   "$release_phase_guard_direct_dir/preflight.latest.json" \
   > "$TMP_DIR/release-phase-guard-rwa-unverified-oracle-preflight.json"
 mv "$TMP_DIR/release-phase-guard-rwa-unverified-oracle-preflight.json" "$release_phase_guard_direct_dir/preflight.latest.json"
@@ -11812,7 +11120,7 @@ mv "$TMP_DIR/release-phase-guard-rwa-unverified-oracle-preflight.json" "$release
   ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" record-testnet-rwa-compliance
 ) >"$release_phase_guard_direct_output" 2>&1
 rg -q "fixture-release: evidence guard failed for preflight.latest.json: preflight must prove release-ready public environment basics" "$release_phase_guard_direct_output"
-jq '.environment.oracle_keypair_verified = true' \
+jq '.environment.oracle_client_config_valid = true' \
   "$release_phase_guard_direct_dir/preflight.latest.json" \
   > "$TMP_DIR/release-phase-guard-rwa-verified-oracle-preflight.json"
 mv "$TMP_DIR/release-phase-guard-rwa-verified-oracle-preflight.json" "$release_phase_guard_direct_dir/preflight.latest.json"
@@ -12082,28 +11390,120 @@ jq '.phases.preflight.detail.signer_ready_check.status = "completed" | .phases.p
   "$release_phase_guard_direct_dir/deploy.latest.json" \
   > "$TMP_DIR/release-phase-guard-deploy-signer-ready.json"
 mv "$TMP_DIR/release-phase-guard-deploy-signer-ready.json" "$release_phase_guard_direct_dir/deploy.latest.json"
-cat > "$release_phase_guard_direct_dir/contracts.latest.json" <<'JSON'
-{
-  "generated_at": "20260623T000005Z",
-  "environment": "testnet",
-  "status": "completed",
-  "chain_fingerprint": {
-    "torii_url": "https://phase-guard.example.invalid",
-    "chain": "phase-guard-chain",
-    "block_1_hash": "phase-guard-block-1"
-  },
-  "contracts": [
-    {
-      "contract_key": "dlmm.dlmm_router",
-      "environment": "testnet",
-      "contract_address": "phaseguardc1router",
-      "deploy_nonce": 2,
-      "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000002",
-      "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
-    }
-  ]
-}
-JSON
+phase_guard_fee_quote='{"intent":{"payer":"authority","value":{"charge_limits":[],"gas_limit":2000000}},"observation":{"ledger_time_ms":1000,"next_block_height":2,"route_dataspace_id":0},"components":[],"capacities":[],"decision":{"status":"accepted","value":{"debit_source":{"kind":"account","value":"phase-guard-authority"}}}}'
+phase_guard_native_deploy_response="$(jq -cn \
+  --argjson fee_quote "$phase_guard_fee_quote" \
+  '{
+    ok: true,
+    submitted: true,
+    torii_url: "https://phase-guard.example.invalid",
+    chain_id: "phase-guard-chain",
+    authority: "phase-guard-authority",
+    chain_discriminant: 369,
+    dataspace: "0",
+    contract_alias: "dlmm_router::dlmm.universal",
+    contract_address: "phaseguardc1router",
+    contract_subject_account: "phase-guard-subject",
+    deploy_nonce: 2,
+    next_deploy_nonce: 3,
+    code_hash_hex: "0000000000000000000000000000000000000000000000000000000000000002",
+    register_manifest_tx_hash: "hash:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB#ABA2",
+    commit_deployment_tx_hash: "hash:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD#F071",
+    expected_previous_contract_address: null,
+    deployment_state: {
+      authority: "phase-guard-authority",
+      contract_alias: "dlmm_router::dlmm.universal",
+      deploy_nonce: "2",
+      dataspace_alias: "universal",
+      dataspace_id: "0",
+      previous_contract_address: null,
+      observed_block_height: "1",
+      observed_block_hash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      ledger_time_ms: "1000",
+      chain_discriminant: "369"
+    },
+    fee_quotes: [$fee_quote, $fee_quote, $fee_quote],
+    operation_receipt: {
+      operation_kind: "contract_deploy",
+      status: "committed",
+      transport: "ivm-contract-deploy-helper",
+      torii_url: "https://phase-guard.example.invalid",
+      chain_id: "phase-guard-chain",
+      authority: "phase-guard-authority",
+      chain_discriminant: 369,
+      dataspace: "0",
+      contract_alias: "dlmm_router::dlmm.universal",
+      contract_address: "phaseguardc1router",
+      contract_subject_account: "phase-guard-subject",
+      code_hash_hex: "0000000000000000000000000000000000000000000000000000000000000002",
+      abi_hash_hex: null,
+      tx_hash_hex: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      entrypoint: null,
+      entrypoint_hash_hex: null,
+      gas_limit: 2000000,
+      gas_used: null,
+      fee_payment: $fee_quote.intent,
+      fee_quotes: [$fee_quote, $fee_quote, $fee_quote],
+      payload_digest_hex: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      deployment_state: {
+        authority: "phase-guard-authority",
+        contract_alias: "dlmm_router::dlmm.universal",
+        deploy_nonce: "2",
+        dataspace_alias: "universal",
+        dataspace_id: "0",
+        previous_contract_address: null,
+        observed_block_height: "1",
+        observed_block_hash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ledger_time_ms: "1000",
+        chain_discriminant: "369"
+      }
+    },
+    terminal_kind: "Committed",
+    final: {
+      kind: "Committed",
+      hash: "hash:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD#F071"
+    },
+    register_bytes_tx_strategy: "native_chunks",
+    register_bytes_chunk_size: 65536,
+    register_bytes_chunk_count: 1,
+    register_bytes_stage_tx_hashes: [],
+    register_bytes_tx_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }')"
+phase_guard_current_deploy_record="$(jq -cn \
+  --argjson response "$phase_guard_native_deploy_response" \
+  '{
+    contract_key: "dlmm.dlmm_router",
+    generated_at: "20260623T000006Z",
+    environment: "testnet",
+    contract_source: "contracts/dlmm/dlmm_router.ko",
+    contract_alias: "dlmm_router::dlmm.universal",
+    dataspace_alias: "universal",
+    dataspace_id: "0",
+    contract_address: "phaseguardc1router",
+    deploy_nonce: 2,
+    code_hash_hex: "0000000000000000000000000000000000000000000000000000000000000002",
+    abi_hash_hex: "0000000000000000000000000000000000000000000000000000000000000000",
+    deploy_strategy: "ivm_contract_deploy",
+    chain_fingerprint: {
+      torii_url: "https://phase-guard.example.invalid",
+      chain: "phase-guard-chain",
+      block_1_hash: "phase-guard-block-1"
+    },
+    response: $response
+  }')"
+jq -cn \
+  --argjson record "$phase_guard_current_deploy_record" \
+  '{
+    generated_at: "20260623T000005Z",
+    environment: "testnet",
+    status: "completed",
+    chain_fingerprint: {
+      torii_url: "https://phase-guard.example.invalid",
+      chain: "phase-guard-chain",
+      block_1_hash: "phase-guard-block-1"
+    },
+    contracts: [$record]
+  }' > "$release_phase_guard_direct_dir/contracts.latest.json"
 cat > "$release_phase_guard_direct_dir/dlmm.dlmm_router.manifest.json" <<'JSON'
 {
   "contract_key": "dlmm.dlmm_router",
@@ -12123,19 +11523,11 @@ cat > "$release_phase_guard_direct_dir/dlmm.dlmm_router.deploy.json" <<'JSON'
   "deploy_nonce": 2,
   "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000002",
   "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000",
-  "deploy_strategy": "bundle",
+  "deploy_strategy": "ivm_contract_deploy",
   "chain_fingerprint": {
     "torii_url": "https://phase-guard.example.invalid",
     "chain": "phase-guard-chain",
     "block_1_hash": "phase-guard-block-1"
-  },
-  "bundle_receipt": {
-    "name": "dlmm.dlmm_router",
-    "status": "deployed",
-    "contract_address": "phaseguardc1router",
-    "deploy_nonce": 2,
-    "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000002",
-    "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   "response": {
     "ok": false,
@@ -12186,12 +11578,9 @@ cp "$TMP_DIR/release-phase-guard-contracts-baseline.json" "$release_phase_guard_
   source "$ROOT/scripts/release_phase_guards.sh"
   ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" deploy-testnet
 ) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for dlmm.dlmm_router.deploy.json: deploy record must include successful response, instance, bundle receipt, and code/ABI hash evidence" "$release_phase_guard_direct_output"
+rg -q "fixture-release: evidence guard failed for dlmm.dlmm_router.deploy.json: deploy record must match the closed current deployment-evidence schema" "$release_phase_guard_direct_output"
 rg -q "chain_fingerprint.chain: phase-guard-chain" "$release_phase_guard_direct_output"
-jq '.response.ok = true' \
-  "$release_phase_guard_direct_dir/dlmm.dlmm_router.deploy.json" \
-  > "$TMP_DIR/release-phase-guard-deploy-record-ok.json"
-mv "$TMP_DIR/release-phase-guard-deploy-record-ok.json" "$release_phase_guard_direct_dir/dlmm.dlmm_router.deploy.json"
+printf '%s\n' "$phase_guard_current_deploy_record" > "$release_phase_guard_direct_dir/dlmm.dlmm_router.deploy.json"
 jq 'del(.generated_at)' \
   "$release_phase_guard_direct_dir/dlmm.dlmm_router.manifest.json" \
   > "$TMP_DIR/release-phase-guard-deploy-manifest-without-generated-at.json"
@@ -12235,7 +11624,7 @@ mv "$TMP_DIR/release-phase-guard-deploy-manifest-ok.json" "$release_phase_guard_
   source "$ROOT/scripts/release_phase_guards.sh"
   release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" deploy-testnet
 )
-jq '.environment.oracle_keypair_verified = false' \
+jq '.environment.oracle_client_config_valid = false' \
   "$release_phase_guard_direct_dir/preflight.latest.json" \
   > "$TMP_DIR/release-phase-guard-deploy-unverified-oracle-preflight.json"
 mv "$TMP_DIR/release-phase-guard-deploy-unverified-oracle-preflight.json" "$release_phase_guard_direct_dir/preflight.latest.json"
@@ -12244,76 +11633,10 @@ mv "$TMP_DIR/release-phase-guard-deploy-unverified-oracle-preflight.json" "$rele
   ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" deploy-testnet
 ) >"$release_phase_guard_direct_output" 2>&1
 rg -q "fixture-release: evidence guard failed for preflight.latest.json: preflight must prove release-ready public environment basics" "$release_phase_guard_direct_output"
-jq '.environment.oracle_keypair_verified = true' \
+jq '.environment.oracle_client_config_valid = true' \
   "$release_phase_guard_direct_dir/preflight.latest.json" \
   > "$TMP_DIR/release-phase-guard-deploy-verified-oracle-preflight.json"
 mv "$TMP_DIR/release-phase-guard-deploy-verified-oracle-preflight.json" "$release_phase_guard_direct_dir/preflight.latest.json"
-cat > "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json" <<'JSON'
-{
-  "ok": true,
-  "generated_at": "20260623T000006Z",
-  "environment": "testnet",
-  "chain_fingerprint": {
-    "torii_url": "https://phase-guard.example.invalid",
-    "chain": "phase-guard-chain",
-    "block_1_hash": "phase-guard-block-1"
-  },
-  "bundle_digest": "phase-guard-bundle-digest",
-  "contracts": [
-    {
-      "name": "dlmm.dlmm_router",
-      "status": "deployed",
-      "contract_address": "phaseguardc1router",
-      "deploy_nonce": 2,
-      "code_hash_hex": "0000000000000000000000000000000000000000000000000000000000000002",
-      "abi_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000"
-    }
-  ]
-}
-JSON
-(
-  source "$ROOT/scripts/release_phase_guards.sh"
-  release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" deploy-testnet
-)
-cp "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json" "$TMP_DIR/release-phase-guard-bundle-baseline.json"
-jq '.contracts[0].code_hash_hex = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
-  "$TMP_DIR/release-phase-guard-bundle-baseline.json" \
-  > "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json"
-(
-  source "$ROOT/scripts/release_phase_guards.sh"
-  ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" deploy-testnet
-) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for soraswap.bundle.deploy.json: bundle receipt must match current chain and contracts snapshot" "$release_phase_guard_direct_output"
-cp "$TMP_DIR/release-phase-guard-bundle-baseline.json" "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json"
-jq '.chain_fingerprint.block_1_hash = "other-block"' \
-  "$TMP_DIR/release-phase-guard-bundle-baseline.json" \
-  > "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json"
-(
-  source "$ROOT/scripts/release_phase_guards.sh"
-  ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" deploy-testnet
-) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for soraswap.bundle.deploy.json: bundle receipt must match current chain and contracts snapshot" "$release_phase_guard_direct_output"
-cp "$TMP_DIR/release-phase-guard-bundle-baseline.json" "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json"
-jq '.diagnostics = {"/Users/operator/dev/soraswap/tmp/bundle.log": "captured"}' \
-  "$TMP_DIR/release-phase-guard-bundle-baseline.json" \
-  > "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json"
-(
-  source "$ROOT/scripts/release_phase_guards.sh"
-  ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" deploy-testnet
-) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for soraswap.bundle.deploy.json: contains local filesystem path diagnostics" "$release_phase_guard_direct_output"
-! rg -q "/Users/operator/dev/soraswap/tmp/bundle.log" "$release_phase_guard_direct_output"
-cp "$TMP_DIR/release-phase-guard-bundle-baseline.json" "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json"
-jq '.diagnostics = {"stderr": "bundle retained --client-secret phase-bundle-secret"}' \
-  "$TMP_DIR/release-phase-guard-bundle-baseline.json" \
-  > "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json"
-(
-  source "$ROOT/scripts/release_phase_guards.sh"
-  ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" deploy-testnet
-) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for soraswap.bundle.deploy.json: contains unredacted sensitive diagnostics" "$release_phase_guard_direct_output"
-! rg -q "phase-bundle-secret" "$release_phase_guard_direct_output"
-cp "$TMP_DIR/release-phase-guard-bundle-baseline.json" "$release_phase_guard_direct_dir/soraswap.bundle.deploy.json"
 cp "$release_phase_guard_direct_dir/deploy.latest.json" "$TMP_DIR/release-phase-guard-deploy-baseline.json"
 jq '.phases.deployment_records_snapshot.detail.snapshot = "deployments/testnet/contracts.20260623T000999Z.json"' \
   "$TMP_DIR/release-phase-guard-deploy-baseline.json" \
@@ -13134,10 +12457,14 @@ jq -n \
         routes: $routes
       }
     },
-    pin_summary: {
-      manifest_id_hex: "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
-      manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      status: 409
+    provider_ingest: {
+      state: "awaiting_finalized_provider_assignment",
+      queued: false,
+      direct_http_ingest: false,
+      prepare: {
+        manifest_id_hex: "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
+        manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
     },
     registry_submit: {
       manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -13198,10 +12525,14 @@ jq -n \
         routes: $routes
       }
     },
-    pin_summary: {
-      manifest_id_hex: "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
-      manifest_digest_hex: "wrong-digest",
-      status: 409
+    provider_ingest: {
+      state: "awaiting_finalized_provider_assignment",
+      queued: false,
+      direct_http_ingest: false,
+      prepare: {
+        manifest_id_hex: "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
+        manifest_digest_hex: "wrong-digest"
+      }
     },
     registry_submit: {
       manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -13212,7 +12543,7 @@ jq -n \
   source "$ROOT/scripts/release_phase_guards.sh"
   ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" publish-trader-api
 ) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for trader_api_bundle.latest.json: trader API bundle must include matching SoraFS pin and registry receipts" "$release_phase_guard_direct_output"
+rg -q "fixture-release: evidence guard failed for trader_api_bundle.latest.json: trader API bundle must include matching provider preparation and manifest registration evidence" "$release_phase_guard_direct_output"
 
 jq -n \
   --argjson routes "$release_phase_guard_trader_api_routes_json" \
@@ -13262,10 +12593,14 @@ jq -n \
         routes: $routes
       }
     },
-    pin_summary: {
-      manifest_id_hex: "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
-      manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      status: 409
+    provider_ingest: {
+      state: "awaiting_finalized_provider_assignment",
+      queued: false,
+      direct_http_ingest: false,
+      prepare: {
+        manifest_id_hex: "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
+        manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
     },
     registry_submit: {
       manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -13276,7 +12611,7 @@ jq -n \
   source "$ROOT/scripts/release_phase_guards.sh"
   ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" publish-trader-api
 ) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for trader_api_bundle.latest.json: content_cid must match the pinned SoraFS manifest id" "$release_phase_guard_direct_output"
+rg -q "fixture-release: evidence guard failed for trader_api_bundle.latest.json: content_cid must match the prepared manifest id" "$release_phase_guard_direct_output"
 
 jq -n \
   --argjson routes "$release_phase_guard_trader_api_routes_json" \
@@ -13326,10 +12661,14 @@ jq -n \
         routes: $routes
       }
     },
-    pin_summary: {
-      manifest_id_hex: "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
-      manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      status: 409
+    provider_ingest: {
+      state: "awaiting_finalized_provider_assignment",
+      queued: false,
+      direct_http_ingest: false,
+      prepare: {
+        manifest_id_hex: "01711f20b8dd9a73226e214683a3ac50e159eb2122dedad15fb530088f1eb48e8ce7623b",
+        manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }
     },
     registry_submit: {
       manifest_digest_hex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -13390,9 +12729,21 @@ cat > "$release_phase_guard_direct_dir/contract_console_smoke.latest.json" <<'JS
     "status": "completed"
   },
   "bridge": {
-    "proof_driven_settlement": false,
-    "settlement_payload_supplied": true,
-    "message_submit_entrypoint": "finalize_inbound",
+    "torii_sccp_v1": false,
+    "destination_message_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "native_message_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "governed_route_provenance": {
+      "destination": {
+        "message_id_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+        "validated_by": "state_derived_sccp_proof_request",
+        "route_configuration_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "native": {
+        "message_id_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+        "validated_by": "authoritative_typed_sccp_registry",
+        "route_configuration_hash_hex": "6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    },
     "submission_expectation": "apply"
   },
   "submissions": {
@@ -13409,7 +12760,7 @@ JSON
   source "$ROOT/scripts/release_phase_guards.sh"
   ! release_phase_guard_verify_target "fixture-release" testnet "$release_phase_guard_direct_dir" test-contract-console-testnet
 ) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for contract_console_smoke.latest.json: contract-console smoke must prove proof-driven bridge settlement" "$release_phase_guard_direct_output"
+rg -q "fixture-release: evidence guard failed for contract_console_smoke.latest.json: contract-console smoke must prove current Torii SCCP V1 governed proof admission" "$release_phase_guard_direct_output"
 
 cat > "$release_phase_guard_direct_dir/contract_console_smoke.latest.json" <<'JSON'
 {
@@ -13434,9 +12785,21 @@ cat > "$release_phase_guard_direct_dir/contract_console_smoke.latest.json" <<'JS
     "status": "completed"
   },
   "bridge": {
-    "proof_driven_settlement": true,
-    "settlement_payload_supplied": false,
-    "message_submit_entrypoint": "finalize_inbound",
+    "torii_sccp_v1": true,
+    "destination_message_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "native_message_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "governed_route_provenance": {
+      "destination": {
+        "message_id_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+        "validated_by": "state_derived_sccp_proof_request",
+        "route_configuration_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "native": {
+        "message_id_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+        "validated_by": "authoritative_typed_sccp_registry",
+        "route_configuration_hash_hex": "6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    },
     "submission_expectation": "apply"
   },
   "submissions": {
@@ -13478,12 +12841,23 @@ cat > "$release_phase_guard_direct_dir/contract_console_smoke.latest.json" <<'JS
     "status": "completed"
   },
   "bridge": {
-    "proof_driven_settlement": true,
-    "settlement_payload_supplied": false,
-    "message_submit_entrypoint": "finalize_inbound",
+    "torii_sccp_v1": true,
+    "destination_message_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "native_message_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "governed_route_provenance": {
+      "destination": {
+        "message_id_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+        "validated_by": "state_derived_sccp_proof_request",
+        "route_configuration_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "native": {
+        "message_id_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+        "validated_by": "authoritative_typed_sccp_registry",
+        "route_configuration_hash_hex": "6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    },
     "submission_expectation": "apply",
-    "route_provenance": [0],
-    "consumed_before_submit": 0
+    "route_provenance": [0]
   },
   "submissions": {
     "proof_submit": {
@@ -13530,16 +12904,31 @@ cat > "$release_phase_guard_direct_dir/contract_console_smoke.latest.json" <<'JS
     "status": "completed"
   },
   "bridge": {
-    "proof_driven_settlement": true,
-    "settlement_payload_supplied": false,
-    "message_submit_entrypoint": "finalize_inbound",
-    "submission_expectation": "replay_reject",
-    "route_provenance": [1],
-    "consumed_before_submit": 1
+    "torii_sccp_v1": true,
+    "destination_message_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "native_message_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "governed_route_provenance": {
+      "destination": {
+        "message_id_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+        "validated_by": "state_derived_sccp_proof_request",
+        "route_configuration_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "native": {
+        "message_id_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+        "validated_by": "authoritative_typed_sccp_registry",
+        "route_configuration_hash_hex": "6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    },
+    "submission_expectation": "apply",
+    "route_provenance": [1]
   },
   "submissions": {
-    "proof_submit": {},
-    "message_submit": {},
+    "proof_submit": {
+      "tx_hash_hex": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "message_submit": {
+      "tx_hash_hex": "2222222222222222222222222222222222222222222222222222222222222222"
+    },
     "proof_status": {
       "status_kind": "Skipped",
       "reason": "cached route"
@@ -13580,12 +12969,23 @@ cat > "$release_phase_guard_direct_dir/contract_console_smoke.latest.json" <<'JS
     "status": "completed"
   },
   "bridge": {
-    "proof_driven_settlement": true,
-    "settlement_payload_supplied": false,
-    "message_submit_entrypoint": "finalize_inbound",
+    "torii_sccp_v1": true,
+    "destination_message_id": "3333333333333333333333333333333333333333333333333333333333333333",
+    "native_message_id": "5555555555555555555555555555555555555555555555555555555555555555",
+    "governed_route_provenance": {
+      "destination": {
+        "message_id_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+        "validated_by": "state_derived_sccp_proof_request",
+        "route_configuration_hash_hex": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "native": {
+        "message_id_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+        "validated_by": "authoritative_typed_sccp_registry",
+        "route_configuration_hash_hex": "6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    },
     "submission_expectation": "apply",
-    "route_provenance": [1],
-    "consumed_before_submit": 0
+    "route_provenance": [1]
   },
   "submissions": {
     "proof_submit": {
@@ -13987,7 +13387,7 @@ jq -n \
       perps_liquidation_state: [0,0,0,1,0,0,1],
       perps_liquidation_position_state: [1,4,1,0,0,0,-1,10000,8490,8490,0],
       perps_liquidation_position_liquidation_state: [0,1,1],
-      risk_bucket_1_liquidation_liability: [2,0,0,2]
+      perps_collateral_pool: ["fixture-perps-account",200,0,200]
     }
   }' > "$release_phase_guard_direct_dir/smoke.latest.json"
 cp "$release_phase_guard_direct_dir/smoke.latest.json" \
@@ -14111,19 +13511,16 @@ jq -cn \
       launchpad_activation_state: [1,10],
       referral_mirror_member: [1,3,7000,3000],
       farms_mirror_position: [1,2,20,39],
-      options_shout_series: [1,1,1,40],
-      options_outperformance_series: [1,2,2,40],
+      options_factory_config: ["usdt#soraswap.universal","fixture-options-factory","fixture-options-oracle",0,3,213,5,8,0],
+      options_factory_shout_series: [1,1,30000,400,10000,0,0,9500,1500,0],
+      options_factory_outperformance_series: [1,2,20000,500,10000,0,0,9500,1500,200],
+      options_factory_automation: [1,213,5,8,0,0,0],
+      options_factory_shout_position: [1,1,1,40,2,0,2,3,1],
+      options_factory_outperformance_position: [1,2,2,40,2,0,2,3,1],
       cover_policy_state: [1,4,90,110],
       automation_mirror_job: [1,1,123456,1],
       conditional_escrow_state: [1,5,419,7],
-      epoch_auction_state: [1,2,66,78],
-      risk_bucket_1: [1,331,0,0],
-      risk_bucket_2: [1,147,0,0],
-      risk_bucket_3: [1,3,0,0],
-      risk_vault_state: [481,0,0,387],
-      risk_bucket_1_liability: [2,0,0,5],
-      risk_bucket_2_shout_liability: [2,0,0,7],
-      risk_bucket_3_liability: [2,0,0,3]
+      epoch_auction_state: [1,2,66,78]
     }
   }' > "$release_phase_guard_direct_dir/smoke.first-release-valid.json"
 (
@@ -14139,16 +13536,16 @@ jq '.tx_hashes.farms_stake = "not-a-tx-hash"' \
   ! release_phase_guard_require_smoke_first_release_mutations \
     "fixture-release" testnet "$release_phase_guard_direct_dir/smoke.first-release-invalid-tx.json"
 ) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for smoke.first-release-invalid-tx.json: mutating smoke must prove first-release module mutation, state, and risk-vault evidence" "$release_phase_guard_direct_output"
-jq '.view_results.risk_bucket_1_liability = [2, 0, "0", 5]' \
+rg -q "fixture-release: evidence guard failed for smoke.first-release-invalid-tx.json: mutating smoke must prove first-release module mutation/state and self-contained options oracle evidence" "$release_phase_guard_direct_output"
+jq '.view_results.options_factory_config[2] = .view_results.options_factory_config[1]' \
   "$release_phase_guard_direct_dir/smoke.first-release-valid.json" \
-  > "$release_phase_guard_direct_dir/smoke.first-release-invalid-risk.json"
+  > "$release_phase_guard_direct_dir/smoke.first-release-invalid-oracle.json"
 (
   source "$ROOT/scripts/release_phase_guards.sh"
   ! release_phase_guard_require_smoke_first_release_mutations \
-    "fixture-release" testnet "$release_phase_guard_direct_dir/smoke.first-release-invalid-risk.json"
+    "fixture-release" testnet "$release_phase_guard_direct_dir/smoke.first-release-invalid-oracle.json"
 ) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for smoke.first-release-invalid-risk.json: mutating smoke must prove first-release module mutation, state, and risk-vault evidence" "$release_phase_guard_direct_output"
+rg -q "fixture-release: evidence guard failed for smoke.first-release-invalid-oracle.json: mutating smoke must prove first-release module mutation/state and self-contained options oracle evidence" "$release_phase_guard_direct_output"
 jq '.view_results.n3x_mirror_state = [1, "0", 0, 0]' \
   "$release_phase_guard_direct_dir/smoke.first-release-valid.json" \
   > "$release_phase_guard_direct_dir/smoke.first-release-invalid-state.json"
@@ -14157,7 +13554,7 @@ jq '.view_results.n3x_mirror_state = [1, "0", 0, 0]' \
   ! release_phase_guard_require_smoke_first_release_mutations \
     "fixture-release" testnet "$release_phase_guard_direct_dir/smoke.first-release-invalid-state.json"
 ) >"$release_phase_guard_direct_output" 2>&1
-rg -q "fixture-release: evidence guard failed for smoke.first-release-invalid-state.json: mutating smoke must prove first-release module mutation, state, and risk-vault evidence" "$release_phase_guard_direct_output"
+rg -q "fixture-release: evidence guard failed for smoke.first-release-invalid-state.json: mutating smoke must prove first-release module mutation/state and self-contained options oracle evidence" "$release_phase_guard_direct_output"
 
 cat > "$release_phase_guard_direct_dir/smoke.latest.json" <<'JSON'
 {
@@ -14345,20 +13742,6 @@ printf 'donor-state\n' > "$repair_fixture_dir/donor/snapshot/state.bin"
 printf 'pending\n' > "$repair_fixture_dir/donor/consensus_queue/pending.tx"
 printf 'rbc\n' > "$repair_fixture_dir/donor/rbc_sessions/session"
 printf 'target-state\n' > "$repair_fixture_dir/target/snapshot/state.bin"
-repair_volatile_dist="$repair_fixture_dir/taira-localnet"
-repair_volatile_runtime="$repair_fixture_dir/irohad"
-mkdir -p "$repair_volatile_dist/storage/peer1"
-cat > "$repair_volatile_dist/start.sh" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-printf 'chain = "fixture-taira"\n' > "$repair_volatile_dist/peer1.toml"
-cat > "$repair_volatile_runtime" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-chmod +x "$repair_volatile_dist/start.sh" "$repair_volatile_runtime"
-repair_volatile_runtime_sha="$(shasum -a 256 "$repair_volatile_runtime" | awk '{print $1}')"
 repair_trace_config="$TMP_DIR/taira-repair-trace.toml"
 repair_status_json="$TMP_DIR/taira-repair-status.json"
 repair_parent_root="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -14383,25 +13766,20 @@ repair_plan_output="$TMP_DIR/taira-repair-plan.out"
     --height 621 \
     --parent-root "$repair_parent_root" \
     --post-root "0x$repair_post_root" \
-    --operator-platform darwin \
-    --volatile-dist "$repair_volatile_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha" \
-    --volatile-torii-ports " 29080, 29081 " \
     --trace-config "$repair_trace_config" \
     --status-json "$repair_status_json"
 ) >"$repair_plan_output" 2>&1
-rg -q "taira repair plan: wrote" "$repair_plan_output"
+rg -q "taira diagnosis: wrote" "$repair_plan_output"
 repair_plan_report="$repair_report_dir/taira_state_repair_plan.latest.json"
 [[ -s "$repair_plan_report" ]]
 jq -e \
   --arg parent_root "$repair_parent_root" \
   --arg post_root "0x$repair_post_root" \
-  '.status == "plan_created"
+  '.status == "diagnosis_created"
     and .environment == "testnet"
-    and .repair_mode == "state_snapshot_repair"
-    and .dry_run == true
+    and .diagnosis_mode == "state_snapshot_evidence"
     and .mutation_performed == false
+    and .repair_authorized == false
     and (.operator_inputs.reason | contains("fixture state-root split"))
     and (.operator_inputs.reason | contains("[redacted]"))
     and (.operator_inputs.reason | contains("[local-path]/repair.log"))
@@ -14412,7 +13790,6 @@ jq -e \
     and .operator_inputs.height == "621"
     and .operator_inputs.parent_root == $parent_root
     and .operator_inputs.post_root == $post_root
-    and .operator_inputs.operator_platform == "darwin"
     and .operator_inputs.trace_config_path == "taira-repair-trace.toml"
     and .operator_inputs.status_json_path == "taira-repair-status.json"
     and .donor.path == "donor"
@@ -14421,311 +13798,11 @@ jq -e \
     and (.donor.transient_candidates | index("rbc_sessions") != null)
     and (.targets | length == 2)
     and (.targets | any(.path == "target-empty" and .snapshot_dir_exists == true and (.snapshot_files | length == 0) and (.transient_candidates | index("rbc_sessions") != null)))
-    and .volatile_consensus_quarantine.enabled == true
-    and .volatile_consensus_quarantine.mutation_performed == false
-    and .volatile_consensus_quarantine.dist == "taira-localnet"
-    and .volatile_consensus_quarantine.runtime_bin == "irohad"
-    and .volatile_consensus_quarantine.expected_runtime_sha == .volatile_consensus_quarantine.actual_runtime_sha
-    and .volatile_consensus_quarantine.runtime_sha_matches == true
-    and .volatile_consensus_quarantine.torii_ports == "29080,29081"
-    and .volatile_consensus_quarantine.apply_requires_peer_owner_or_sudo == true
-    and .volatile_consensus_quarantine.dry_run_warning_exit_status == 2
-    and (.volatile_consensus_quarantine.dry_run_command | contains("clear_volatile_consensus_state.sh"))
-    and (.volatile_consensus_quarantine.apply_command | contains("--apply"))
-    and .operator_inputs.volatile_quarantine_enabled == true
-    and (.required_manual_checks | any(contains("back up each target storage")))
-    and (.required_manual_checks | any(contains("RBC sessions")))
-    and (.required_manual_checks | any(contains("warning exit status 2")))
-    and (.required_manual_checks | any(contains("peer process owner or with sudo")))
-    and (.operator_action_templates | any(contains("clear_volatile_consensus_state.sh") and contains("--apply")))
-    and (.operator_action_templates | all(contains("systemctl") | not))
-    and (.proposed_non_destructive_commands | any(contains("*rbc*")))
-    and (.proposed_non_destructive_commands | all(contains("systemctl") | not))
-    and (.post_repair_verification_commands | any(contains("make taira-preflight")))' \
+    and (.diagnostic_checks | any(contains("evidence only")))
+    and (.verification_commands | any(. == "iroha -c \"$SORASWAP_CLIENT_CONFIG\" taira doctor --public-root \"$PUBLIC_TORII_ROOT\" --json"))' \
   "$repair_plan_report" >/dev/null
 ! rg -Fq "$TMP_DIR" "$repair_plan_report"
 ! rg -q "802620REPAIRSECRET|repair-token-secret|repair-api-token-secret|/Users/operator/dev/soraswap" "$repair_plan_report"
-
-repair_volatile_only_report_dir="$TMP_DIR/taira-repair-volatile-only-reports"
-repair_volatile_only_output="$TMP_DIR/taira-repair-volatile-only.out"
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_volatile_only_report_dir"
-  export SORASWAP_TAIRA_REPAIR_REASON="volatile-only finality stall private_key=802620VOLATILEONLY /Users/operator/dev/soraswap/tmp/volatile.log"
-  run_taira_state_repair_plan \
-    --operator-platform darwin \
-    --volatile-dist "$repair_volatile_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha" \
-    --volatile-torii-ports "029080, 29081"
-) >"$repair_volatile_only_output" 2>&1
-rg -q "taira repair plan: wrote" "$repair_volatile_only_output"
-repair_volatile_only_report="$repair_volatile_only_report_dir/taira_state_repair_plan.latest.json"
-[[ -s "$repair_volatile_only_report" ]]
-jq -e \
-  '.status == "plan_created"
-    and .environment == "testnet"
-    and .repair_mode == "volatile_consensus_quarantine"
-    and .dry_run == true
-    and .mutation_performed == false
-    and .donor == null
-    and (.targets | length == 0)
-    and (.operator_inputs.reason | contains("volatile-only finality stall"))
-    and (.operator_inputs.reason | contains("[redacted]"))
-    and (.operator_inputs.reason | contains("[local-path]/volatile.log"))
-    and .operator_inputs.volatile_quarantine_enabled == true
-    and .volatile_consensus_quarantine.enabled == true
-    and .volatile_consensus_quarantine.torii_ports == "29080,29081"
-    and .volatile_consensus_quarantine.expected_runtime_sha == .volatile_consensus_quarantine.actual_runtime_sha
-    and (.required_manual_checks | any(contains("preserve durable ledger state")))
-    and (.required_manual_checks | any(contains("peer process owner or with sudo")))
-    and (.operator_action_templates | any(contains("clear_volatile_consensus_state.sh") and contains("--apply")))
-    and (.operator_action_templates | all((contains("rsync") or contains("donor-approved")) | not))
-    and (.proposed_non_destructive_commands | any(contains("<dist>/storage") and contains("rbc_sessions")))
-    and (.proposed_non_destructive_commands | all(contains("sudo find <target-storage>") | not))' \
-  "$repair_volatile_only_report" >/dev/null
-! rg -Fq "$TMP_DIR" "$repair_volatile_only_report"
-! rg -q "802620VOLATILEONLY|/Users/operator/dev/soraswap" "$repair_volatile_only_report"
-
-repair_bundle_dist="$TMP_DIR/taira-repair-bundle-dist"
-repair_bundle_output="$TMP_DIR/taira-repair-bundle-dist.out"
-mkdir -p "$repair_bundle_dist/bin"
-printf '{"generated_at":"fixture"}\n' > "$repair_bundle_dist/rollout.manifest.json"
-cp "$repair_volatile_runtime" "$repair_bundle_dist/bin/irohad"
-repair_bundle_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --operator-platform darwin \
-    --volatile-dist "$repair_bundle_dist" \
-    --volatile-runtime-bin "$repair_bundle_dist/bin/irohad" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha"
-) >"$repair_bundle_output" 2>&1 || repair_bundle_status="$?"
-[[ "$repair_bundle_status" != "0" ]]
-rg -q "volatile-dist appears to be a rollout binary bundle, not a rendered Taira validator dist" "$repair_bundle_output"
-rg -q "provide a dist root containing start.sh, peer\\*.toml, and storage/peer\\*" "$repair_bundle_output"
-! rg -Fq "$repair_bundle_dist" "$repair_bundle_output"
-
-repair_start_only_dist="$TMP_DIR/taira-repair-start-only-dist"
-repair_start_only_output="$TMP_DIR/taira-repair-start-only-dist.out"
-mkdir -p "$repair_start_only_dist"
-cat > "$repair_start_only_dist/start.sh" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-chmod +x "$repair_start_only_dist/start.sh"
-repair_start_only_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --operator-platform darwin \
-    --volatile-dist "$repair_start_only_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha"
-) >"$repair_start_only_output" 2>&1 || repair_start_only_status="$?"
-[[ "$repair_start_only_status" != "0" ]]
-rg -q "volatile-dist is missing peer\\*.toml validator configs" "$repair_start_only_output"
-! rg -Fq "$repair_start_only_dist" "$repair_start_only_output"
-
-repair_no_storage_dist="$TMP_DIR/taira-repair-no-storage-dist"
-repair_no_storage_output="$TMP_DIR/taira-repair-no-storage-dist.out"
-mkdir -p "$repair_no_storage_dist"
-cat > "$repair_no_storage_dist/start.sh" <<'SH'
-#!/usr/bin/env bash
-exit 0
-SH
-chmod +x "$repair_no_storage_dist/start.sh"
-printf 'chain = "fixture-taira"\n' > "$repair_no_storage_dist/peer1.toml"
-repair_no_storage_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --operator-platform darwin \
-    --volatile-dist "$repair_no_storage_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha"
-) >"$repair_no_storage_output" 2>&1 || repair_no_storage_status="$?"
-[[ "$repair_no_storage_status" != "0" ]]
-rg -q "volatile-dist is missing storage/peer\\* validator storage directories" "$repair_no_storage_output"
-! rg -Fq "$repair_no_storage_dist" "$repair_no_storage_output"
-
-repair_linux_platform_output="$TMP_DIR/taira-repair-linux-platform.out"
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --operator-platform linux
-) >"$repair_linux_platform_output" 2>&1
-rg -q "taira repair plan: wrote" "$repair_linux_platform_output"
-jq -e \
-  '.operator_inputs.operator_platform == "linux"
-    and .volatile_consensus_quarantine == null
-    and (.operator_action_templates | any(contains("systemctl stop")))
-    and (.operator_action_templates | any(contains("systemctl start")))
-    and (.proposed_non_destructive_commands | all(contains("systemctl") | not))' \
-  "$repair_plan_report" >/dev/null
-
-repair_bad_platform_output="$TMP_DIR/taira-repair-bad-platform.out"
-repair_bad_platform_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --operator-platform "$TMP_DIR/linux"
-) >"$repair_bad_platform_output" 2>&1 || repair_bad_platform_status="$?"
-[[ "$repair_bad_platform_status" != "0" ]]
-rg -q "operator-platform must be one of darwin, linux, or manual" "$repair_bad_platform_output"
-! rg -Fq "$TMP_DIR" "$repair_bad_platform_output"
-
-repair_volatile_bad_sha_output="$TMP_DIR/taira-repair-volatile-bad-sha.out"
-repair_volatile_bad_sha_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --volatile-dist "$repair_volatile_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "0000000000000000000000000000000000000000000000000000000000000000"
-) >"$repair_volatile_bad_sha_output" 2>&1 || repair_volatile_bad_sha_status="$?"
-[[ "$repair_volatile_bad_sha_status" != "0" ]]
-rg -q "volatile runtime SHA mismatch" "$repair_volatile_bad_sha_output"
-! rg -Fq "$TMP_DIR" "$repair_volatile_bad_sha_output"
-
-repair_volatile_ports_only_output="$TMP_DIR/taira-repair-volatile-ports-only.out"
-repair_volatile_ports_only_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --volatile-torii-ports "29080"
-) >"$repair_volatile_ports_only_output" 2>&1 || repair_volatile_ports_only_status="$?"
-[[ "$repair_volatile_ports_only_status" != "0" ]]
-rg -q "volatile-dist is required when volatile repair inputs are supplied" "$repair_volatile_ports_only_output"
-! rg -Fq "$TMP_DIR" "$repair_volatile_ports_only_output"
-
-repair_volatile_bad_ports_output="$TMP_DIR/taira-repair-volatile-bad-ports.out"
-repair_volatile_bad_ports_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --volatile-dist "$repair_volatile_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha" \
-    --volatile-torii-ports "29080,$TMP_DIR/29081"
-) >"$repair_volatile_bad_ports_output" 2>&1 || repair_volatile_bad_ports_status="$?"
-[[ "$repair_volatile_bad_ports_status" != "0" ]]
-rg -q "volatile-torii-ports must be a comma-separated list of numeric ports" "$repair_volatile_bad_ports_output"
-! rg -Fq "$TMP_DIR" "$repair_volatile_bad_ports_output"
-
-repair_volatile_high_port_output="$TMP_DIR/taira-repair-volatile-high-port.out"
-repair_volatile_high_port_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --volatile-dist "$repair_volatile_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha" \
-    --volatile-torii-ports "65536"
-) >"$repair_volatile_high_port_output" 2>&1 || repair_volatile_high_port_status="$?"
-[[ "$repair_volatile_high_port_status" != "0" ]]
-rg -q "volatile-torii-ports contains out-of-range port 65536" "$repair_volatile_high_port_output"
-
-repair_volatile_empty_ports_output="$TMP_DIR/taira-repair-volatile-empty-ports.out"
-repair_volatile_empty_ports_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --volatile-dist "$repair_volatile_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha" \
-    --volatile-torii-ports ""
-) >"$repair_volatile_empty_ports_output" 2>&1 || repair_volatile_empty_ports_status="$?"
-[[ "$repair_volatile_empty_ports_status" != "0" ]]
-rg -q "volatile-torii-ports must contain at least one numeric port" "$repair_volatile_empty_ports_output"
-
-repair_volatile_trailing_empty_port_output="$TMP_DIR/taira-repair-volatile-trailing-empty-port.out"
-repair_volatile_trailing_empty_port_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --volatile-dist "$repair_volatile_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha" \
-    --volatile-torii-ports "29080,"
-) >"$repair_volatile_trailing_empty_port_output" 2>&1 || repair_volatile_trailing_empty_port_status="$?"
-[[ "$repair_volatile_trailing_empty_port_status" != "0" ]]
-rg -q "volatile-torii-ports contains an empty port entry" "$repair_volatile_trailing_empty_port_output"
-
-repair_volatile_duplicate_ports_output="$TMP_DIR/taira-repair-volatile-duplicate-ports.out"
-repair_volatile_duplicate_ports_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --volatile-dist "$repair_volatile_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha" \
-    --volatile-torii-ports "29080, 29080"
-) >"$repair_volatile_duplicate_ports_output" 2>&1 || repair_volatile_duplicate_ports_status="$?"
-[[ "$repair_volatile_duplicate_ports_status" != "0" ]]
-rg -q "volatile-torii-ports contains duplicate port 29080" "$repair_volatile_duplicate_ports_output"
-
-repair_volatile_leading_zero_duplicate_ports_output="$TMP_DIR/taira-repair-volatile-leading-zero-duplicate-ports.out"
-repair_volatile_leading_zero_duplicate_ports_status=0
-(
-  export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$repair_report_dir"
-  run_taira_state_repair_plan \
-    --donor-storage "$repair_fixture_dir/donor" \
-    --target-storage "$repair_fixture_dir/target" \
-    --height 621 \
-    --parent-root "$repair_parent_root" \
-    --post-root "$repair_post_root" \
-    --volatile-dist "$repair_volatile_dist" \
-    --volatile-runtime-bin "$repair_volatile_runtime" \
-    --volatile-expected-runtime-sha "$repair_volatile_runtime_sha" \
-    --volatile-torii-ports "29080, 029080"
-) >"$repair_volatile_leading_zero_duplicate_ports_output" 2>&1 || repair_volatile_leading_zero_duplicate_ports_status="$?"
-[[ "$repair_volatile_leading_zero_duplicate_ports_status" != "0" ]]
-rg -q "volatile-torii-ports contains duplicate port 29080" "$repair_volatile_leading_zero_duplicate_ports_output"
 
 repair_duplicate_target_output="$TMP_DIR/taira-repair-duplicate-target.out"
 repair_duplicate_target_status=0
@@ -14880,6 +13957,7 @@ rg -q "Taira health issue: status endpoint health snapshot is not JSON-ready" "$
 taira_placeholder_cfg="$TMP_DIR/taira-placeholder.client.toml"
 cat > "$taira_placeholder_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://example.invalid/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -14897,6 +13975,7 @@ rg -q "Taira client config still contains example credentials or local endpoints
 taira_embedded_placeholder_cfg="$TMP_DIR/taira-embedded-placeholder.client.toml"
 cat > "$taira_embedded_placeholder_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://taira.sora.org/"
 public_key = "ed0120replace_me"
 private_key = "802620DEADBEEF"
@@ -14914,33 +13993,34 @@ rg -q "Taira client config still contains example credentials or local endpoints
 taira_oracle_placeholder_cfg="$TMP_DIR/taira-oracle-placeholder.client.toml"
 cat > "$taira_oracle_placeholder_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://taira.sora.org/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
 EOF
-release_taira_oracle_placeholder_output="$TMP_DIR/release-taira-oracle-placeholder.out"
+taira_typed_oracle_cfg="$(write_typed_oracle_fixture_config "$ROOT" "$taira_oracle_placeholder_cfg" taira-release)"
+release_taira_oracle_placeholder_output="$TMP_DIR/release-taira-oracle-client-placeholder.out"
 release_taira_oracle_placeholder_status=0
 (
   export SORASWAP_CLIENT_CONFIG="$taira_oracle_placeholder_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="<public oracle key>"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="<oracle client config>"
   run_repo_zsh_script "$ROOT/scripts/release_taira.sh"
 ) >"$release_taira_oracle_placeholder_output" 2>&1 || release_taira_oracle_placeholder_status="$?"
 [[ "$release_taira_oracle_placeholder_status" != "0" ]]
-rg -q "oracle public key is an example value" "$release_taira_oracle_placeholder_output"
+rg -q "SORASWAP_ORACLE_CLIENT_CONFIG is an example value" "$release_taira_oracle_placeholder_output"
 
-release_taira_oracle_mismatch_output="$TMP_DIR/release-taira-oracle-mismatch.out"
-release_taira_oracle_mismatch_status=0
+release_taira_oracle_missing_output="$TMP_DIR/release-taira-oracle-client-missing.out"
+release_taira_oracle_missing_status=0
 (
   export SORASWAP_CLIENT_CONFIG="$taira_oracle_placeholder_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xa09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  unset SORASWAP_ORACLE_CLIENT_CONFIG
   run_repo_zsh_script "$ROOT/scripts/release_taira.sh"
-) >"$release_taira_oracle_mismatch_output" 2>&1 || release_taira_oracle_mismatch_status="$?"
-[[ "$release_taira_oracle_mismatch_status" != "0" ]]
-rg -q "oracle private key does not match SORASWAP_ORACLE_PUBLIC_KEY_HEX/config signer public key" "$release_taira_oracle_mismatch_output"
-! rg -q "release-taira: \\[1/12\\]" "$release_taira_oracle_mismatch_output"
+) >"$release_taira_oracle_missing_output" 2>&1 || release_taira_oracle_missing_status="$?"
+[[ "$release_taira_oracle_missing_status" != "0" ]]
+rg -q "SORASWAP_ORACLE_CLIENT_CONFIG is required for typed oracle publication on testnet" "$release_taira_oracle_missing_output"
+! rg -q "release-taira: \\[1/12\\]" "$release_taira_oracle_missing_output"
 
 release_taira_rwa_guard_make_dir="$TMP_DIR/release-taira-rwa-guard-make"
 release_taira_rwa_guard_make_log="$TMP_DIR/release-taira-rwa-guard.make.log"
@@ -14962,8 +14042,7 @@ rm -f "$release_taira_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$taira_oracle_placeholder_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$taira_typed_oracle_cfg"
   unset SORASWAP_RWA_ISSUER_APPROVAL_REF
   unset SORASWAP_RWA_LEGAL_REVIEW_REF
   unset SORASWAP_RWA_COMPLIANCE_POLICY_REF
@@ -14985,8 +14064,7 @@ rm -f "$release_taira_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$taira_oracle_placeholder_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$taira_typed_oracle_cfg"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="CHANGE_ME"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://fixture"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://fixture"
@@ -15008,8 +14086,7 @@ rm -f "$release_taira_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$taira_oracle_placeholder_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$taira_typed_oracle_cfg"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://fixture"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://fixture"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://fixture"
@@ -15031,8 +14108,7 @@ rm -f "$release_taira_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$taira_oracle_placeholder_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$taira_typed_oracle_cfg"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://fixture"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://fixture"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://fixture"
@@ -15054,8 +14130,7 @@ rm -f "$release_taira_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$taira_oracle_placeholder_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$taira_typed_oracle_cfg"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://fixture"
   export SORASWAP_RWA_LEGAL_REVIEW_REF=$'legal\nreview'
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://fixture"
@@ -15144,6 +14219,7 @@ rg -q "refusing to use a testnet client config for production public action" "$c
 public_wrapper_placeholder_cfg="$TMP_DIR/public-wrapper-placeholder.client.toml"
 cat > "$public_wrapper_placeholder_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://node.example/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -15168,6 +14244,7 @@ rg -q "Taira client config still contains example credentials or local endpoints
 production_wrapper_placeholder_cfg="$TMP_DIR/production-wrapper-placeholder.client.toml"
 cat > "$production_wrapper_placeholder_cfg" <<'EOF'
 chain = "fixture-production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://production.test/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -15186,6 +14263,7 @@ rg -q "production client config still contains example credentials or local endp
 production_wrapper_ipv6_loopback_cfg="$TMP_DIR/production-wrapper-ipv6-loopback.client.toml"
 cat > "$production_wrapper_ipv6_loopback_cfg" <<'EOF'
 chain = "fixture-production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "http://[::1]:8080/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -15224,6 +14302,7 @@ jq -e \
 production_placeholder_cfg="$TMP_DIR/production-placeholder.client.toml"
 cat > "$production_placeholder_cfg" <<'EOF'
 chain = "fixture-production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "http://127.0.0.1:8080/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -15241,6 +14320,7 @@ rg -q "production client config still contains example credentials or local endp
 production_embedded_placeholder_cfg="$TMP_DIR/production-embedded-placeholder.client.toml"
 cat > "$production_embedded_placeholder_cfg" <<'EOF'
 chain = "fixture-production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://production.sora.org/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620TBD"
@@ -15258,34 +14338,35 @@ rg -q "production client config still contains example credentials or local endp
 production_oracle_placeholder_cfg="$TMP_DIR/production-oracle-placeholder.client.toml"
 cat > "$production_oracle_placeholder_cfg" <<'EOF'
 chain = "fixture-production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://production.sora.org/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
 EOF
-release_production_oracle_placeholder_output="$TMP_DIR/release-production-oracle-placeholder.out"
+production_typed_oracle_cfg="$(write_typed_oracle_fixture_config "$ROOT" "$production_oracle_placeholder_cfg" production-release)"
+release_production_oracle_placeholder_output="$TMP_DIR/release-production-oracle-client-placeholder.out"
 release_production_oracle_placeholder_status=0
 (
   export SORASWAP_CLIENT_CONFIG="$production_oracle_placeholder_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="oracle-private-TODO"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="<oracle client config>"
   run_repo_zsh_script "$ROOT/scripts/release_production.sh"
 ) >"$release_production_oracle_placeholder_output" 2>&1 || release_production_oracle_placeholder_status="$?"
 [[ "$release_production_oracle_placeholder_status" != "0" ]]
-rg -q "oracle private key is an example value" "$release_production_oracle_placeholder_output"
+rg -q "SORASWAP_ORACLE_CLIENT_CONFIG is an example value" "$release_production_oracle_placeholder_output"
 
-release_production_oracle_mismatch_output="$TMP_DIR/release-production-oracle-mismatch.out"
-release_production_oracle_mismatch_status=0
+release_production_oracle_missing_output="$TMP_DIR/release-production-oracle-client-missing.out"
+release_production_oracle_missing_status=0
 (
   export SORASWAP_CLIENT_CONFIG="$production_oracle_placeholder_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xa09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  unset SORASWAP_ORACLE_CLIENT_CONFIG
   run_repo_zsh_script "$ROOT/scripts/release_production.sh"
-) >"$release_production_oracle_mismatch_output" 2>&1 || release_production_oracle_mismatch_status="$?"
-[[ "$release_production_oracle_mismatch_status" != "0" ]]
-rg -q "oracle private key does not match SORASWAP_ORACLE_PUBLIC_KEY_HEX/config signer public key" "$release_production_oracle_mismatch_output"
-! rg -q "release-production: verifying Taira release gate before production mutations" "$release_production_oracle_mismatch_output"
-! rg -q "release-production: \\[1/12\\]" "$release_production_oracle_mismatch_output"
+) >"$release_production_oracle_missing_output" 2>&1 || release_production_oracle_missing_status="$?"
+[[ "$release_production_oracle_missing_status" != "0" ]]
+rg -q "SORASWAP_ORACLE_CLIENT_CONFIG is required for typed oracle publication on production" "$release_production_oracle_missing_output"
+! rg -q "release-production: verifying Taira release gate before production mutations" "$release_production_oracle_missing_output"
+! rg -q "release-production: \\[1/12\\]" "$release_production_oracle_missing_output"
 
 release_production_stale_chain_env_output="$TMP_DIR/release-production-stale-chain-env.out"
 release_production_stale_chain_env_status=0
@@ -15302,6 +14383,7 @@ rg -q "production client config uses the canonical Taira chain id" "$release_pro
 production_taira_chain_cfg="$TMP_DIR/production-taira-chain.client.toml"
 cat > "$production_taira_chain_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://production.soraswap.dev/"
 
 [account]
@@ -15404,6 +14486,7 @@ EOF
 sectioned_account_cfg="$TMP_DIR/sectioned-account.client.toml"
 cat > "$sectioned_account_cfg" <<'EOF'
 chain = "sectioned-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://sectioned.soraswap.dev/"
 domain = "wrong.universal"
 public_key = "ed0120WRONG"
@@ -15431,9 +14514,11 @@ EOF
 non_string_first_cfg="$TMP_DIR/non-string-first.client.toml"
 cat > "$non_string_first_cfg" <<'EOF'
 chain = 12345
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 
 [metadata]
 chain = 'later-chain'
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 EOF
 (
   unset SORASWAP_PUBLIC_ENV SORASWAP_PRODUCTION_CHAIN_ID SORASWAP_TORII_URL CHAIN
@@ -15468,6 +14553,7 @@ jq -e \
 production_consent_cfg="$TMP_DIR/production-consent.client.toml"
 cat > "$production_consent_cfg" <<'EOF'
 chain = "fixture-production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://production.sora.org/"
 
 [account]
@@ -15506,8 +14592,7 @@ rm -f "$release_production_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$production_consent_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$production_typed_oracle_cfg"
   unset SORASWAP_RWA_ISSUER_APPROVAL_REF
   unset SORASWAP_RWA_LEGAL_REVIEW_REF
   unset SORASWAP_RWA_COMPLIANCE_POLICY_REF
@@ -15530,8 +14615,7 @@ rm -f "$release_production_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$production_consent_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$production_typed_oracle_cfg"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="CHANGE_ME"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://fixture"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://fixture"
@@ -15554,8 +14638,7 @@ rm -f "$release_production_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$production_consent_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$production_typed_oracle_cfg"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://fixture"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://fixture"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://fixture"
@@ -15578,8 +14661,7 @@ rm -f "$release_production_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$production_consent_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$production_typed_oracle_cfg"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://fixture"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://fixture"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="https://0.0.0.0/compliance-policy"
@@ -15602,8 +14684,7 @@ rm -f "$release_production_rwa_guard_make_log"
   export SORASWAP_CLIENT_CONFIG="$production_consent_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$production_typed_oracle_cfg"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://fixture"
   export SORASWAP_RWA_LEGAL_REVIEW_REF=$'legal\nreview'
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://fixture"
@@ -15634,7 +14715,6 @@ for env_name in \
   SORASWAP_PRODUCTION_CLIENT_CONFIG \
   SORASWAP_TORII_URL \
 	  SORASWAP_TORII_API_TOKEN \
-	  SORASWAP_TORII_API_VERSION \
 	  CHAIN \
 	  ACCOUNT_CHAIN_DISCRIMINANT \
 	  IROHA_ACCOUNT_CHAIN_DISCRIMINANT \
@@ -15649,7 +14729,7 @@ for env_name in \
   SORASWAP_KOTO_LINT_BIN \
   SORASWAP_KOTO_TEST_BIN \
   SORASWAP_ACTIVE_IROHA_CLI_BIN \
-  SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN \
+  SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN \
   SORASWAP_ACTIVE_GOV_INSTRUCTION_BIN \
   SORASWAP_ACTIVE_SORAFS_CLI_BIN \
   SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD \
@@ -15659,12 +14739,6 @@ for env_name in \
   SORASWAP_FORCE_COMPILE \
   SORASWAP_KOTO_COMPILE_BIN_READY \
   SORASWAP_KOTO_LINT_BIN_READY \
-  SORASWAP_CONTRACT_APP_CHUNK_SIZE \
-  SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS \
-  SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS \
-  SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS \
-  SORASWAP_TESTNET_CHAIN_ID \
-  SORASWAP_TESTNET_CHAIN_DISCRIMINANT \
   SORASWAP_PRODUCTION_CHAIN_ID \
   SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT \
   SORASWAP_CHAIN_DISCRIMINANT \
@@ -15685,7 +14759,6 @@ for env_name in \
   SORASWAP_TAIRA_REPAIR_HEIGHT \
   SORASWAP_TAIRA_REPAIR_OPERATOR \
   SORASWAP_TAIRA_REPAIR_PARENT_ROOT \
-  SORASWAP_TAIRA_REPAIR_PLATFORM \
   SORASWAP_TAIRA_REPAIR_POST_ROOT \
   SORASWAP_TAIRA_REPAIR_REASON \
   SORASWAP_TAIRA_REPAIR_REPORT_DIR \
@@ -15693,10 +14766,6 @@ for env_name in \
   SORASWAP_TAIRA_REPAIR_STATUS_JSON \
   SORASWAP_TAIRA_REPAIR_TARGET_STORAGES \
   SORASWAP_TAIRA_REPAIR_TRACE_CONFIG \
-  SORASWAP_TAIRA_REPAIR_VOLATILE_DIST \
-  SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA \
-  SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN \
-  SORASWAP_TAIRA_REPAIR_VOLATILE_TORII_PORTS \
   SORASWAP_RELEASE_CHECKLIST_TAIRA_PREREQ_ONLY \
   SORASWAP_RELEASE_CHECKLIST_INTERNAL_PRODUCTION_PREREQ \
   SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK \
@@ -15711,12 +14780,9 @@ for env_name in \
   SORASWAP_TORII_READ_RETRY_DELAY_SECS \
   SORASWAP_PUBLIC_TX_COMMITTED_WAIT_SECS \
   SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS \
-  SORASWAP_CONTRACT_CALL_RETRY_COUNT \
-  SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS \
   SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_COUNT \
   SORASWAP_CONTRACT_VIEW_EXPECT_RETRY_DELAY_SECS \
   SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX \
-  SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX \
   SORASWAP_PUBLIC_WRITE_HEALTH_AGE_MAX_MS \
   SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT \
   SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS \
@@ -15786,11 +14852,11 @@ for env_name in \
   SORASWAP_PRODUCTION_XOR_TOPUP_MAX_ATTEMPTS \
   SORASWAP_PRODUCTION_XOR_TOPUP_MAX_USDT_IN \
   SORASWAP_PRODUCTION_XOR_TOPUP_BUFFER \
-  SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS \
-  SORASWAP_ORACLE_PUBLIC_KEY_HEX \
-  SORASWAP_ORACLE_PRIVATE_KEY_HEX \
-  SORASWAP_ORACLE_PYTHON_BIN \
-  SORASWAP_ORACLE_SCHEME \
+  SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE \
+  SORASWAP_ORACLE_CLIENT_CONFIG \
+  SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG \
+  SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED \
+  SORASWAP_ACTIVE_ORACLE_ACCOUNT \
   SORASWAP_LAST_ORACLE_SLOT \
   SORASWAP_RWA_COMPLIANCE_CHAIN_JSON \
   SORASWAP_RWA_COMPLIANCE_REPORT_DIR \
@@ -15856,7 +14922,6 @@ release_production_prereq_status=0
   export SORASWAP_PRODUCTION_CLIENT_CONFIG="$production_consent_cfg"
   export SORASWAP_TORII_URL="https://production.sora.org/"
   export SORASWAP_TORII_API_TOKEN="fixture-token"
-	  export SORASWAP_TORII_API_VERSION="v1"
 	  export CHAIN="fixture-production-chain"
 	  export ACCOUNT_CHAIN_DISCRIMINANT=999
 	  export IROHA_ACCOUNT_CHAIN_DISCRIMINANT=999
@@ -15876,7 +14941,7 @@ release_production_prereq_status=0
   export SORASWAP_KOTO_LINT_BIN="$FAKE_IROHA_ROOT/target/debug/koto_lint"
   export SORASWAP_KOTO_TEST_BIN="$FAKE_IROHA_ROOT/target/debug/koto_test"
   export SORASWAP_ACTIVE_IROHA_CLI_BIN="$FAKE_IROHA_ROOT/target/debug/iroha"
-  export SORASWAP_ACTIVE_SPLIT_CONTRACT_DEPLOY_BIN="$FAKE_IROHA_ROOT/target/debug/split_contract_deploy"
+  export SORASWAP_ACTIVE_IVM_CONTRACT_DEPLOY_BIN="$FAKE_IROHA_ROOT/target/debug/ivm_contract_deploy"
   export SORASWAP_ACTIVE_GOV_INSTRUCTION_BIN="$FAKE_IROHA_ROOT/target/debug/gov_instruction"
   export SORASWAP_ACTIVE_SORAFS_CLI_BIN="$FAKE_IROHA_ROOT/target/debug/sorafs_cli"
   export SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD=1
@@ -15886,13 +14951,6 @@ release_production_prereq_status=0
   export SORASWAP_FORCE_COMPILE=1
   export SORASWAP_KOTO_COMPILE_BIN_READY=1
   export SORASWAP_KOTO_LINT_BIN_READY=1
-  export SORASWAP_CONTRACT_APP_CHUNK_SIZE=99
-  export SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS=9
-  export SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS=9
-  export SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS=1
-  export SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS=9
-  export SORASWAP_TESTNET_CHAIN_ID="$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
-  export SORASWAP_TESTNET_CHAIN_DISCRIMINANT="$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT"
   export SORASWAP_PRODUCTION_CHAIN_ID="fixture-production-chain"
   export SORASWAP_PRODUCTION_CHAIN_DISCRIMINANT=369
   export SORASWAP_CHAIN_DISCRIMINANT=369
@@ -15914,7 +14972,6 @@ release_production_prereq_status=0
   export SORASWAP_TAIRA_REPAIR_HEIGHT=1
   export SORASWAP_TAIRA_REPAIR_OPERATOR="operator"
   export SORASWAP_TAIRA_REPAIR_PARENT_ROOT="parent"
-  export SORASWAP_TAIRA_REPAIR_PLATFORM="linux"
   export SORASWAP_TAIRA_REPAIR_POST_ROOT="post"
   export SORASWAP_TAIRA_REPAIR_REASON="reason"
   export SORASWAP_TAIRA_REPAIR_REPORT_DIR="$TMP_DIR/repair"
@@ -15922,14 +14979,10 @@ release_production_prereq_status=0
   export SORASWAP_TAIRA_REPAIR_STATUS_JSON="$TMP_DIR/repair/status.json"
   export SORASWAP_TAIRA_REPAIR_TARGET_STORAGES="storage"
   export SORASWAP_TAIRA_REPAIR_TRACE_CONFIG="$TMP_DIR/repair/trace.json"
-  export SORASWAP_TAIRA_REPAIR_VOLATILE_DIST="$TMP_DIR/repair/dist"
-  export SORASWAP_TAIRA_REPAIR_VOLATILE_EXPECTED_RUNTIME_SHA="0000000000000000000000000000000000000000000000000000000000000000"
-  export SORASWAP_TAIRA_REPAIR_VOLATILE_RUNTIME_BIN="$TMP_DIR/repair/irohad"
-  export SORASWAP_TAIRA_REPAIR_VOLATILE_TORII_PORTS="29080,29081"
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
-  export SORASWAP_ORACLE_PYTHON_BIN="/tmp/fixture-python"
-  export SORASWAP_ORACLE_SCHEME=7
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$production_typed_oracle_cfg"
+  export SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG="$production_typed_oracle_cfg"
+  export SORASWAP_ACTIVE_ORACLE_CLIENT_CONFIG_OWNED=0
+  export SORASWAP_ACTIVE_ORACLE_ACCOUNT="fixture-oracle"
   export SORASWAP_LAST_ORACLE_SLOT=999
   export SORASWAP_SKIP_PUBLIC_SIGNER_READY_CHECK=0
   export SORASWAP_INIT_CONTRACT_STATE=1
@@ -16000,7 +15053,7 @@ release_production_prereq_status=0
   export SORASWAP_PRODUCTION_XOR_TOPUP_MAX_ATTEMPTS=1
   export SORASWAP_PRODUCTION_XOR_TOPUP_MAX_USDT_IN=1
   export SORASWAP_PRODUCTION_XOR_TOPUP_BUFFER=1
-  export SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS=1
+  export SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE="$TMP_DIR/taira-onboarding.token"
   export SORASWAP_RWA_COMPLIANCE_CHAIN_JSON='{"torii_url":"https://production.sora.org","chain":"fixture-production-chain","block_1_hash":"fixture-block"}'
   export SORASWAP_RWA_COMPLIANCE_REPORT_DIR="$TMP_DIR/rwa"
   export SORASWAP_RWA_COMPLIANCE_NOTES="fixture notes"
@@ -16036,8 +15089,7 @@ rm -f "$release_production_prereq_make_log"
   export SORASWAP_CLIENT_CONFIG="$production_consent_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
   export SORASWAP_ENABLE_RWA_RELEASE=1
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$production_typed_oracle_cfg"
   export SORASWAP_RWA_ISSUER_APPROVAL_REF="approval://fixture"
   export SORASWAP_RWA_LEGAL_REVIEW_REF="legal://fixture"
   export SORASWAP_RWA_COMPLIANCE_POLICY_REF="policy://fixture"
@@ -16128,8 +15180,6 @@ invalid_deploy_reuse_contracts_status=0
 ) >"$invalid_deploy_reuse_contracts_output" 2>&1 || invalid_deploy_reuse_contracts_status="$?"
 [[ "$invalid_deploy_reuse_contracts_status" != "0" ]]
 rg -Fq "SORASWAP_TESTNET_DEPLOY_REUSE_CONTRACTS/SORASWAP_PUBLIC_DEPLOY_REUSE_CONTRACTS must be auto, 0, or 1; got 'true'" "$invalid_deploy_reuse_contracts_output"
-rg -Fq 'elif (( bundle_status == 75 )); then' "$ROOT/scripts/deploy_public.sh"
-rg -Fq 'contract app bundle deployment stopped because public write health is degraded' "$ROOT/scripts/deploy_public.sh"
 
 invalid_public_bootstrap_output="$TMP_DIR/deploy-public-bootstrap.out"
 invalid_public_bootstrap_status=0
@@ -16393,14 +15443,9 @@ invalid_trader_api_skip_cli_build_status=0
 [[ "$invalid_trader_api_skip_cli_build_status" != "0" ]]
 rg -Fq "SORASWAP_SKIP_IROHA_CLI_BUILD must be 0 or 1; got 'maybe'" "$invalid_trader_api_skip_cli_build_output"
 
-invalid_faucet_attempts_output="$TMP_DIR/faucet-attempts.out"
-invalid_faucet_attempts_status=0
-(
-  export SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS=0
-  claim_public_testnet_faucet "$TMP_DIR/missing-faucet-config.toml" "fixture@test"
-) >"$invalid_faucet_attempts_output" 2>&1 || invalid_faucet_attempts_status="$?"
-[[ "$invalid_faucet_attempts_status" != "0" ]]
-rg -Fq "SORASWAP_PUBLIC_FAUCET_CLAIM_ATTEMPTS must be a positive integer" "$invalid_faucet_attempts_output"
+rg -Fq 'SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE is required when Taira signer autofunding is needed' "$ROOT/scripts/common.sh"
+rg -Fq -- '--use-config-signer' "$ROOT/scripts/common.sh"
+rg -Fq -- '--faucet-asset-id "$fee_asset_id"' "$ROOT/scripts/common.sh"
 
 invalid_localnet_api_port_output="$TMP_DIR/localnet-api-port.out"
 invalid_localnet_api_port_status=0
@@ -16420,34 +15465,280 @@ invalid_localnet_block_time_status=0
 [[ "$invalid_localnet_block_time_status" != "0" ]]
 rg -Fq "SORASWAP_LOCALNET_BLOCK_TIME_MS must be a positive integer" "$invalid_localnet_block_time_output"
 
-contract_deploy_retry_code="$TMP_DIR/contract-deploy-retry.to"
-printf 'fixture bytecode\n' > "$contract_deploy_retry_code"
+contract_deploy_code="$TMP_DIR/contract-deploy.to"
+printf 'fixture bytecode\n' > "$contract_deploy_code"
 
-queued_contract_deploy_response='{"assertions":[],"bundle_digest":"fixturebundle","bundle_name":"single-contract-deploy","chain_fingerprint":"fixture@chain","completed_stages":["plan"],"contracts":[{"abi_hash_hex":"CFEdd3F16e55A2DB43076D7AC0DAABC92C19684143AF89594B841234CA17037D","code_hash_hex":"09A578BDD3829D57FE6BF92E3E477641E84B508978AEF724615FDDC1D26ADE03","contract_address":"tairac1fixtureaddress","contract_alias":"job_queue::automation.universal","dataspace":"universal","deploy_nonce":33,"name":"job_queue::automation.universal","pipeline_status":{"hash":"44568df9224594b52b3abe4ea6b9e19948935865d3eea8eb7d833996d2af2279","resolved_from":"queue","scope":"local","status":{"kind":"Queued"},"summary":"Queued"},"previous_contract_address":"tairac1previous","status":"submitted","tx_hash_hex":"44568df9224594b52b3abe4ea6b9e19948935865d3eea8eb7d833996d2af2279","kaizen":true}],"dry_run":false,"hajimari_calls":[],"ok":true,"operation_receipt":{"abi_hash_hex":"CFEdd3F16e55A2DB43076D7AC0DAABC92C19684143AF89594B841234CA17037D","code_hash_hex":"09A578BDD3829D57FE6BF92E3E477641E84B508978AEF724615FDDC1D26ADE03","contract_address":"tairac1fixtureaddress","contract_alias":"job_queue::automation.universal","dataspace":"universal","operation_kind":"contract_deploy","payload_digest_hex":"09A578BDD3829D57FE6BF92E3E477641E84B508978AEF724615FDDC1D26ADE03","status":"submitted","transport":"torii","tx_hash_hex":"44568df9224594b52b3abe4ea6b9e19948935865d3eea8eb7d833996d2af2279"}}'
-queued_contract_deploy_normalized="$(normalize_contract_deploy_response_json "$queued_contract_deploy_response")"
+native_contract_deploy_fee_quote='{"intent":{"payer":"authority","value":{"charge_limits":[],"gas_limit":2000000}},"observation":{"ledger_time_ms":1000,"next_block_height":2,"route_dataspace_id":0},"components":[],"capacities":[],"decision":{"status":"accepted","value":{"debit_source":{"kind":"account","value":"fixture-authority"}}}}'
+native_contract_deploy_response="$(jq -cn \
+  --argjson fee_quote "$native_contract_deploy_fee_quote" \
+  '{
+    ok: true,
+    submitted: true,
+    torii_url: "https://fixture.invalid",
+    chain_id: "fixture-chain",
+    authority: "fixture-authority",
+    chain_discriminant: 369,
+    dataspace: "0",
+    contract_alias: "job_queue::automation.universal",
+    contract_address: "tairac1fixtureaddress",
+    contract_subject_account: "fixture-subject",
+    deploy_nonce: 33,
+    next_deploy_nonce: 34,
+    code_hash_hex: "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03",
+    register_manifest_tx_hash: "hash:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB#ABA2",
+    commit_deployment_tx_hash: "hash:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD#F071",
+    expected_previous_contract_address: null,
+    deployment_state: {
+      authority: "fixture-authority",
+      contract_alias: "job_queue::automation.universal",
+      deploy_nonce: "33",
+      dataspace_alias: "universal",
+      dataspace_id: "0",
+      previous_contract_address: null,
+      observed_block_height: "1",
+      observed_block_hash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      ledger_time_ms: "1000",
+      chain_discriminant: "369"
+    },
+    fee_quotes: [$fee_quote, $fee_quote, $fee_quote],
+    operation_receipt: {
+      operation_kind: "contract_deploy",
+      status: "committed",
+      transport: "ivm-contract-deploy-helper",
+      torii_url: "https://fixture.invalid",
+      chain_id: "fixture-chain",
+      authority: "fixture-authority",
+      chain_discriminant: 369,
+      dataspace: "0",
+      contract_alias: "job_queue::automation.universal",
+      contract_address: "tairac1fixtureaddress",
+      contract_subject_account: "fixture-subject",
+      code_hash_hex: "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03",
+      abi_hash_hex: null,
+      tx_hash_hex: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      entrypoint: null,
+      entrypoint_hash_hex: null,
+      gas_limit: 2000000,
+      gas_used: null,
+      fee_payment: $fee_quote.intent,
+      fee_quotes: [$fee_quote, $fee_quote, $fee_quote],
+      payload_digest_hex: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      deployment_state: {
+        authority: "fixture-authority",
+        contract_alias: "job_queue::automation.universal",
+        deploy_nonce: "33",
+        dataspace_alias: "universal",
+        dataspace_id: "0",
+        previous_contract_address: null,
+        observed_block_height: "1",
+        observed_block_hash: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ledger_time_ms: "1000",
+        chain_discriminant: "369"
+      }
+    },
+    terminal_kind: "Committed",
+    final: {
+      kind: "Committed",
+      hash: "hash:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD#F071"
+    },
+    register_bytes_tx_strategy: "native_chunks",
+    register_bytes_chunk_size: 65536,
+    register_bytes_chunk_count: 1,
+    register_bytes_stage_tx_hashes: [],
+    register_bytes_tx_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }')"
+native_contract_deploy_normalized="$(normalize_contract_deploy_response_json "$native_contract_deploy_response")"
+jq -e '
+  keys == ["authority", "chain_discriminant", "chain_id", "code_hash_hex", "commit_deployment_tx_hash", "contract_address", "contract_alias", "contract_subject_account", "dataspace", "deploy_nonce", "deployment_state", "expected_previous_contract_address", "fee_quotes", "final", "next_deploy_nonce", "ok", "operation_receipt", "register_bytes_chunk_count", "register_bytes_chunk_size", "register_bytes_stage_tx_hashes", "register_bytes_tx_hash", "register_bytes_tx_strategy", "register_manifest_tx_hash", "submitted", "terminal_kind", "torii_url"]
+  and (has("tx_hash_hex") | not)
+  and (has("abi_hash_hex") | not)
+  and .ok == true
+  and .submitted == true
+  and .contract_address == "tairac1fixtureaddress"
+  and .dataspace == "0"
+  and .deploy_nonce == 33
+  and .next_deploy_nonce == 34
+  and .code_hash_hex == "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03"
+  and .operation_receipt.tx_hash_hex == "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+' <<<"$native_contract_deploy_normalized" >/dev/null
+! normalize_contract_deploy_response_json "$(jq -c '.deploy_nonce = "33"' <<<"$native_contract_deploy_response")" >/dev/null 2>&1
+! normalize_contract_deploy_response_json "$(jq -c '.next_deploy_nonce = "34"' <<<"$native_contract_deploy_response")" >/dev/null 2>&1
+! normalize_contract_deploy_response_json "$(jq -c '.legacy_tx_hash = .commit_deployment_tx_hash' <<<"$native_contract_deploy_response")" >/dev/null 2>&1
+
+current_deployment_record="$(jq -cn \
+  --argjson response "$native_contract_deploy_response" \
+  '{
+    contract_key: "nested_probe.bytes",
+    generated_at: "20260823T000000Z",
+    environment: "testnet",
+    contract_source: "contracts/nested_probe/bytes.ko",
+    contract_alias: "job_queue::automation.universal",
+    dataspace_alias: "universal",
+    dataspace_id: "0",
+    contract_address: "tairac1fixtureaddress",
+    deploy_nonce: 33,
+    code_hash_hex: "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03",
+    abi_hash_hex: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    deploy_strategy: "ivm_contract_deploy",
+    chain_fingerprint: {
+      torii_url: "https://fixture.invalid",
+      chain: "fixture-chain",
+      block_1_hash: "fixture-block-1"
+    },
+    response: $response
+  }')"
+deployment_record_json_matches_current_schema "$current_deployment_record" testnet nested_probe.bytes
+! deployment_record_json_matches_current_schema "$(jq -c '.instance = {contract_id: .contract_address}' <<<"$current_deployment_record")" testnet nested_probe.bytes
+! deployment_record_json_matches_current_schema "$(jq -c '.dataspace = .dataspace_id | del(.dataspace_id)' <<<"$current_deployment_record")" testnet nested_probe.bytes
+! deployment_record_json_matches_current_schema "$(jq -c '.dataspace_alias = "apps"' <<<"$current_deployment_record")" testnet nested_probe.bytes
+! deployment_record_json_matches_current_schema "$(jq -c '.dataspace_id = "7"' <<<"$current_deployment_record")" testnet nested_probe.bytes
+! deployment_record_json_matches_current_schema "$(jq -c '.response.dataspace = "7"' <<<"$current_deployment_record")" testnet nested_probe.bytes
+! deployment_record_json_matches_current_schema "$(jq -c '.response.deployment_state.dataspace_alias = "apps" | .response.operation_receipt.deployment_state = .response.deployment_state' <<<"$current_deployment_record")" testnet nested_probe.bytes
+! deployment_record_json_matches_current_schema "$(jq -c '.response.deployment_state.dataspace_id = "7" | .response.operation_receipt.deployment_state = .response.deployment_state' <<<"$current_deployment_record")" testnet nested_probe.bytes
+! deployment_record_json_matches_current_schema "$(jq -c '.response.tx_hash_hex = .response.operation_receipt.tx_hash_hex' <<<"$current_deployment_record")" testnet nested_probe.bytes
+! deployment_record_json_matches_current_schema "$(jq -c '.deploy_strategy = "not_current"' <<<"$current_deployment_record")" testnet nested_probe.bytes
+
+current_deployment_schema_root="$TMP_DIR/current-deployment-schema"
+mkdir -p "$current_deployment_schema_root"
+current_deployment_record_path="$current_deployment_schema_root/nested_probe.bytes.deploy.json"
+current_deployment_snapshot_path="$current_deployment_schema_root/contracts.latest.json"
+printf '%s\n' "$current_deployment_record" > "$current_deployment_record_path"
+deployment_record_matches_current_schema "$current_deployment_record_path" testnet nested_probe.bytes
+jq -cn \
+  --argjson record "$current_deployment_record" \
+  '{
+    generated_at: "20260823T000001Z",
+    environment: "testnet",
+    status: "completed",
+    chain_fingerprint: {
+      torii_url: "https://fixture.invalid",
+      chain: "fixture-chain",
+      block_1_hash: "fixture-block-1"
+    },
+    contracts: [$record]
+  }' > "$current_deployment_snapshot_path"
+deployment_records_snapshot_matches_current_schema "$current_deployment_snapshot_path" testnet
+jq '.legacy_records = .contracts' "$current_deployment_snapshot_path" > "$current_deployment_schema_root/contracts.extra.json"
+! deployment_records_snapshot_matches_current_schema "$current_deployment_schema_root/contracts.extra.json" testnet
+jq '.contracts += [.contracts[0]]' "$current_deployment_snapshot_path" > "$current_deployment_schema_root/contracts.duplicate.json"
+! deployment_records_snapshot_matches_current_schema "$current_deployment_schema_root/contracts.duplicate.json" testnet
+jq '.contracts[0].chain_fingerprint.block_1_hash = "stale-block"' "$current_deployment_snapshot_path" > "$current_deployment_schema_root/contracts.stale.json"
+! deployment_records_snapshot_matches_current_schema "$current_deployment_schema_root/contracts.stale.json" testnet
+
+contract_manifest_fixture='{"code_hash":"09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03","manifest":{"code_hash":"09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03"}}'
+manifest_visible="$(
+  contract_manifest_json_by_code_hash() { printf '%s\n' "$contract_manifest_fixture"; }
+  wait_for_contract_manifest_by_code_hash fixture 09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03 1 0
+)"
+jq -e '.manifest.code_hash == "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03"' <<<"$manifest_visible" >/dev/null
+(
+  contract_manifest_json_by_code_hash() {
+    printf '%s\n' '{"manifest":{"code_hash_hex":"09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03"}}'
+  }
+  ! wait_for_contract_manifest_by_code_hash fixture 09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03 1 0
+) >/dev/null 2>&1
+
+contract_call_helper_args="$TMP_DIR/contract-call-helper.args"
+contract_call_helper_request="$TMP_DIR/contract-call-helper.request.json"
+contract_call_gate_args="$TMP_DIR/contract-call-gate.args"
+contract_submit_fixture="$(
+  is_contract_address_literal() { return 0; }
+  authority_from_config() { printf '%s\n' 'fixture-authority'; }
+  torii_base_from_config() { printf '%s\n' 'https://torii.fixture'; }
+  public_env_for_config() { printf '%s\n' 'testnet'; }
+  soraswap_contract_call_transaction_ttl_ms_for_config() { printf '%s\n' '900000'; }
+  fixture_contract_call_gate() { printf '%s\n' "$*" > "$contract_call_gate_args"; }
+  export SORASWAP_IMMEDIATE_SUBMIT_GATE_FUNCTION=fixture_contract_call_gate
+  python3() {
+    printf '%s\n' "$*" > "$contract_call_helper_args"
+    command cat > "$contract_call_helper_request"
+    printf '%s\n' '{"ok":true,"submitted":true,"dataspace":"universal","contract_address":"tairac1fixture","code_hash_hex":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","abi_hash_hex":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","creation_time_ms":123456,"transaction_ttl_ms":900000,"tx_hash_hex":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","pipeline_status":{"hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","status":{"kind":"Queued"},"scope":"local","resolved_from":"queue"},"entrypoint_hash_hex":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","transaction_payload_b64":null,"signing_message_b64":null,"entrypoint":"fixture_entry","operation_receipt":{"operation_kind":"contract_call","status":"submitted","transport":"torii","dataspace":"universal","contract_address":"tairac1fixture","code_hash_hex":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","abi_hash_hex":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","tx_hash_hex":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","entrypoint":"fixture_entry","entrypoint_hash_hex":"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","gas_limit":500000,"fee_payment":{"payer":"authority","value":{"charge_limits":[],"gas_limit":500000}},"payload_digest_hex":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}}'
+  }
+  submit_contract_call fixture tairac1fixture fixture_entry 500000 '{"id":7}' 123456
+)"
 jq -e '
   .ok == true
-  and .contract_address == "tairac1fixtureaddress"
-  and .dataspace == "universal"
-  and .deploy_nonce == 33
-  and .tx_hash_hex == "44568df9224594b52b3abe4ea6b9e19948935865d3eea8eb7d833996d2af2279"
-  and .code_hash_hex == "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03"
-  and .abi_hash_hex == "cfedd3f16e55a2db43076d7ac0daabc92c19684143af89594b841234ca17037d"
-  and .pipeline_status.status.kind == "Queued"
-  and .raw_response.contracts[0].status == "submitted"
-  and .raw_response.contracts[0].kaizen == true
-  and (.raw_response.contracts[0] | has("upgraded") | not)
-  and (.raw_response.hajimari_calls | type == "array" and length == 0)
-  and (.raw_response | has("init_calls") | not)
-' <<<"$queued_contract_deploy_normalized" >/dev/null
-rg -Fq 'normal_output="$(normalize_contract_deploy_response_json "$normal_output")"' "$ROOT/scripts/common.sh"
+  and .submitted == true
+  and .creation_time_ms == 123456
+  and .transaction_ttl_ms == 900000
+  and .tx_hash_hex == "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  and .pipeline_status == {
+    hash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    status: {kind: "Queued"},
+    scope: "local",
+    resolved_from: "queue"
+  }
+' <<<"$contract_submit_fixture" >/dev/null
+jq -e '
+  keys == ["authority", "contract_address", "creation_time_ms", "entrypoint", "fee_payment", "payload", "transaction_ttl_ms"]
+  and .authority == "fixture-authority"
+  and .contract_address == "tairac1fixture"
+  and .entrypoint == "fixture_entry"
+  and .fee_payment == {payer: "authority", value: {charge_limits: [], gas_limit: 500000}}
+  and .creation_time_ms == 123456
+  and .transaction_ttl_ms == 900000
+  and .payload == {"id": 7}
+  and (has("private_key") | not)
+  and (has("gas_asset_id") | not)
+  and (has("gas_limit") | not)
+' "$contract_call_helper_request" >/dev/null
+[[ "$(<"$contract_call_helper_args")" == "$ROOT/scripts/current_torii_contract.py --config fixture --environment testnet --authority fixture-authority --torii-url https://torii.fixture --timeout 120 call" ]]
+[[ "$(<"$contract_call_gate_args")" == 'fixture tairac1fixture.fixture_entry submit' ]]
+contract_submit_quoted_fixture="$(
+  is_contract_address_literal() { return 0; }
+  authority_from_config() { printf '%s\n' 'fixture-authority'; }
+  torii_base_from_config() { printf '%s\n' 'https://torii.fixture'; }
+  public_env_for_config() { printf '%s\n' 'testnet'; }
+  soraswap_contract_call_transaction_ttl_ms_for_config() { printf '%s\n' '900000'; }
+  python3() {
+    command cat >/dev/null
+    jq -c '.operation_receipt.fee_payment.value.charge_limits = [
+      {asset_definition_id: "xor#universal", kind: {kind: "nexus", value: null}, max_amount: "0.25"},
+      {asset_definition_id: "xor#universal", kind: {kind: "pipeline_gas", value: null}, max_amount: "2"}
+    ]' <<<"$contract_submit_fixture"
+  }
+  submit_contract_call fixture tairac1fixture fixture_entry 500000 '{"id":7}' 123456
+)"
+jq -e '
+  .operation_receipt.fee_payment.value.charge_limits == [
+    {asset_definition_id: "xor#universal", kind: {kind: "nexus", value: null}, max_amount: "0.25"},
+    {asset_definition_id: "xor#universal", kind: {kind: "pipeline_gas", value: null}, max_amount: "2"}
+  ]
+' <<<"$contract_submit_quoted_fixture" >/dev/null
+(
+  is_contract_address_literal() { return 0; }
+  authority_from_config() { printf '%s\n' 'fixture-authority'; }
+  torii_base_from_config() { printf '%s\n' 'https://torii.fixture'; }
+  public_env_for_config() { printf '%s\n' 'testnet'; }
+  soraswap_contract_call_transaction_ttl_ms_for_config() { printf '%s\n' '900000'; }
+  python3() {
+    command cat >/dev/null
+    jq -c '.operation_receipt.fee_payment.value.charge_limits = [
+      {asset_definition_id: "xor#universal", kind: {kind: "pipeline_gas", value: null}, max_amount: "2"},
+      {asset_definition_id: "xor#universal", kind: {kind: "nexus", value: null}, max_amount: "0"}
+    ]' <<<"$contract_submit_fixture"
+  }
+  ! submit_contract_call fixture tairac1fixture fixture_entry 500000 '{"id":7}' 123456
+) >/dev/null 2>&1
+(
+  is_contract_address_literal() { return 0; }
+  authority_from_config() { printf '%s\n' 'fixture-authority'; }
+  torii_base_from_config() { printf '%s\n' 'https://torii.fixture'; }
+  public_env_for_config() { printf '%s\n' 'testnet'; }
+  soraswap_contract_call_transaction_ttl_ms_for_config() { printf '%s\n' '900000'; }
+  python3() {
+    command cat >/dev/null
+    printf '%s\n' '{"submit":{"ok":true},"finalized":false}'
+  }
+  ! submit_contract_call fixture tairac1fixture fixture_entry 500000 null 123456
+) >/dev/null 2>&1
 rg -Fq 'normalize_contract_deploy_response_json "$response_json"' "$ROOT/scripts/common.sh"
 rg -Fq 'bytes_probe_response="$(normalize_contract_deploy_response_json "$bytes_probe_response")"' "$ROOT/scripts/common.sh"
 rg -Fq 'asset_caller_response="$(normalize_contract_deploy_response_json "$asset_caller_response")"' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_permission_grant_duplicate_rejection "$grant_output"' "$ROOT/scripts/common.sh"
 rg -Fq 'Repetition of `Grant`' "$ROOT/scripts/common.sh"
 
-queued_contract_deploy_confirmed="$(
+native_contract_deploy_confirmed="$(
   deploy_progress_note() { :; }
   wait_for_transaction_terminal_status() { jq -cn '{status: {kind: "Applied"}}'; }
   contract_code_bytes_visible_by_code_hash() { return 0; }
@@ -16457,203 +15748,56 @@ queued_contract_deploy_confirmed="$(
   contract_liveness_probe_entrypoint_for_key() { return 1; }
   confirm_contract_deploy_response \
     "$TMP_DIR/missing-deploy-config.toml" \
-    "$queued_contract_deploy_response" \
+    "$native_contract_deploy_response" \
     "nested_probe.bytes" \
     "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03"
 )"
 jq -e '
-  .contract_address == "tairac1fixtureaddress"
-  and .contract_id == "tairac1fixtureaddress"
-  and .dataspace == "universal"
+  keys == ["code_hash_hex", "commit_deployment_tx_hash", "contract_address", "dataspace", "deploy_nonce", "next_deploy_nonce", "verification"]
+  and .contract_address == "tairac1fixtureaddress"
+  and .dataspace == "0"
   and .deploy_nonce == 33
-  and .tx_hash_hex == "44568df9224594b52b3abe4ea6b9e19948935865d3eea8eb7d833996d2af2279"
+  and .next_deploy_nonce == 34
+  and .code_hash_hex == "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03"
+  and .commit_deployment_tx_hash == "hash:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD#F071"
   and .verification == "transaction_and_manifest"
-' <<<"$queued_contract_deploy_confirmed" >/dev/null
-
-invalid_contract_deploy_retry_attempts_output="$TMP_DIR/contract-deploy-retry-attempts.out"
-invalid_contract_deploy_retry_attempts_status=0
-(
-  export SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_ATTEMPTS=0
-  submit_contract_deploy_file "$TMP_DIR/missing-deploy-config.toml" "$contract_deploy_retry_code" "fixture.contract"
-) >"$invalid_contract_deploy_retry_attempts_output" 2>&1 || invalid_contract_deploy_retry_attempts_status="$?"
-[[ "$invalid_contract_deploy_retry_attempts_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_ATTEMPTS must be a positive integer" "$invalid_contract_deploy_retry_attempts_output"
-
-invalid_contract_deploy_retry_delay_output="$TMP_DIR/contract-deploy-retry-delay.out"
-invalid_contract_deploy_retry_delay_status=0
-(
-  export SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_ATTEMPTS=1
-  export SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_DELAY_SECS=-1
-  submit_contract_deploy_file "$TMP_DIR/missing-deploy-config.toml" "$contract_deploy_retry_code" "fixture.contract"
-) >"$invalid_contract_deploy_retry_delay_output" 2>&1 || invalid_contract_deploy_retry_delay_status="$?"
-[[ "$invalid_contract_deploy_retry_delay_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_DELAY_SECS must be a nonnegative number" "$invalid_contract_deploy_retry_delay_output"
-
-invalid_contract_deploy_timeout_output="$TMP_DIR/contract-deploy-timeout.out"
-invalid_contract_deploy_timeout_status=0
-(
-  export SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_ATTEMPTS=1
-  export SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS=-1
-  submit_contract_deploy_file "$TMP_DIR/missing-deploy-config.toml" "$contract_deploy_retry_code" "fixture.contract"
-) >"$invalid_contract_deploy_timeout_output" 2>&1 || invalid_contract_deploy_timeout_status="$?"
-[[ "$invalid_contract_deploy_timeout_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS must be a nonnegative number" "$invalid_contract_deploy_timeout_output"
+' <<<"$native_contract_deploy_confirmed" >/dev/null
 
 invalid_contract_deploy_ttl_output="$TMP_DIR/contract-deploy-ttl.out"
 invalid_contract_deploy_ttl_status=0
 (
-  export SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_ATTEMPTS=1
   export SORASWAP_CONTRACT_DEPLOY_TRANSACTION_TTL_MS=1.5
-  submit_contract_deploy_file "$TMP_DIR/missing-deploy-config.toml" "$contract_deploy_retry_code" "fixture.contract"
+  submit_contract_deploy_file "$TMP_DIR/missing-deploy-config.toml" "$contract_deploy_code" "fixture.contract"
 ) >"$invalid_contract_deploy_ttl_output" 2>&1 || invalid_contract_deploy_ttl_status="$?"
 [[ "$invalid_contract_deploy_ttl_status" != "0" ]]
 rg -Fq "SORASWAP_CONTRACT_DEPLOY_TRANSACTION_TTL_MS must be a nonnegative integer" "$invalid_contract_deploy_ttl_output"
 
-contract_deploy_public_health_gate_cfg="$TMP_DIR/contract-deploy-public-health-gate.client.toml"
-cat > "$contract_deploy_public_health_gate_cfg" <<'EOF'
-torii_url = "https://fixture.public"
-EOF
-contract_deploy_public_health_gate_count_file="$TMP_DIR/contract-deploy-public-health-gate.count"
-printf '0' > "$contract_deploy_public_health_gate_count_file"
-contract_deploy_public_health_gate_output="$TMP_DIR/contract-deploy-public-health-gate.out"
-contract_deploy_public_health_gate_status=0
-(
-  export SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_ATTEMPTS=5
-  export SORASWAP_CONTRACT_DEPLOY_HTTP_RETRY_DELAY_SECS=0
-  ensure_authority() { SORASWAP_AUTHORITY="fixture@test"; }
-  torii_base_from_config() { printf 'https://fixture.public'; }
-  account_private_key_from_config() { printf 'fixture-private-key'; }
-  public_env_for_config() { printf 'testnet\n'; }
-  soraswap_require_public_write_health_ready() {
-    echo "$3 blocked by fixture public write health" >&2
-    return 75
-  }
-  curl() {
-    local count
-    cat >/dev/null
-    count="$(cat "$contract_deploy_public_health_gate_count_file")"
-    count=$(( count + 1 ))
-    printf '%s' "$count" > "$contract_deploy_public_health_gate_count_file"
-    printf 'fixture edge unavailable\n502'
-  }
-  submit_contract_deploy_file "$contract_deploy_public_health_gate_cfg" "$contract_deploy_retry_code" "fixture.contract"
-) >"$contract_deploy_public_health_gate_output" 2>&1 || contract_deploy_public_health_gate_status="$?"
-if [[ "$contract_deploy_public_health_gate_status" != "75" ]]; then
-  echo "expected contract deploy public health gate status 75, got $contract_deploy_public_health_gate_status" >&2
-  cat "$contract_deploy_public_health_gate_output" >&2
-fi
-[[ "$contract_deploy_public_health_gate_status" == "75" ]]
-[[ "$(cat "$contract_deploy_public_health_gate_count_file")" == "1" ]]
-rg -Fq "contract deploy transport for" "$contract_deploy_public_health_gate_output"
-rg -Fq "blocked by fixture public write health" "$contract_deploy_public_health_gate_output"
-! rg -Fq "retrying (1/5)" "$contract_deploy_public_health_gate_output"
-
-invalid_contract_app_timeout_output="$TMP_DIR/contract-app-timeout.out"
-invalid_contract_app_timeout_status=0
-(
-  export SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS=1.5
-  submit_contract_app_bundle "$TMP_DIR/missing-app-config.toml" deploy "$ROOT/iroha.contracts.toml"
-) >"$invalid_contract_app_timeout_output" 2>&1 || invalid_contract_app_timeout_status="$?"
-[[ "$invalid_contract_app_timeout_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_DEPLOY_MAX_TIME_SECS must be a nonnegative integer" "$invalid_contract_app_timeout_output"
-
-invalid_contract_app_attempts_output="$TMP_DIR/contract-app-attempts.out"
-invalid_contract_app_attempts_status=0
-(
-  export SORASWAP_CONTRACT_APP_DEPLOY_ATTEMPTS=0
-  submit_contract_app_bundle "$TMP_DIR/missing-app-config.toml" deploy "$ROOT/iroha.contracts.toml"
-) >"$invalid_contract_app_attempts_output" 2>&1 || invalid_contract_app_attempts_status="$?"
-[[ "$invalid_contract_app_attempts_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_DEPLOY_ATTEMPTS must be a positive integer" "$invalid_contract_app_attempts_output"
-rg -Fq 'soraswap_contract_app_deploy_retryable_error()' "$ROOT/scripts/common.sh"
-rg -Fq 'failed to send http|connection closed|connection reset|connection refused|broken pipe|unexpected eof|end of file before message completed' "$ROOT/scripts/common.sh"
-rg -Fq 'contract app %s transport failed; resuming bundle deployment' "$ROOT/scripts/common.sh"
-rg -Fq 'source_root = source.parent.resolve()' "$ROOT/scripts/common.sh"
-rg -Fq 'if key in {"source", "artifact"} and isinstance(value, str):' "$ROOT/scripts/common.sh"
-rg -Fq 'mktemp "$SORASWAP_ROOT/tmp/soraswap-contract-app-chunk-${index}.XXXXXX"' "$ROOT/scripts/common.sh"
-soraswap_contract_app_deploy_retryable_error "Failed to send http POST request to http://127.0.0.1:18080/v1/contracts/deploy-bundle: connection closed before message completed"
-! soraswap_contract_app_deploy_retryable_error "contract app deploy failed: assertion failed"
-
-invalid_contract_app_process_timeout_output="$TMP_DIR/contract-app-process-timeout.out"
-invalid_contract_app_process_timeout_status=0
-(
-  export SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS=1.5
-  submit_contract_app_bundle "$TMP_DIR/missing-app-config.toml" deploy "$ROOT/iroha.contracts.toml"
-) >"$invalid_contract_app_process_timeout_output" 2>&1 || invalid_contract_app_process_timeout_status="$?"
-[[ "$invalid_contract_app_process_timeout_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS must be a nonnegative integer" "$invalid_contract_app_process_timeout_output"
-
-invalid_contract_app_chunk_size_output="$TMP_DIR/contract-app-chunk-size.out"
-invalid_contract_app_chunk_size_status=0
-(
-  export SORASWAP_CONTRACT_APP_CHUNK_SIZE=-1
-  submit_contract_app_manifest_for_env testnet "$TMP_DIR/missing-app-config.toml" "$ROOT/iroha.contracts.toml"
-) >"$invalid_contract_app_chunk_size_output" 2>&1 || invalid_contract_app_chunk_size_status="$?"
-[[ "$invalid_contract_app_chunk_size_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_CHUNK_SIZE must be a nonnegative integer" "$invalid_contract_app_chunk_size_output"
-
-invalid_contract_app_chunk_wait_output="$TMP_DIR/contract-app-chunk-wait.out"
-invalid_contract_app_chunk_wait_status=0
-(
-  export SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS=1.5
-  submit_contract_app_manifest_for_env testnet "$TMP_DIR/missing-app-config.toml" "$ROOT/iroha.contracts.toml"
-) >"$invalid_contract_app_chunk_wait_output" 2>&1 || invalid_contract_app_chunk_wait_status="$?"
-[[ "$invalid_contract_app_chunk_wait_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_CHUNK_WAIT_BLOCKS must be a nonnegative integer" "$invalid_contract_app_chunk_wait_output"
-
-invalid_contract_app_chunk_attempts_output="$TMP_DIR/contract-app-chunk-attempts.out"
-invalid_contract_app_chunk_attempts_status=0
-(
-  export SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS=0
-  submit_contract_app_manifest_for_env testnet "$TMP_DIR/missing-app-config.toml" "$ROOT/iroha.contracts.toml"
-) >"$invalid_contract_app_chunk_attempts_output" 2>&1 || invalid_contract_app_chunk_attempts_status="$?"
-[[ "$invalid_contract_app_chunk_attempts_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_CHUNK_BLOCK_WAIT_ATTEMPTS must be a positive integer" "$invalid_contract_app_chunk_attempts_output"
-
-invalid_contract_app_chunk_tick_output="$TMP_DIR/contract-app-chunk-tick.out"
-invalid_contract_app_chunk_tick_status=0
-(
-  export SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS=maybe
-  submit_contract_app_manifest_for_env testnet "$TMP_DIR/missing-app-config.toml" "$ROOT/iroha.contracts.toml"
-) >"$invalid_contract_app_chunk_tick_output" 2>&1 || invalid_contract_app_chunk_tick_status="$?"
-[[ "$invalid_contract_app_chunk_tick_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_CHUNK_TICK_BLOCKS must be 0, 1, true, false, yes, no, on, or off" "$invalid_contract_app_chunk_tick_output"
-
-invalid_contract_app_chunk_stall_output="$TMP_DIR/contract-app-chunk-stall.out"
-invalid_contract_app_chunk_stall_status=0
-(
-  export SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS=1.5
-  submit_contract_app_manifest_for_env testnet "$TMP_DIR/missing-app-config.toml" "$ROOT/iroha.contracts.toml"
-) >"$invalid_contract_app_chunk_stall_output" 2>&1 || invalid_contract_app_chunk_stall_status="$?"
-[[ "$invalid_contract_app_chunk_stall_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_CHUNK_QUEUED_STALL_MAX_MS must be a nonnegative integer" "$invalid_contract_app_chunk_stall_output"
-
 invalid_contract_activation_timeout_output="$TMP_DIR/contract-activation-timeout.out"
 invalid_contract_activation_timeout_status=0
 (
-  export SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS=1.5
+  export SORASWAP_CONTRACT_ACTIVATION_MAX_TIME_SECS=1.5
   wait_for_contract_alias_activation "$TMP_DIR/missing-activation-config.toml" "fixture.contract" "tairac1fixture"
 ) >"$invalid_contract_activation_timeout_output" 2>&1 || invalid_contract_activation_timeout_status="$?"
 [[ "$invalid_contract_activation_timeout_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_ACTIVATION_MAX_TIME_SECS must be a nonnegative integer" "$invalid_contract_activation_timeout_output"
+rg -Fq "SORASWAP_CONTRACT_ACTIVATION_MAX_TIME_SECS must be a nonnegative integer" "$invalid_contract_activation_timeout_output"
 
 invalid_contract_activation_tick_blocks_output="$TMP_DIR/contract-activation-tick-blocks.out"
 invalid_contract_activation_tick_blocks_status=0
 (
-  export SORASWAP_CONTRACT_APP_ACTIVATION_TICK_BLOCKS=maybe
+  export SORASWAP_CONTRACT_ACTIVATION_TICK_BLOCKS=maybe
   wait_for_contract_alias_activation "$TMP_DIR/missing-activation-config.toml" "fixture.contract" "tairac1fixture"
 ) >"$invalid_contract_activation_tick_blocks_output" 2>&1 || invalid_contract_activation_tick_blocks_status="$?"
 [[ "$invalid_contract_activation_tick_blocks_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_ACTIVATION_TICK_BLOCKS must be 0, 1, true, false, yes, no, on, or off" "$invalid_contract_activation_tick_blocks_output"
+rg -Fq "SORASWAP_CONTRACT_ACTIVATION_TICK_BLOCKS must be 0, 1, true, false, yes, no, on, or off" "$invalid_contract_activation_tick_blocks_output"
 
 invalid_contract_activation_tick_interval_output="$TMP_DIR/contract-activation-tick-interval.out"
 invalid_contract_activation_tick_interval_status=0
 (
-  export SORASWAP_CONTRACT_APP_ACTIVATION_TICK_INTERVAL_SECS=-1
+  export SORASWAP_CONTRACT_ACTIVATION_TICK_INTERVAL_SECS=-1
   wait_for_contract_alias_activation "$TMP_DIR/missing-activation-config.toml" "fixture.contract" "tairac1fixture"
 ) >"$invalid_contract_activation_tick_interval_output" 2>&1 || invalid_contract_activation_tick_interval_status="$?"
 [[ "$invalid_contract_activation_tick_interval_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_APP_ACTIVATION_TICK_INTERVAL_SECS must be a nonnegative integer" "$invalid_contract_activation_tick_interval_output"
+rg -Fq "SORASWAP_CONTRACT_ACTIVATION_TICK_INTERVAL_SECS must be a nonnegative integer" "$invalid_contract_activation_tick_interval_output"
 
 invalid_block_wait_attempts_output="$TMP_DIR/block-wait-attempts.out"
 invalid_block_wait_attempts_status=0
@@ -16671,40 +15815,11 @@ invalid_block_wait_tick_status=0
 [[ "$invalid_block_wait_tick_status" != "0" ]]
 rg -Fq "block wait tick flag for fixture block wait must be 0, 1, true, false, yes, no, on, or off" "$invalid_block_wait_tick_output"
 
-invalid_contract_call_retry_output="$TMP_DIR/contract-call-retry.out"
-invalid_contract_call_retry_status=0
-(
-  export SORASWAP_CONTRACT_CALL_RETRY_COUNT=0
-  submit_contract_call "$TMP_DIR/missing-call-config.toml" "fixture-contract" "fixture_entry"
-) >"$invalid_contract_call_retry_output" 2>&1 || invalid_contract_call_retry_status="$?"
-[[ "$invalid_contract_call_retry_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_CALL_RETRY_COUNT must be a positive integer" "$invalid_contract_call_retry_output"
-
-invalid_contract_call_retry_delay_output="$TMP_DIR/contract-call-retry-delay.out"
-invalid_contract_call_retry_delay_status=0
-(
-  export SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS=-1
-  submit_contract_call "$TMP_DIR/missing-call-config.toml" "fixture-contract" "fixture_entry"
-) >"$invalid_contract_call_retry_delay_output" 2>&1 || invalid_contract_call_retry_delay_status="$?"
-[[ "$invalid_contract_call_retry_delay_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_CALL_RETRY_DELAY_SECS must be a nonnegative number" "$invalid_contract_call_retry_delay_output"
-
-invalid_contract_call_timeout_output="$TMP_DIR/contract-call-timeout.out"
-invalid_contract_call_timeout_status=0
-(
-  export SORASWAP_CONTRACT_CALL_RETRY_COUNT=1
-  export SORASWAP_CONTRACT_CALL_MAX_TIME_SECS=-1
-  submit_contract_call "$TMP_DIR/missing-call-config.toml" "fixture-contract" "fixture_entry"
-) >"$invalid_contract_call_timeout_output" 2>&1 || invalid_contract_call_timeout_status="$?"
-[[ "$invalid_contract_call_timeout_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_CALL_MAX_TIME_SECS must be a nonnegative number" "$invalid_contract_call_timeout_output"
-
 invalid_contract_call_ttl_output="$TMP_DIR/contract-call-ttl.out"
 invalid_contract_call_ttl_status=0
 (
-  export SORASWAP_CONTRACT_CALL_RETRY_COUNT=1
   export SORASWAP_CONTRACT_CALL_TRANSACTION_TTL_MS=1.5
-  submit_contract_call "$TMP_DIR/missing-call-config.toml" "fixture-contract" "fixture_entry"
+  soraswap_contract_call_transaction_ttl_ms_for_config "$TMP_DIR/missing-call-config.toml"
 ) >"$invalid_contract_call_ttl_output" 2>&1 || invalid_contract_call_ttl_status="$?"
 [[ "$invalid_contract_call_ttl_status" != "0" ]]
 rg -Fq "SORASWAP_CONTRACT_CALL_TRANSACTION_TTL_MS must be a nonnegative integer" "$invalid_contract_call_ttl_output"
@@ -16738,15 +15853,6 @@ invalid_public_call_ttl_status=0
 [[ "$invalid_public_call_ttl_status" != "0" ]]
 rg -Fq "SORASWAP_PUBLIC_CONTRACT_CALL_TRANSACTION_TTL_MS must be a nonnegative integer" "$invalid_public_call_ttl_output"
 
-invalid_contract_view_timeout_output="$TMP_DIR/contract-view-timeout.out"
-invalid_contract_view_timeout_status=0
-(
-  export SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS=-1
-  submit_contract_view "$TMP_DIR/missing-view-config.toml" "fixture-contract" "fixture_entry"
-) >"$invalid_contract_view_timeout_output" 2>&1 || invalid_contract_view_timeout_status="$?"
-[[ "$invalid_contract_view_timeout_status" != "0" ]]
-rg -Fq "SORASWAP_CONTRACT_VIEW_MAX_TIME_SECS must be a nonnegative number" "$invalid_contract_view_timeout_output"
-
 invalid_contract_view_expect_retry_output="$TMP_DIR/contract-view-expect-retry.out"
 invalid_contract_view_expect_retry_status=0
 (
@@ -16775,9 +15881,9 @@ contract_view_expect_stale_output="$TMP_DIR/contract-view-expect-stale.out"
     fixture_view_attempts=$(( fixture_view_attempts + 1 ))
     printf '%s\n' "$fixture_view_attempts" > "$fixture_view_attempts_file"
     if (( fixture_view_attempts < 3 )); then
-      printf '%s\n' '{"ok":true,"result":[1,10,10,0,0]}'
+      printf '%s\n' '{"ok":true,"result":["1","10","10","0","0"],"normalized_result":[1,10,10,0,0]}'
     else
-      printf '%s\n' '{"ok":true,"result":[1,10,10,0,1]}'
+      printf '%s\n' '{"ok":true,"result":["1","10","10","0","1"],"normalized_result":[1,10,10,0,1]}'
     fi
   }
 
@@ -16793,7 +15899,7 @@ contract_view_expect_stale_output="$TMP_DIR/contract-view-expect-stale.out"
     "fixture refunded allocation"
   printf 'attempts=%s\n' "$(<"$fixture_view_attempts_file")"
 ) >"$contract_view_expect_stale_output" 2>&1
-rg -Fq '"result":[1,10,10,0,1]' "$contract_view_expect_stale_output"
+rg -Fq '"normalized_result":[1,10,10,0,1]' "$contract_view_expect_stale_output"
 rg -Fq "attempts=3" "$contract_view_expect_stale_output"
 
 invalid_torii_read_timeout_output="$TMP_DIR/torii-read-timeout.out"
@@ -16809,7 +15915,7 @@ invalid_torii_read_retry_count_output="$TMP_DIR/torii-read-retry-count.out"
 invalid_torii_read_retry_count_status=0
 (
   export SORASWAP_TORII_READ_RETRY_COUNT=0
-  submit_contract_view "$TMP_DIR/missing-view-config.toml" "tairac1fixture" "fixture_entry"
+  soraswap_validate_torii_read_retry_settings
 ) >"$invalid_torii_read_retry_count_output" 2>&1 || invalid_torii_read_retry_count_status="$?"
 [[ "$invalid_torii_read_retry_count_status" != "0" ]]
 rg -Fq "SORASWAP_TORII_READ_RETRY_COUNT must be a positive integer" "$invalid_torii_read_retry_count_output"
@@ -16818,7 +15924,7 @@ invalid_torii_read_retry_delay_output="$TMP_DIR/torii-read-retry-delay.out"
 invalid_torii_read_retry_delay_status=0
 (
   export SORASWAP_TORII_READ_RETRY_DELAY_SECS=-1
-  submit_contract_view "$TMP_DIR/missing-view-config.toml" "tairac1fixture" "fixture_entry"
+  soraswap_validate_torii_read_retry_settings
 ) >"$invalid_torii_read_retry_delay_output" 2>&1 || invalid_torii_read_retry_delay_status="$?"
 [[ "$invalid_torii_read_retry_delay_status" != "0" ]]
 rg -Fq "SORASWAP_TORII_READ_RETRY_DELAY_SECS must be a nonnegative number" "$invalid_torii_read_retry_delay_output"
@@ -16831,15 +15937,6 @@ invalid_public_write_health_queue_status=0
 ) >"$invalid_public_write_health_queue_output" 2>&1 || invalid_public_write_health_queue_status="$?"
 [[ "$invalid_public_write_health_queue_status" != "0" ]]
 rg -Fq "SORASWAP_PUBLIC_WRITE_HEALTH_QUEUE_MAX must be a nonnegative integer" "$invalid_public_write_health_queue_output"
-
-invalid_public_write_health_qc_lag_output="$TMP_DIR/public-write-health-qc-lag.out"
-invalid_public_write_health_qc_lag_status=0
-(
-  export SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX=bad
-  soraswap_validate_public_write_health_settings
-) >"$invalid_public_write_health_qc_lag_output" 2>&1 || invalid_public_write_health_qc_lag_status="$?"
-[[ "$invalid_public_write_health_qc_lag_status" != "0" ]]
-rg -Fq "SORASWAP_PUBLIC_WRITE_HEALTH_QC_LAG_MAX must be a nonnegative integer" "$invalid_public_write_health_qc_lag_output"
 
 invalid_public_write_health_age_output="$TMP_DIR/public-write-health-age.out"
 invalid_public_write_health_age_status=0
@@ -17406,8 +16503,8 @@ rg -Fq 'soraswap_require_binary_integer_setting "SORASWAP_RUN_CONTRACT_CONSOLE_L
 rg -Fq 'soraswap_validate_torii_read_max_time || exit 1' "$ROOT/tests/contract_console_live_smoke.sh"
 rg -Fq -- '--max-time "$SORASWAP_TORII_READ_MAX_TIME_SECS"' "$ROOT/tests/contract_console_live_smoke.sh"
 rg -Fq 'SORASWAP_RUN_TESTNET_SMOKE must be 0 or 1' "$ROOT/tests/isolated_e2e.sh"
-rg -Fq 'default_release_irohad="$ROOT/../iroha/target/release/irohad"' "$ROOT/tests/isolated_e2e.sh"
-rg -Fq 'export IROHAD_BIN="$default_release_irohad"' "$ROOT/tests/isolated_e2e.sh"
+rg -Fq 'default_release_iroha3d="$SORASWAP_IROHA_ROOT/target/release/iroha3d"' "$ROOT/tests/isolated_e2e.sh"
+rg -Fq 'export IROHA3D_BIN="$default_release_iroha3d"' "$ROOT/tests/isolated_e2e.sh"
 rg -Fq 'SORASWAP_ISOLATED_LOCAL_UP_TIMEOUT_SECS="${SORASWAP_ISOLATED_LOCAL_UP_TIMEOUT_SECS:-0}"' "$ROOT/tests/isolated_e2e.sh"
 rg -Fq 'isolated_require_disabled_timeout SORASWAP_ISOLATED_LOCAL_UP_TIMEOUT_SECS' "$ROOT/tests/isolated_e2e.sh"
 rg -Fq 'isolated_default_localnet_dir' "$ROOT/tests/isolated_e2e.sh"
@@ -17417,22 +16514,8 @@ rg -Fq 'isolated_audit_live_peer_pids' "$ROOT/tests/isolated_e2e.sh"
 rg -Fq 'isolated_verify_cleanup_postcondition' "$ROOT/tests/isolated_e2e.sh"
 rg -Fq './stop.sh' "$ROOT/tests/isolated_e2e.sh"
 ! rg -n '\b(kill|pkill|killall)\b|local_down\.sh|run_with_timeout|process_tree_pids' "$ROOT/tests/isolated_e2e.sh" >/dev/null
-rg -Fq 'snapshot_post_deploy_artifacts' "$ROOT/tests/isolated_e2e.sh"
-rg -Fq 'SORASWAP_ISOLATED_DEPLOY_ARTIFACT_SNAPSHOT_DIR' "$ROOT/tests/isolated_e2e.sh"
 rg -Fq 'defaults to API/P2P ports `49180` / `49337`' "$ROOT/README.md"
 zsh "$ROOT/tests/isolated_e2e_safety.sh"
-rg -Fq 'fresh sibling `../iroha/target/release/irohad` exists' "$ROOT/README.md"
-rg -Fq 'SORASWAP_ISOLATED_DEPLOY_ARTIFACT_SNAPSHOT_DIR' "$ROOT/tests/isolated_foundation_e2e.sh"
-rg -Fq 'soraswap.foundation.bundle.deploy.json' "$ROOT/tests/isolated_foundation_e2e.sh"
-rg -Fq '&& "${destination:t}" != "soraswap.foundation.bundle.deploy.json"' "$ROOT/tests/isolated_foundation_e2e.sh"
-rg -Fq '&& "${source:t}" != "soraswap.foundation.bundle.deploy.json"' "$ROOT/tests/isolated_foundation_e2e.sh"
-rg -Fq '|| "${record_path:t}" == "soraswap.foundation.bundle.deploy.json"' "$ROOT/scripts/common.sh"
-rg -Fq '|| "${contract_deploy_path:t}" == "soraswap.foundation.bundle.deploy.json"' "$ROOT/scripts/release_checklist.sh"
-rg -Fq '|| "${record_path:t}" == "soraswap.foundation.bundle.deploy.json"' "$ROOT/scripts/release_phase_guards.sh"
-rg -Fq '"soraswap.foundation.bundle.deploy.json"' "$ROOT/scripts/serve_contract_console.py"
-rg -Fq 'soraswap.foundation.bundle.deploy.json' "$ROOT/tests/test_contract_console.py"
-rg -Fq 'write_contract_shaped_foundation_bundle_receipt' "$ROOT/tests/test_trader_ui.py"
-rg -Fq 'unset SORASWAP_ISOLATED_DEPLOY_ARTIFACT_SNAPSHOT_DIR' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'soraswap_require_binary_integer_setting "SORASWAP_VAULT_SMOKE_ASYNC_REDEEM"' "$ROOT/scripts/smoke_local.sh"
 rg -Fq 'soraswap_require_binary_integer_setting "SORASWAP_VAULT_SMOKE_ASYNC_REDEEM"' "$ROOT/scripts/smoke_public_mutating.sh"
 rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_VAULT_SMOKE_STRATEGY_CODE"' "$ROOT/scripts/smoke_local.sh"
@@ -17454,12 +16537,9 @@ rg -Fq 'soraswap_require_positive_integer_setting "contract call gas limit"' "$R
 rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_CALL_TRANSACTION_TTL_MS"' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_DEPLOY_TRANSACTION_TTL_MS"' "$ROOT/scripts/common.sh"
 rg -Fq 'transaction_ttl_ms: $transaction_ttl_ms' "$ROOT/scripts/common.sh"
-rg -Fq 'app_args+=(--transaction-ttl-ms "$transaction_ttl_ms")' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_CONTRACT_APP_DEPLOY_PROCESS_TIMEOUT_SECS"' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_require_nonnegative_integer_setting "SORASWAP_LEDGER_COMMAND_TIMEOUT_SECS"' "$ROOT/scripts/common.sh"
 rg -Fq 'local progress_log="${SORASWAP_DEPLOY_PROGRESS_LOG:-1}"' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_require_positive_integer_setting "contract view gas limit"' "$ROOT/scripts/common.sh"
-rg -Fq 'soraswap_require_nonnegative_number_setting "SORASWAP_CONTRACT_DEPLOY_MAX_TIME_SECS"' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_require_nonnegative_number_setting "SORASWAP_TORII_READ_MAX_TIME_SECS"' "$ROOT/scripts/common.sh"
 awk '
   /asset_definition_alias_exists\(\)/ { in_function = 1 }
@@ -17476,10 +16556,7 @@ awk '
 for torii_timeout_guarded_function in \
   account_exists \
   contract_manifest_json_by_code_hash \
-  contract_code_bytes_http_status_by_code_hash \
-  pipeline_transaction_status_json \
-  contract_alias_resolve_json \
-  recent_contract_aliases_from_explorer
+  pipeline_transaction_status_json
 do
   awk -v fn="$torii_timeout_guarded_function" '
     $0 ~ ("^" fn "\\(\\) \\{") { in_function = 1 }
@@ -17488,6 +16565,10 @@ do
     END { exit(found ? 0 : 1) }
   ' "$ROOT/scripts/common.sh"
 done
+rg -Fq 'iroha_cli --config "$config" contract code get' "$ROOT/scripts/common.sh"
+rg -Fq 'iroha_cli_json --config "$config" contract alias resolve "$contract_alias"' "$ROOT/scripts/common.sh"
+! rg -Fq '/v1/contracts/code-bytes/' "$ROOT/scripts/common.sh"
+! rg -Fq '/v1/contracts/aliases/resolve' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_validate_poll_window "chain fingerprint"' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_validate_poll_window "account existence wait"' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_validate_poll_window "positive asset balance wait"' "$ROOT/scripts/common.sh"
@@ -17703,6 +16784,8 @@ rg -Fq 'and .environment == "local"' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'and .status == "completed"' "$ROOT/scripts/release_checklist.sh"
 rg -Fq 'bootstrap domain and helper assets via $(soraswap_display_path "$config")' "$ROOT/scripts/bootstrap_assets.sh"
 rg -Fq 'bootstrap contract state via $(soraswap_display_path "$config")' "$ROOT/scripts/bootstrap_contract_state.sh"
+rg -Fq 'bootstrap_scope="${SORASWAP_BOOTSTRAP_SCOPE:-${SORASWAP_DEPLOY_SCOPE:-full}}"' "$ROOT/scripts/bootstrap_contract_state.sh"
+rg -Fq 'full bootstrap requires SORASWAP_DEPLOY_SCOPE=full' "$ROOT/scripts/bootstrap_contract_state.sh"
 rg -Fq 'failed to derive local oracle keypair for $(soraswap_display_path "$config")' "$ROOT/scripts/common.sh"
 rg -Fq 'failed to derive DeFi oracle provider account from $(soraswap_display_path "$config")' "$ROOT/scripts/common.sh"
 rg -Fq 'client config still contains example credentials or local endpoints: $(soraswap_display_path "$config_abs")' "$ROOT/scripts/common.sh"
@@ -17710,7 +16793,6 @@ rg -Fq 'refusing to use a $config_env client config for $public_env public actio
 rg -Fq 'soraswap_regex_match_i "$SORASWAP_PLACEHOLDER_VALUE_PATTERN" "$value"' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_regex_match_i "$SORASWAP_CLIENT_CONFIG_PLACEHOLDER_PATTERN" "$uncommented_config"' "$ROOT/scripts/common.sh"
 rg -Fq 'grep -Eiq -- "$pattern" <<<"$value"' "$ROOT/scripts/common.sh"
-rg -Fq 'contract app manifest contains no contracts: $(soraswap_display_path "$manifest_path")' "$ROOT/scripts/common.sh"
 rg -Fq 'run from repo root: SORASWAP_ALLOW_TESTNET_MUTATIONS=1 SORASWAP_CLIENT_CONFIG=\"$(soraswap_display_path "$config")\" scripts/fund_testnet_signer.sh' "$ROOT/scripts/common.sh"
 rg -Fq 'refusing to publish invalid JSON artifact: $(soraswap_display_path "$output_path")' "$ROOT/scripts/common.sh"
 rg -Fq 'missing required file: $(soraswap_display_path "$file_path")' "$ROOT/scripts/common.sh"
@@ -17722,7 +16804,10 @@ rg -Fq 'trap '\''exit 129'\'' HUP' "$ROOT/scripts/deploy_local.sh"
 rg -Fq 'trap '\''exit 143'\'' TERM' "$ROOT/scripts/deploy_local.sh"
 rg -Fq 'trap '\''exit 129'\'' HUP' "$ROOT/scripts/deploy_public.sh"
 rg -Fq 'trap '\''exit 143'\'' TERM' "$ROOT/scripts/deploy_public.sh"
-rg -Fq 'tmp_deploy_manifest="$(mktemp "$SORASWAP_ROOT/tmp/soraswap-foundation-manifest.XXXXXX")"' "$ROOT/scripts/deploy_local.sh"
+rg -Fq 'done < <(expected_contract_ids_for_deploy_scope "$deploy_scope")' "$ROOT/scripts/deploy_local.sh"
+rg -Fq 'soraswap_require_contract_source_hygiene "$SORASWAP_ROOT" "foundation compile failed"' "$ROOT/scripts/deploy_local.sh"
+rg -Fq 'compile_one "$contract"' "$ROOT/scripts/deploy_local.sh"
+rg -Fq 'SORASWAP_BOOTSTRAP_SCOPE="${SORASWAP_BOOTSTRAP_SCOPE:-${SORASWAP_DEPLOY_SCOPE:-full}}"' "$ROOT/tests/isolated_e2e.sh"
 rg -Fq 'legacy_pid_matches_localnet "$pid"' "$ROOT/scripts/local_down.sh"
 rg -Fq 'removed stale legacy local Nexus pid file $legacy_pid_file' "$ROOT/scripts/local_down.sh"
 rg -Fq 'peer_pid_matches_localnet_dir "$pid" "$DEFAULT_LOCALNET_DIR/${peer_name}.toml"' "$ROOT/scripts/local_down.sh"
@@ -17731,7 +16816,6 @@ rg -Fq 'prepare_env_chain_state "$public_env" "$config" >/dev/null' "$ROOT/scrip
 rg -Fq 'echo "$public_env chain snapshot refreshed: $(soraswap_display_path "$latest")"' "$ROOT/scripts/refresh_public_chain_snapshot.sh"
 rg -Fq 'export SORASWAP_PUBLIC_ENV=testnet' "$ROOT/scripts/refresh_testnet_chain_snapshot.sh"
 rg -Fq 'export SORASWAP_PUBLIC_ENV=production' "$ROOT/scripts/refresh_production_chain_snapshot.sh"
-rg -Fq 'contract deploy request could not reach $torii_base/v1/contracts/deploy for $(soraswap_display_path "$code_file")' "$ROOT/scripts/common.sh"
 rg -Fq 'contract deploy route unresolved for $(soraswap_display_path "$code_file")' "$ROOT/scripts/common.sh"
 rg -Fq 'contract deploy request failed for $(soraswap_display_path "$code_file")' "$ROOT/scripts/common.sh"
 rg -Fq 'started local Nexus using generated localnet in $(soraswap_display_path "$localnet_dir")' "$ROOT/scripts/local_up.sh"
@@ -17754,7 +16838,7 @@ rg -Fq 'echo "evidence: $(soraswap_display_path "$latest_report")"' "$ROOT/scrip
 rg -Fq 'cp $setup_config_example $config_report_path' "$ROOT/scripts/taira_preflight.sh"
 rg -Fq 'export SORASWAP_CLIENT_CONFIG="$config_report_path"' "$ROOT/scripts/taira_preflight.sh"
 rg -Fq 'contract console smoke ok: $(soraswap_display_path "$latest_report")' "$ROOT/scripts/contract_console_public_smoke.sh"
-rg -Fq 'taira repair plan: wrote $(soraswap_display_path "$latest_report")' "$ROOT/scripts/taira_state_repair_plan.sh"
+rg -Fq 'taira diagnosis: wrote $(soraswap_display_path "$latest_report")' "$ROOT/scripts/taira_state_repair_plan.sh"
 rg -Fq 'rwa compliance evidence already current: $(soraswap_display_path "$latest_report")' "$ROOT/scripts/record_rwa_compliance.sh"
 rg -Fq 'echo "evidence: $(soraswap_display_path "$latest_report")"' "$ROOT/scripts/record_rwa_compliance.sh"
 for public_report_path_script in \
@@ -17844,6 +16928,7 @@ default_testnet_placeholder_root="$TMP_DIR/default-testnet-placeholder-root"
 mkdir -p "$default_testnet_placeholder_root/config/testnet"
 cat > "$default_testnet_placeholder_root/config/testnet/taira.client.toml" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://example.invalid/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -17866,6 +16951,7 @@ default_production_taira_chain_root="$TMP_DIR/default-production-taira-chain-roo
 mkdir -p "$default_production_taira_chain_root/config/production"
 cat > "$default_production_taira_chain_root/config/production/production.client.toml" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://production.soraswap.dev/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -17981,6 +17067,7 @@ refresh_testnet_placeholder_root="$TMP_DIR/refresh-testnet-placeholder-root"
 mkdir -p "$refresh_testnet_placeholder_root/config/testnet"
 cat > "$refresh_testnet_placeholder_root/config/testnet/taira.client.toml" <<'EOF'
 chain = "fc56984b-2be7-431d-840e-21514d1883f0"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://example.invalid/"
 public_key = "CHANGE_ME"
 private_key = "CHANGE_ME"
@@ -18004,6 +17091,7 @@ refresh_testnet_wrong_chain_root="$TMP_DIR/refresh-testnet-wrong-chain-root"
 mkdir -p "$refresh_testnet_wrong_chain_root/config/testnet"
 cat > "$refresh_testnet_wrong_chain_root/config/testnet/taira.client.toml" <<'EOF'
 chain = "wrong-testnet-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://taira.sora.org/"
 public_key = "ed0120d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
 private_key = "8026201111111111111111111111111111111111111111111111111111111111111111"
@@ -18014,28 +17102,20 @@ refresh_testnet_wrong_chain_status=0
   unset SORASWAP_CLIENT_CONFIG
   unset SORASWAP_PRODUCTION_CLIENT_CONFIG
   unset SORASWAP_PUBLIC_ENV
-  unset SORASWAP_TESTNET_CHAIN_ID
   export SORASWAP_ROOT="$refresh_testnet_wrong_chain_root"
   run_repo_zsh_script "$ROOT/scripts/refresh_testnet_chain_snapshot.sh"
 ) >"$refresh_testnet_wrong_chain_output" 2>&1 || refresh_testnet_wrong_chain_status="$?"
 [[ "$refresh_testnet_wrong_chain_status" != "0" ]]
-rg -q "Taira client config chain wrong-testnet-chain does not match the expected Taira chain" "$refresh_testnet_wrong_chain_output"
-rg -q "set SORASWAP_TESTNET_CHAIN_ID if this public Taira reset is intentional" "$refresh_testnet_wrong_chain_output"
+rg -q "Taira client config chain wrong-testnet-chain does not match the canonical Taira chain" "$refresh_testnet_wrong_chain_output"
 rg -q "next setup:" "$refresh_testnet_wrong_chain_output"
 rg -q "make refresh-testnet-chain" "$refresh_testnet_wrong_chain_output"
 ! rg -Fq "$TMP_DIR" "$refresh_testnet_wrong_chain_output"
-
-refresh_testnet_wrong_chain_override_output="$TMP_DIR/refresh-testnet-wrong-chain-override.out"
-(
-  export SORASWAP_TESTNET_CHAIN_ID="wrong-testnet-chain"
-  [[ -z "$(testnet_client_config_unexpected_chain_blocker_message "$refresh_testnet_wrong_chain_root/config/testnet/taira.client.toml")" ]]
-) >"$refresh_testnet_wrong_chain_override_output" 2>&1
-! rg -q "does not match the expected Taira chain" "$refresh_testnet_wrong_chain_override_output"
 
 refresh_production_placeholder_root="$TMP_DIR/refresh-production-placeholder-root"
 mkdir -p "$refresh_production_placeholder_root/config/production"
 cat > "$refresh_production_placeholder_root/config/production/production.client.toml" <<'EOF'
 chain = "fixture-production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://example.invalid/"
 public_key = "CHANGE_ME"
 private_key = "CHANGE_ME"
@@ -18059,6 +17139,7 @@ refresh_production_taira_chain_root="$TMP_DIR/refresh-production-taira-chain-roo
 mkdir -p "$refresh_production_taira_chain_root/config/production"
 cat > "$refresh_production_taira_chain_root/config/production/production.client.toml" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://production.soraswap.dev/"
 
 [account]
@@ -18105,6 +17186,7 @@ rg -q "export SORASWAP_PUBLIC_ENV=testnet" "$ROOT/scripts/fund_testnet_signer.sh
 production_cfg="$TMP_DIR/production.client.toml"
 cat > "$production_cfg" <<'EOF'
 chain = "wrong-production-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://production.example.invalid/"
 EOF
 
@@ -18142,7 +17224,6 @@ export CHAIN="$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
 [[ "$(network_prefix_for_config "$production_cfg")" == "369" ]]
 [[ "$(fee_asset_definition_id_for_config "$production_cfg")" == "prod-fee-id" ]]
 [[ "$(fee_asset_label_for_config "$production_cfg")" == "Prod Fee" ]]
-[[ "$(gas_metadata_asset_id_for_config "$production_cfg")" == "Prod Fee" ]]
 
 export SORASWAP_TESTNET_RUN_SUFFIX="testnet-leak"
 export SORASWAP_TESTNET_BRIDGE_ROUTE="testnet_route_leak"
@@ -18176,7 +17257,6 @@ unset SORASWAP_PUBLIC_RUN_SUFFIX SORASWAP_PUBLIC_BRIDGE_ROUTE SORASWAP_PUBLIC_XO
 unset CHAIN ACCOUNT_CHAIN_DISCRIMINANT IROHA_ACCOUNT_CHAIN_DISCRIMINANT
 
 [[ "$(fee_asset_label_for_config "$production_cfg")" == "$SORASWAP_LOCAL_FEE_ASSET_LABEL" ]]
-[[ "$(gas_metadata_asset_id_for_config "$production_cfg")" == "$SORASWAP_LOCAL_FEE_ASSET_DEFINITION_ID" ]]
 
 base_subject="$(contract_subject_account_for_literal "$production_cfg" "$contract_literal")"
 [[ "$base_subject" == "acct:753:ed0120DEADBEEF" ]]
@@ -18184,22 +17264,22 @@ base_subject="$(contract_subject_account_for_literal "$production_cfg" "$contrac
 
 taira_cfg="$TMP_DIR/taira.client.toml"
 cat > "$taira_cfg" <<'EOF'
-chain = "wrong-testnet-chain"
+chain = "fc56984b-2be7-431d-840e-21514d1883f0"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://direct-testnet-node.example.invalid/"
+
+[account]
+domain = "universal"
+profile = "taira"
+public_key = "ed0120d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+private_key = "8026201111111111111111111111111111111111111111111111111111111111111111"
 EOF
 
 export SORASWAP_PUBLIC_ENV=testnet
-[[ "$(config_chain_id_from_config "$taira_cfg")" == "wrong-testnet-chain" ]]
+[[ "$(config_chain_id_from_config "$taira_cfg")" == "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT" ]]
 [[ "$(network_prefix_for_config "$taira_cfg")" == "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT" ]]
 [[ "$(fee_asset_definition_id_for_config "$taira_cfg")" == "$SORASWAP_TESTNET_FEE_ASSET_DEFINITION_ID" ]]
 [[ "$(fee_asset_label_for_config "$taira_cfg")" == "$SORASWAP_TESTNET_FEE_ASSET_LABEL" ]]
-[[ "$(gas_metadata_asset_id_for_config "$taira_cfg")" == "$SORASWAP_TESTNET_FEE_ASSET_LABEL" ]]
-export SORASWAP_TESTNET_CHAIN_ID="$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
-export SORASWAP_TESTNET_CHAIN_DISCRIMINANT="$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT"
-[[ "$(config_chain_id_from_config "$taira_cfg")" == "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT" ]]
-[[ "$(network_prefix_for_config "$taira_cfg")" == "$SORASWAP_TESTNET_CHAIN_DISCRIMINANT_DEFAULT" ]]
-SORASWAP_TESTNET_CHAIN_ID=""
-SORASWAP_TESTNET_CHAIN_DISCRIMINANT=""
 unset SORASWAP_PUBLIC_ENV
 
 current_fingerprint='{"torii_url":"https://node-a.example.invalid","chain":"same-chain","block_1_hash":"same-block-1"}'
@@ -18239,9 +17319,35 @@ snapshot_check_contracts="$TMP_DIR/snapshot-check.contracts.json"
 snapshot_check_deploy="$TMP_DIR/snapshot-check.deploy.json"
 snapshot_check_preflight="$TMP_DIR/snapshot-check.preflight.json"
 snapshot_check_probe="$TMP_DIR/snapshot-check.nested_call_probe.json"
-snapshot_check_contracts_array="$(expected_contract_ids | jq -R -s --arg env testnet '
+snapshot_check_native_response="$(jq -c \
+  --argjson chain "$current_fingerprint" \
+  '.torii_url = $chain.torii_url
+    | .chain_id = $chain.chain
+    | .operation_receipt.torii_url = $chain.torii_url
+    | .operation_receipt.chain_id = $chain.chain' \
+  <<<"$native_contract_deploy_response")"
+snapshot_check_contracts_array="$(expected_contract_ids | jq -R -s \
+  --arg env testnet \
+  --argjson chain "$current_fingerprint" \
+  --argjson response "$snapshot_check_native_response" \
+  --arg abi_hash_hex bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb '
   split("\n")
-  | map(select(length > 0) | {contract_key: ., environment: $env})
+  | map(select(length > 0) | {
+      contract_key: .,
+      generated_at: "20260414T000010Z",
+      environment: $env,
+      contract_source: ("contracts/" + . + ".ko"),
+      contract_alias: $response.contract_alias,
+      dataspace_alias: $response.deployment_state.dataspace_alias,
+      dataspace_id: $response.deployment_state.dataspace_id,
+      contract_address: $response.contract_address,
+      deploy_nonce: $response.deploy_nonce,
+      code_hash_hex: $response.code_hash_hex,
+      abi_hash_hex: $abi_hash_hex,
+      deploy_strategy: "ivm_contract_deploy",
+      chain_fingerprint: $chain,
+      response: $response
+    })
 ')"
 jq -cn --argjson chain "$current_fingerprint" --argjson contracts "$snapshot_check_contracts_array" '{
   generated_at: "20260414T000010Z",
@@ -18284,11 +17390,11 @@ jq -cn --argjson chain "$current_fingerprint" '{
   warnings: [],
   environment: {
     mutations_allowed: true,
-    oracle_public_key_present: true,
-    oracle_private_key_present: true,
-    oracle_keypair_verified: true,
-    oracle_public_key_source: "fixture",
-    oracle_private_key_source: "fixture"
+    oracle_client_config_present: true,
+    oracle_client_config_valid: true,
+    oracle_account_derivable: true,
+    oracle_account_distinct: true,
+    oracle_client_config_source: "fixture"
   },
   endpoint: {
     mcp_http_status: "200",
@@ -18296,7 +17402,8 @@ jq -cn --argjson chain "$current_fingerprint" '{
     health_issues: [],
     health: {
       status: {http_status: "200", json_available: true},
-      sumeragi: {http_status: "200", json_available: true}
+      sumeragi: {http_status: "200", json_available: true},
+      sumeragi_diagnostics: {http_status: "200", json_available: true}
     }
   },
   chain: {
@@ -18323,15 +17430,18 @@ jq -e '.status == "completed"' <<<"$snapshot_check_json" >/dev/null
 jq '.generated_at = "20260414T000006Z"' "$snapshot_check_preflight" > "$TMP_DIR/snapshot-check-stale-deploy-preflight.json"
 snapshot_check_stale_deploy_preflight_json="$(public_current_deploy_snapshot_check_json testnet "$current_fingerprint" "$snapshot_check_contracts" "$snapshot_check_deploy" "$TMP_DIR/snapshot-check-stale-deploy-preflight.json" "$snapshot_check_probe")"
 jq -e '.status == "degraded" and (.output | contains("deploy report is older than current ready preflight"))' <<<"$snapshot_check_stale_deploy_preflight_json" >/dev/null
-jq '.environment.oracle_keypair_verified = false' "$snapshot_check_preflight" > "$TMP_DIR/snapshot-check-unverified-oracle-preflight.json"
-snapshot_check_unverified_oracle_json="$(public_current_deploy_snapshot_check_json testnet "$current_fingerprint" "$snapshot_check_contracts" "$snapshot_check_deploy" "$TMP_DIR/snapshot-check-unverified-oracle-preflight.json" "$snapshot_check_probe")"
-jq -e '.status == "degraded" and (.output | contains("preflight report is not release-ready for current chain"))' <<<"$snapshot_check_unverified_oracle_json" >/dev/null
+jq '.environment.oracle_client_config_valid = false' "$snapshot_check_preflight" > "$TMP_DIR/snapshot-check-invalid-oracle-client-preflight.json"
+snapshot_check_invalid_oracle_client_json="$(public_current_deploy_snapshot_check_json testnet "$current_fingerprint" "$snapshot_check_contracts" "$snapshot_check_deploy" "$TMP_DIR/snapshot-check-invalid-oracle-client-preflight.json" "$snapshot_check_probe")"
+jq -e '.status == "degraded" and (.output | contains("preflight report is not release-ready for current chain"))' <<<"$snapshot_check_invalid_oracle_client_json" >/dev/null
 jq '.contracts = .contracts[1:]' "$snapshot_check_contracts" > "$TMP_DIR/snapshot-check-partial-contracts.json"
 snapshot_check_partial_contracts_json="$(public_current_deploy_snapshot_check_json testnet "$current_fingerprint" "$TMP_DIR/snapshot-check-partial-contracts.json" "$snapshot_check_deploy" "$snapshot_check_preflight" "$snapshot_check_probe")"
 jq -e '.status == "degraded" and (.output | contains("current contract set"))' <<<"$snapshot_check_partial_contracts_json" >/dev/null
 jq '.contracts += [.contracts[0]]' "$snapshot_check_contracts" > "$TMP_DIR/snapshot-check-duplicate-contracts.json"
 snapshot_check_duplicate_contracts_json="$(public_current_deploy_snapshot_check_json testnet "$current_fingerprint" "$TMP_DIR/snapshot-check-duplicate-contracts.json" "$snapshot_check_deploy" "$snapshot_check_preflight" "$snapshot_check_probe")"
-jq -e '.status == "degraded" and (.output | contains("current contract set"))' <<<"$snapshot_check_duplicate_contracts_json" >/dev/null
+jq -e '.status == "degraded" and (.output | contains("closed current deployment-evidence schema"))' <<<"$snapshot_check_duplicate_contracts_json" >/dev/null
+jq '(.contracts[0].name = .contracts[0].contract_key) | del(.contracts[0].contract_key)' "$snapshot_check_contracts" > "$TMP_DIR/snapshot-check-name-fallback.json"
+snapshot_check_name_fallback_json="$(public_current_deploy_snapshot_check_json testnet "$current_fingerprint" "$TMP_DIR/snapshot-check-name-fallback.json" "$snapshot_check_deploy" "$snapshot_check_preflight" "$snapshot_check_probe")"
+jq -e '.status == "degraded" and (.output | contains("closed current deployment-evidence schema"))' <<<"$snapshot_check_name_fallback_json" >/dev/null
 jq '.phases.preflight.status = "degraded"' "$snapshot_check_deploy" > "$TMP_DIR/snapshot-check-degraded-preflight.json"
 snapshot_check_degraded_preflight_json="$(public_current_deploy_snapshot_check_json testnet "$current_fingerprint" "$snapshot_check_contracts" "$TMP_DIR/snapshot-check-degraded-preflight.json" "$snapshot_check_preflight" "$snapshot_check_probe")"
 jq -e '.status == "degraded" and (.output | contains("completed required deploy phases"))' <<<"$snapshot_check_degraded_preflight_json" >/dev/null
@@ -18358,63 +17468,60 @@ write_reusable_contract_fixture() {
   local deploy_nonce="$5"
   local code_hash="$6"
   local abi_hash="$7"
-  local tx_hash="$8"
+  local response_json
 
-  jq -cn \
-    --arg generated_at "20260414T000020Z" \
-    --arg environment testnet \
-    --arg contract_key "$contract_key" \
-    --arg contract_source "$contract_source" \
+  response_json="$(jq -cn \
+    --argjson response "$native_contract_deploy_response" \
+    --argjson chain "$current_fingerprint" \
     --arg contract_alias "$contract_alias" \
     --arg contract_address "$contract_address" \
     --argjson deploy_nonce "$deploy_nonce" \
     --arg code_hash_hex "$code_hash" \
+    '$response
+    | .torii_url = $chain.torii_url
+    | .chain_id = $chain.chain
+    | .contract_alias = $contract_alias
+    | .contract_address = $contract_address
+    | .deploy_nonce = $deploy_nonce
+    | .next_deploy_nonce = ($deploy_nonce + 1)
+    | .code_hash_hex = $code_hash_hex
+    | .deployment_state.contract_alias = $contract_alias
+    | .deployment_state.deploy_nonce = ($deploy_nonce | tostring)
+    | .operation_receipt.torii_url = $chain.torii_url
+    | .operation_receipt.chain_id = $chain.chain
+    | .operation_receipt.contract_alias = $contract_alias
+    | .operation_receipt.contract_address = $contract_address
+    | .operation_receipt.code_hash_hex = $code_hash_hex
+    | .operation_receipt.deployment_state = .deployment_state')"
+  jq -cn \
+    --arg contract_key "$contract_key" \
+    --arg contract_source "$contract_source" \
     --arg abi_hash_hex "$abi_hash" \
-    --arg tx_hash_hex "$tx_hash" \
     --argjson chain "$current_fingerprint" \
+    --argjson response "$response_json" \
     '{
       contract_key: $contract_key,
-      generated_at: $generated_at,
-      environment: $environment,
+      generated_at: "20260414T000020Z",
+      environment: "testnet",
       contract_source: $contract_source,
-      contract_alias: $contract_alias,
-      dataspace: "universal",
-      contract_address: $contract_address,
-      deploy_nonce: $deploy_nonce,
-      code_hash_hex: $code_hash_hex,
+      contract_alias: $response.contract_alias,
+      dataspace_alias: $response.deployment_state.dataspace_alias,
+      dataspace_id: $response.deployment_state.dataspace_id,
+      contract_address: $response.contract_address,
+      deploy_nonce: $response.deploy_nonce,
+      code_hash_hex: $response.code_hash_hex,
       abi_hash_hex: $abi_hash_hex,
-      deploy_strategy: "bundle",
+      deploy_strategy: "ivm_contract_deploy",
       chain_fingerprint: $chain,
-      response: {
-        ok: true,
-        contract_alias: $contract_alias,
-        contract_address: $contract_address,
-        dataspace: "universal",
-        deploy_nonce: $deploy_nonce,
-        tx_hash_hex: $tx_hash_hex,
-        code_hash_hex: $code_hash_hex,
-        abi_hash_hex: $abi_hash_hex
-      },
-      instance: {
-        contract_id: $contract_address,
-        contract_address: $contract_address,
-        dataspace: "universal",
-        code_hash_hex: $code_hash_hex,
-        abi_hash_hex: $abi_hash_hex,
-        deploy_nonce: $deploy_nonce,
-        tx_hash_hex: $tx_hash_hex,
-        verification: "transaction_and_manifest"
-      }
+      response: $response
     }' > "$reusable_snapshot_root/deployments/testnet/${contract_key}.deploy.json"
   jq -cn \
-    --arg generated_at "20260414T000020Z" \
-    --arg environment testnet \
     --arg contract_key "$contract_key" \
-    --arg code_hash "$code_hash" \
-    --arg abi_hash "$abi_hash" \
+    --arg code_hash "hash:${(U)code_hash}#ABA2" \
+    --arg abi_hash "hash:${(U)abi_hash}#F071" \
     '{
-      generated_at: $generated_at,
-      environment: $environment,
+      generated_at: "20260414T000020Z",
+      environment: "testnet",
       contract_key: $contract_key,
       code_hash: $code_hash,
       abi_hash: $abi_hash
@@ -18426,8 +17533,8 @@ write_reusable_contract_fixture \
   one::alpha.universal \
   tairac1fixturealphaone \
   1 \
-  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
   1111111111111111111111111111111111111111111111111111111111111111
 write_reusable_contract_fixture \
   beta.two \
@@ -18435,7 +17542,7 @@ write_reusable_contract_fixture \
   two::beta.universal \
   tairac1fixturebetatwo \
   2 \
-  cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
   dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
   2222222222222222222222222222222222222222222222222222222222222222
 deployment_records_snapshot_json_for_env testnet 20260414T000020Z \
@@ -18446,7 +17553,7 @@ jq -e \
     and .contracts_snapshot.generated_at == "20260414T000020Z"
     and .contracts_snapshot.contract_count == 2' \
   <<<"$reusable_snapshot_check_json" >/dev/null
-jq '.contracts[0].response.tx_hash_hex = "9999999999999999999999999999999999999999999999999999999999999999"' \
+jq '.contracts[0].generated_at = "20260414T000021Z"' \
   "$reusable_snapshot_root/deployments/testnet/contracts.latest.json" \
   > "$TMP_DIR/reusable-contracts-tampered.json"
 mv "$TMP_DIR/reusable-contracts-tampered.json" \
@@ -18460,7 +17567,7 @@ jq '.contracts[0].response.ok = false' \
 mv "$TMP_DIR/reusable-contracts-bad-receipt.json" \
   "$reusable_snapshot_root/deployments/testnet/contracts.latest.json"
 reusable_snapshot_bad_receipt_json="$(public_reusable_contracts_snapshot_check_json testnet "$current_fingerprint")"
-jq -e '.status == "degraded" and (.output | contains("not reusable"))' \
+jq -e '.status == "degraded" and (.output | contains("closed current deployment-evidence schema"))' \
   <<<"$reusable_snapshot_bad_receipt_json" >/dev/null
 SORASWAP_ROOT="$saved_reusable_root"
 if [[ -n "$saved_reusable_chain" ]]; then
@@ -18514,28 +17621,27 @@ deployment_records_snapshot_json_for_env local >"$missing_local_snapshot_output"
 [[ "$missing_local_snapshot_status" != "0" ]]
 rg -Fq "deployment records snapshot for local requires a complete chain fingerprint" "$missing_local_snapshot_output"
 
-missing_local_materialize_output="$TMP_DIR/missing-local-materialize.out"
-missing_local_materialize_status=0
-materialize_contract_bundle_records_for_env local '{"ok":true,"contracts":[]}' "$TMP_DIR/client.toml" >"$missing_local_materialize_output" 2>&1 || missing_local_materialize_status="$?"
-[[ "$missing_local_materialize_status" != "0" ]]
-rg -Fq "contract bundle materialization for local requires a complete chain fingerprint" "$missing_local_materialize_output"
-
-missing_local_recovery_output="$TMP_DIR/missing-local-recovery.out"
-missing_local_recovery_status=0
-recover_deployment_records_from_live_aliases local "$TMP_DIR/client.toml" >"$missing_local_recovery_output" 2>&1 || missing_local_recovery_status="$?"
-[[ "$missing_local_recovery_status" != "0" ]]
-rg -Fq "deployment record recovery for local requires a complete chain fingerprint" "$missing_local_recovery_output"
 SORASWAP_ROOT="$saved_original_root"
 
 deploy_record_same_chain="$TMP_DIR/deploy.same.json"
-cat > "$deploy_record_same_chain" <<'EOF'
-{"generated_at":"20260414T000000Z","environment":"testnet","chain_fingerprint":{"torii_url":"https://node-b.example.invalid","chain":"same-chain","block_1_hash":"same-block-1"}}
-EOF
+jq -c \
+  --argjson chain '{"torii_url":"https://node-b.example.invalid","chain":"same-chain","block_1_hash":"same-block-1"}' \
+  '.chain_fingerprint = $chain
+    | .response.torii_url = $chain.torii_url
+    | .response.chain_id = $chain.chain
+    | .response.operation_receipt.torii_url = $chain.torii_url
+    | .response.operation_receipt.chain_id = $chain.chain' \
+  <<<"$current_deployment_record" > "$deploy_record_same_chain"
 ! deployment_record_matches_current_chain "$deploy_record_same_chain" "$current_fingerprint"
 deploy_record_matching_chain="$TMP_DIR/deploy.matching.json"
-cat > "$deploy_record_matching_chain" <<'EOF'
-{"generated_at":"20260414T000000Z","environment":"testnet","chain_fingerprint":{"torii_url":"https://node-a.example.invalid","chain":"same-chain","block_1_hash":"same-block-1"}}
-EOF
+jq -c \
+  --argjson chain "$current_fingerprint" \
+  '.chain_fingerprint = $chain
+    | .response.torii_url = $chain.torii_url
+    | .response.chain_id = $chain.chain
+    | .response.operation_receipt.torii_url = $chain.torii_url
+    | .response.operation_receipt.chain_id = $chain.chain' \
+  <<<"$current_deployment_record" > "$deploy_record_matching_chain"
 deployment_record_matches_current_chain "$deploy_record_matching_chain" "$current_fingerprint"
 deployment_record_matches_current_chain "$deploy_record_matching_chain" "$current_fingerprint" testnet
 ! deployment_record_matches_current_chain "$deploy_record_matching_chain" "$current_fingerprint" production
@@ -18546,29 +17652,16 @@ jq 'del(.generated_at)' "$deploy_record_matching_chain" > "$deploy_record_missin
 ! deployment_record_matches_current_chain "$deploy_record_missing_generated" "$current_fingerprint"
 
 deploy_record_live_matching_env="$TMP_DIR/deploy.live-matching-env.json"
-cat > "$deploy_record_live_matching_env" <<'EOF'
-{
-  "contract_key": "live.env_probe",
-  "generated_at": "20260414T000000Z",
-  "environment": "testnet",
-  "contract_address": "tairac1env",
-  "chain_fingerprint": {"torii_url": "https://node-a.example.invalid", "chain": "same-chain", "block_1_hash": "same-block-1"},
-  "response": {
-    "contract_address": "tairac1env",
-    "dataspace": "universal",
-    "deploy_nonce": 7,
-    "tx_hash_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "code_hash_hex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "abi_hash_hex": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-  }
-}
-EOF
+cp "$deploy_record_matching_chain" "$deploy_record_live_matching_env"
 (
   export SORASWAP_CHAIN_FINGERPRINT_JSON="$current_fingerprint"
   contract_code_bytes_visible_by_code_hash() { return 0; }
   contract_liveness_probe_entrypoint_for_key() { return 1; }
-  live_contract_deployment_from_record "$clean_config_fixture" "$deploy_record_live_matching_env" "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" testnet >/dev/null
-  ! live_contract_deployment_from_record "$clean_config_fixture" "$deploy_record_live_matching_env" "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" production >/dev/null
+  contract_alias_resolve_json() {
+    jq -cn '{contract_address: "tairac1fixtureaddress", dataspace: "0"}'
+  }
+  live_contract_deployment_from_record "$clean_config_fixture" "$deploy_record_live_matching_env" "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03" testnet >/dev/null
+  ! live_contract_deployment_from_record "$clean_config_fixture" "$deploy_record_live_matching_env" "09a578bdd3829d57fe6bf92e3e477641e84b508978aef724615fddc1d26ade03" production >/dev/null
 )
 
 probe_same_chain="$TMP_DIR/probe.same.json"
@@ -18654,8 +17747,9 @@ class Handler(BaseHTTPRequestHandler):
                 "blocks": 77,
                 "peers": 3,
                 "queue_size": 2,
-                "tx_queue_depth": 2,
-                "tx_queue_saturated": False,
+                "queue_queued": 1,
+                "queue_inflight": 1,
+                "time_since_last_block_ms": 1000,
                 "teu_dataspace_backlog": [
                     {"backlog": 0},
                     {"backlog": 4},
@@ -18668,18 +17762,36 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("content-type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({
-                "canonical": {"height": 78, "phase": "prepare", "payload_status": "available"},
-                "commit_qc": {"height": 78},
-                "highest_qc": {"height": 77},
-                "tx_queue": {
-                    "depth": 1,
-                    "saturated": False,
-                    "saturated_by_age": False,
-                    "saturated_by_count": False,
-                    "oldest_queued_age_ms": 12,
-                },
-                "view_change_causes": {"last_cause": None},
-                "worker_loop": {"stage": "fixture"},
+                "protocol_version": 4,
+                "restart_required": False,
+                "height_context_id": "fixture-height-78",
+                "height": 78,
+                "view": 2,
+                "phase": {"phase": "prepare", "details": None},
+                "leader": 0,
+                "body_state": {"state": "validated", "details": None},
+                "pending_persistence_id": None,
+                "last_committed_height": 77,
+                "last_committed_subject": "fixture-subject-77",
+                "liveness": {"no_progress_age_ms": 1000, "blocker": None},
+            }).encode())
+            return
+
+        if self.path == "/v1/sumeragi/diagnostics":
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "pipeline_execution": None,
+                "tx_queue_depth": 1,
+                "tx_queue_capacity": 4096,
+                "tx_queue_retained_bytes": 128,
+                "tx_queue_max_retained_bytes": 13631488,
+                "tx_queue_saturated": False,
+                "tx_queue_saturated_by_count": False,
+                "tx_queue_saturated_by_bytes": False,
+                "tx_queue_saturated_by_age": False,
+                "tx_queue_oldest_queued_age_ms": 12,
             }).encode())
             return
 
@@ -18759,9 +17871,13 @@ jq -e '
   and .status.summary.teu_backlog_total == 4
   and .sumeragi.http_status == "200"
   and .sumeragi.summary.height == 78
-  and .sumeragi.summary.payload_status == "available"
-  and .sumeragi.summary.tx_queue.depth == 1
-  and .sumeragi.summary.worker_stage == "fixture"
+  and .sumeragi.summary.protocol_version == 4
+  and .sumeragi.summary.last_committed_height == 77
+  and .sumeragi.summary.phase == "prepare"
+  and .sumeragi.summary.body_state == "validated"
+  and .sumeragi_diagnostics.http_status == "200"
+  and .sumeragi_diagnostics.summary.tx_queue_depth == 1
+  and .sumeragi_diagnostics.summary.tx_queue_saturated == false
 ' <<<"$health_snapshot_json" >/dev/null
 soraswap_require_public_write_health_ready testnet "$health_cfg" "fixture public write" >/dev/null
 
@@ -18775,44 +17891,40 @@ array_sumeragi_status_snapshot="$(jq -cn '{
     {"ignored": true}
   ]
 }')"
+array_sumeragi_diagnostics_snapshot="$(jq -cn '{
+  url: "fixture-sumeragi-diagnostics",
+  http_status: "200",
+  json_available: true,
+  json: {
+    pipeline_execution: null,
+    tx_queue_depth: 4,
+    tx_queue_capacity: 4096,
+    tx_queue_retained_bytes: 400,
+    tx_queue_max_retained_bytes: 13631488,
+    tx_queue_saturated: false,
+    tx_queue_saturated_by_count: false,
+    tx_queue_saturated_by_bytes: false,
+    tx_queue_saturated_by_age: true,
+    tx_queue_oldest_queued_age_ms: 6000
+  }
+}')"
 array_sumeragi_health_json="$(soraswap_chain_health_snapshot_from_endpoint_snapshots_json \
-  "$(jq -cn '{url:"fixture-status", http_status:"200", json_available:true, json:{blocks:81, queue_size:4, tx_queue_saturated:false}}')" \
-  "$array_sumeragi_status_snapshot")"
+  "$(jq -cn '{url:"fixture-status", http_status:"200", json_available:true, json:{blocks:81, queue_size:4, queue_queued:4, queue_inflight:0}}')" \
+  "$array_sumeragi_status_snapshot" \
+  "$array_sumeragi_diagnostics_snapshot")"
 jq -e '
   .sumeragi.json_available == true
-  and .sumeragi.summary.height == 81
-  and .sumeragi.summary.commit_qc_height == 80
-  and .sumeragi.summary.highest_qc_height == 80
-  and .sumeragi.summary.phase == "prepare"
-  and .sumeragi.summary.rbc_status == "pending"
-  and .sumeragi.summary.payload_status == "missing_local_payload"
-  and .sumeragi.summary.tx_queue.depth == 4
-  and .sumeragi.summary.tx_queue.saturated_by_age == true
-  and .sumeragi.summary.tx_queue.oldest_queued_age_ms == 6000
-  and .sumeragi.summary.view_change_last_cause == "missing_qc"
-  and .sumeragi.summary.missing_payload_total == 1
-  and .sumeragi.summary.worker_stage == "array-fixture"
+  and .sumeragi.summary == null
+  and .sumeragi_diagnostics.summary.tx_queue_depth == 4
+  and .sumeragi_diagnostics.summary.tx_queue_saturated_by_age == true
 ' <<<"$array_sumeragi_health_json" >/dev/null
 array_sumeragi_health_summary="$(soraswap_public_chain_health_summary_text_from_json "$array_sumeragi_health_json")"
-rg -Fq "payload_status=missing_local_payload" <<<"$array_sumeragi_health_summary"
-rg -Fq "missing_payload_total=1" <<<"$array_sumeragi_health_summary"
+rg -Fq "sumeragi_height=unknown" <<<"$array_sumeragi_health_summary"
+rg -Fq "tx_queue_depth=4" <<<"$array_sumeragi_health_summary"
 array_sumeragi_issues="$(soraswap_public_write_health_issues_json "$array_sumeragi_health_json")"
 jq -e '
-  any(.[]; contains("sumeragi payload status is missing_local_payload"))
+  any(.[]; contains("sumeragi status is missing height"))
 ' <<<"$array_sumeragi_issues" >/dev/null
-
-historical_missing_payload_counter_json="$(jq -c '
-  .sumeragi.summary.payload_status = "available"
-  | .sumeragi.summary.missing_payload_total = 9
-  | .sumeragi.summary.view_change_last_cause = null
-  | .sumeragi.summary.tx_queue.depth = 0
-  | .sumeragi.summary.tx_queue.saturated_by_age = false
-  | .sumeragi.summary.tx_queue.oldest_queued_age_ms = 0
-  | .status.summary.queue_size = 0
-  | .status.summary.tx_queue_saturated = false
-' <<<"$health_snapshot_json")"
-historical_missing_payload_issues="$(soraswap_public_write_health_issues_json "$historical_missing_payload_counter_json")"
-jq -e 'length == 0' <<<"$historical_missing_payload_issues" >/dev/null
 
 unusable_array_sumeragi_status_snapshot="$(jq -cn '{
   url: "fixture-sumeragi-empty-array",
@@ -18822,67 +17934,65 @@ unusable_array_sumeragi_status_snapshot="$(jq -cn '{
 }')"
 unusable_array_sumeragi_health_json="$(soraswap_chain_health_snapshot_from_endpoint_snapshots_json \
   "$(jq -cn '{url:"fixture-status", http_status:"200", json_available:true, json:{blocks:81}}')" \
-  "$unusable_array_sumeragi_status_snapshot")"
+  "$unusable_array_sumeragi_status_snapshot" \
+  "$array_sumeragi_diagnostics_snapshot")"
 jq -e '
   .sumeragi.json_available == true
   and .sumeragi.summary == null
 ' <<<"$unusable_array_sumeragi_health_json" >/dev/null
 unusable_array_sumeragi_issues="$(soraswap_public_write_health_issues_json "$unusable_array_sumeragi_health_json")"
-jq -e 'any(.[]; contains("sumeragi status is missing canonical height"))' <<<"$unusable_array_sumeragi_issues" >/dev/null
+jq -e 'any(.[]; contains("sumeragi status is missing height"))' <<<"$unusable_array_sumeragi_issues" >/dev/null
 
 age_pressure_snapshot_json="$(jq -c '
-  .sumeragi.summary.tx_queue.saturated_by_age = true
-  | .sumeragi.summary.tx_queue.oldest_queued_age_ms = 3497
+  .sumeragi_diagnostics.summary.tx_queue_saturated_by_age = true
+  | .sumeragi_diagnostics.summary.tx_queue_oldest_queued_age_ms = 3497
 ' <<<"$health_snapshot_json")"
-age_pressure_issues_json="$(soraswap_public_write_health_issues_json "$age_pressure_snapshot_json" 10 8 30000)"
+age_pressure_issues_json="$(soraswap_public_write_health_issues_json "$age_pressure_snapshot_json" 10 30000)"
 jq -e 'length == 0' <<<"$age_pressure_issues_json" >/dev/null
 
 stale_age_pressure_snapshot_json="$(jq -c '
-  .sumeragi.summary.tx_queue.saturated_by_age = true
-  | .sumeragi.summary.tx_queue.oldest_queued_age_ms = 30000
+  .sumeragi_diagnostics.summary.tx_queue_saturated_by_age = true
+  | .sumeragi_diagnostics.summary.tx_queue_oldest_queued_age_ms = 30000
 ' <<<"$health_snapshot_json")"
-stale_age_pressure_issues_json="$(soraswap_public_write_health_issues_json "$stale_age_pressure_snapshot_json" 10 8 30000)"
+stale_age_pressure_issues_json="$(soraswap_public_write_health_issues_json "$stale_age_pressure_snapshot_json" 10 30000)"
 jq -e '
   any(.[]; contains("transaction queue is age-saturated with oldest queued age 30000ms"))
 ' <<<"$stale_age_pressure_issues_json" >/dev/null
 
 idle_stale_block_snapshot_json="$(jq -c '
   .status.summary.queue_size = 0
-  | .status.summary.tx_queue_depth = 0
-  | .status.summary.tx_queue_saturated = false
   | .status.summary.time_since_last_block_ms = 30000
   | .sumeragi.summary.height = 78
-  | .sumeragi.summary.commit_qc_height = 78
-  | .sumeragi.summary.highest_qc_height = 78
+  | .sumeragi.summary.last_committed_height = 77
   | .sumeragi.summary.phase = "prepare"
-  | .sumeragi.summary.tx_queue.depth = 0
-  | .sumeragi.summary.tx_queue.saturated = false
-  | .sumeragi.summary.tx_queue.saturated_by_age = false
-  | .sumeragi.summary.tx_queue.oldest_queued_age_ms = 0
-  | .sumeragi.summary.view_change_last_cause = null
+  | .sumeragi.summary.blocker = null
+  | .sumeragi.summary.restart_required = false
+  | .sumeragi_diagnostics.summary.tx_queue_depth = 0
+  | .sumeragi_diagnostics.summary.tx_queue_saturated = false
+  | .sumeragi_diagnostics.summary.tx_queue_saturated_by_age = false
+  | .sumeragi_diagnostics.summary.tx_queue_oldest_queued_age_ms = 0
 ' <<<"$health_snapshot_json")"
-idle_stale_block_issues_json="$(soraswap_public_write_health_issues_json "$idle_stale_block_snapshot_json" 10 8 30000)"
+idle_stale_block_issues_json="$(soraswap_public_write_health_issues_json "$idle_stale_block_snapshot_json" 10 30000)"
 jq -e 'length == 0' <<<"$idle_stale_block_issues_json" >/dev/null
 
 idle_pending_finality_snapshot_json="$(jq -c '
-  .sumeragi.summary.height = 79
-  | .sumeragi.summary.commit_qc_height = 78
-  | .sumeragi.summary.highest_qc_height = 78
-  | .sumeragi.summary.phase = "pending_finality"
+  .sumeragi.summary.height = 78
+  | .sumeragi.summary.last_committed_height = 77
+  | .sumeragi.summary.phase = "pending_apply"
+  | .sumeragi.summary.body_state = "pending_apply"
 ' <<<"$idle_stale_block_snapshot_json")"
-idle_pending_finality_issues_json="$(soraswap_public_write_health_issues_json "$idle_pending_finality_snapshot_json" 10 8 30000)"
-jq -e 'length == 0' <<<"$idle_pending_finality_issues_json" >/dev/null
+idle_pending_finality_issues_json="$(soraswap_public_write_health_issues_json "$idle_pending_finality_snapshot_json" 10 30000)"
+jq -e 'any(.[]; contains("latest committed block is stale at 30000ms"))' <<<"$idle_pending_finality_issues_json" >/dev/null
 
 queued_stale_block_snapshot_json="$(jq -c '
   .status.summary.queue_size = 1
-  | .status.summary.tx_queue_depth = 1
   | .status.summary.time_since_last_block_ms = 30000
-  | .sumeragi.summary.tx_queue.depth = 1
-  | .sumeragi.summary.tx_queue.saturated = false
-  | .sumeragi.summary.tx_queue.saturated_by_age = false
-  | .sumeragi.summary.tx_queue.oldest_queued_age_ms = 0
+  | .sumeragi_diagnostics.summary.tx_queue_depth = 1
+  | .sumeragi_diagnostics.summary.tx_queue_saturated = false
+  | .sumeragi_diagnostics.summary.tx_queue_saturated_by_age = false
+  | .sumeragi_diagnostics.summary.tx_queue_oldest_queued_age_ms = 0
 ' <<<"$idle_stale_block_snapshot_json")"
-queued_stale_block_issues_json="$(soraswap_public_write_health_issues_json "$queued_stale_block_snapshot_json" 10 8 30000)"
+queued_stale_block_issues_json="$(soraswap_public_write_health_issues_json "$queued_stale_block_snapshot_json" 10 30000)"
 jq -e '
   any(.[]; contains("latest committed block is stale at 30000ms"))
 ' <<<"$queued_stale_block_issues_json" >/dev/null
@@ -18892,7 +18002,7 @@ transient_write_health_status=0
 (
   health_sample_count_file="$TMP_DIR/public-write-health-transient-count"
   printf '0\n' > "$health_sample_count_file"
-  transient_degraded_snapshot_json="$(jq -c '.status.summary.queue_size = 20 | .sumeragi.summary.tx_queue.depth = 20' <<<"$health_snapshot_json")"
+  transient_degraded_snapshot_json="$(jq -c '.status.summary.queue_size = 20 | .sumeragi_diagnostics.summary.tx_queue_depth = 20' <<<"$health_snapshot_json")"
   export SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT=1
   export SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS=0
   soraswap_public_chain_health_snapshot_json() {
@@ -18917,7 +18027,7 @@ transient_submit_health_status=0
   export SORASWAP_PUBLIC_ENV=testnet
   health_sample_count_file="$TMP_DIR/public-submit-health-transient-count"
   printf '0\n' > "$health_sample_count_file"
-  transient_degraded_snapshot_json="$(jq -c '.status.summary.queue_size = 20 | .sumeragi.summary.tx_queue.depth = 20' <<<"$health_snapshot_json")"
+  transient_degraded_snapshot_json="$(jq -c '.status.summary.queue_size = 20 | .sumeragi_diagnostics.summary.tx_queue_depth = 20' <<<"$health_snapshot_json")"
   export SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT=0
   export SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_DELAY_SECS=0
   export SORASWAP_PUBLIC_SUBMIT_HEALTH_RETRY_COUNT=2
@@ -18959,7 +18069,7 @@ public_wait_health_block_status=0
   export SORASWAP_PUBLIC_WRITE_HEALTH_RETRY_COUNT=0
   pipeline_transaction_status_json() { return 2; }
   committed_transaction_result_json() { return 1; }
-  wait_for_transaction_terminal_or_committed "$health_cfg" fixturetx 1 0 auto fixturetx
+  wait_for_transaction_terminal_or_committed "$health_cfg" fixturetx 1 0 global fixturetx
 ) >"$public_wait_health_block_output" 2>&1 || public_wait_health_block_status="$?"
 [[ "$public_wait_health_block_status" == "75" ]]
 rg -Fq "transaction fixturetx did not expose pipeline status or committed lookup for fixturetx within 1s" "$public_wait_health_block_output"
@@ -18972,7 +18082,7 @@ public_wait_queued_stall_status=0
   export SORASWAP_PUBLIC_ENV=testnet
   pipeline_transaction_status_json() { return 2; }
   committed_transaction_result_json() { return 1; }
-  wait_for_transaction_terminal_or_committed "$health_cfg" fixturetx 15 0 auto fixturetx 1
+  wait_for_transaction_terminal_or_committed "$health_cfg" fixturetx 15 0 global fixturetx 1
 ) >"$public_wait_queued_stall_output" 2>&1 || public_wait_queued_stall_status="$?"
 [[ "$public_wait_queued_stall_status" == "75" ]]
 rg -Fq "queued-write finality stall while waiting for transaction fixturetx visibility: blocks=77" "$public_wait_queued_stall_output"
@@ -18983,17 +18093,17 @@ public_block_wait_queued_stall_status=0
   export SORASWAP_PUBLIC_ENV=testnet
   block_wait_stall_snapshot_json="$(jq -c '
     .status.summary.queue_size = 2
-    | .sumeragi.summary.tx_queue.depth = 2
-    | .sumeragi.summary.tx_queue.saturated_by_age = true
-    | .sumeragi.summary.tx_queue.oldest_queued_age_ms = 222222
+    | .sumeragi_diagnostics.summary.tx_queue_depth = 2
+    | .sumeragi_diagnostics.summary.tx_queue_saturated_by_age = true
+    | .sumeragi_diagnostics.summary.tx_queue_oldest_queued_age_ms = 222222
   ' <<<"$health_snapshot_json")"
   soraswap_current_block_height() { printf '77\n'; }
   soraswap_public_chain_health_snapshot_json() { printf '%s\n' "$block_wait_stall_snapshot_json"; }
   sleep() { :; }
-  soraswap_wait_for_block_height_at_least "$health_cfg" 99 contract-app-chunk-fixture 15 0 1
+  soraswap_wait_for_block_height_at_least "$health_cfg" 99 contract-deploy-fixture 15 0 1
 ) >"$public_block_wait_queued_stall_output" 2>&1 || public_block_wait_queued_stall_status="$?"
 [[ "$public_block_wait_queued_stall_status" == "75" ]]
-rg -Fq "queued-write finality stall while waiting for contract-app-chunk-fixture block height >= 99: blocks=77" "$public_block_wait_queued_stall_output"
+rg -Fq "queued-write finality stall while waiting for contract-deploy-fixture block height >= 99: blocks=77" "$public_block_wait_queued_stall_output"
 
 public_account_register_health_block_output="$TMP_DIR/public-account-register-health-block.out"
 public_account_register_health_block_status=0
@@ -19004,7 +18114,7 @@ public_account_register_health_block_status=0
     echo "$2 blocked by fixture public write health" >&2
     return 75
   }
-  iroha_cli_with_gas_metadata() {
+  iroha_cli_with_authority_fee() {
     echo "unexpected account register CLI invocation" >&2
     return 1
   }
@@ -19017,9 +18127,6 @@ rg -Fq "account register fixture-account blocked by fixture public write health"
 rg -Fq 'soraswap_public_transport_error_needs_health_gate()' "$ROOT/scripts/common.sh"
 rg -Fq 'soraswap_stop_if_public_transport_health_degraded()' "$ROOT/scripts/common.sh"
 rg -Fq "Can't assign requested address" "$ROOT/scripts/common.sh"
-rg -Fq 'normal_deploy_public_health' "$ROOT/scripts/common.sh"
-rg -Fq 'split_fallback_public_health' "$ROOT/scripts/common.sh"
-rg -Fq 'deploy direct fallback after contract app bundle failure' "$ROOT/scripts/deploy_public.sh"
 
 public_transport_health_block_output="$TMP_DIR/public-transport-health-block.out"
 public_transport_health_block_status=0
@@ -19110,16 +18217,15 @@ committed_result_null_then_ok_status=0
 degraded_write_health_snapshot_json="$(jq -c '
   .status.summary.blocks = 0
   | .status.summary.time_since_last_block_ms = 30000
-  | .sumeragi.summary.commit_qc_height = 70
-  | .sumeragi.summary.highest_qc_height = 90
-  | .sumeragi.summary.view_change_last_cause = "missing_qc"
+  | .sumeragi.summary.last_committed_height = 70
+  | .sumeragi.summary.blocker = "missing_proposal"
 ' <<<"$health_snapshot_json")"
 degraded_write_health_issues_json="$(soraswap_public_write_health_issues_json "$degraded_write_health_snapshot_json")"
 jq -e '
   any(.[]; contains("status blocks is 0"))
   and any(.[]; contains("latest committed block is stale at 30000ms"))
-  and any(.[]; contains("ahead of commit_qc_height"))
-  and any(.[]; contains("view-change cause is missing_qc"))
+  and any(.[]; contains("does not match sumeragi last_committed_height"))
+  and any(.[]; contains("sumeragi liveness blocker is missing_proposal"))
 ' <<<"$degraded_write_health_issues_json" >/dev/null
 
 failure_report_dir="$TMP_DIR/nested-failure-report"
@@ -19145,7 +18251,7 @@ jq -e '
   and (.stages.deploy_bytes_probe.output | contains("[local-path]/taira.client.toml"))
   and (.stages.deploy_bytes_probe.output | contains("[redacted]"))
   and .health_snapshot.status.summary.blocks == 77
-  and .health_snapshot.sumeragi.summary.tx_queue.saturated == false
+  and .health_snapshot.sumeragi_diagnostics.summary.tx_queue_saturated == false
 ' <<<"$failure_report_json" >/dev/null
 ! rg -q "$TMP_DIR|/private/var/folders|/Users/operator|802620SECRET" <<<"$failure_report_json"
 cmp -s "$failure_report_dir/nested_call_probe.latest.json" "$failure_report_dir/nested_call_probe.20260622T000000Z.json"
@@ -19156,6 +18262,7 @@ refresh_chain_cfg="$TMP_DIR/refresh-chain.client.toml"
 mkdir -p "$refresh_chain_report_dir"
 cat > "$refresh_chain_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://public.soraswap.dev/"
 EOF
 cat > "$refresh_chain_report_dir/chain.latest.json" <<EOF
@@ -19236,18 +18343,19 @@ cat > "$preflight_report_dir/nested_call_probe.latest.json" <<EOF
       "http_status": "200",
       "summary": {
         "height": 78,
-        "commit_qc_height": 78,
-        "highest_qc_height": 77,
+        "last_committed_height": 77,
         "phase": "prepare",
-        "tx_queue": {
-          "depth": 1,
-          "saturated": false,
-          "saturated_by_age": false,
-          "saturated_by_count": false,
-          "oldest_queued_age_ms": 12
-        },
-        "view_change_last_cause": null,
-        "worker_stage": "fixture"
+        "blocker": null
+      }
+    },
+    "sumeragi_diagnostics": {
+      "http_status": "200",
+      "summary": {
+        "tx_queue_depth": 1,
+        "tx_queue_saturated": false,
+        "tx_queue_saturated_by_age": false,
+        "tx_queue_saturated_by_count": false,
+        "tx_queue_oldest_queued_age_ms": 12
       }
     }
   }
@@ -19263,6 +18371,7 @@ redaction_fixture_root="http://operator:supersecret@127.0.0.1:$(cat "$fixture_po
 redaction_chain_config="$TMP_DIR/redaction-chain.client.toml"
 cat > "$redaction_chain_config" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "$redaction_fixture_root"
 EOF
 redacted_chain_fingerprint="$(
@@ -19343,7 +18452,7 @@ jq -e \
 	    and (.nested_call_probe.supported == false)
 	    and (.nested_call_probe.summary | contains("fixture nested-call deploy failed private_key="))
 	    and ((.nested_call_probe.summary | contains("802620PREFLIGHTSECRET")) | not)
-	    and (.nested_call_probe.health_summary == "height=78 queue_depth=1 saturated=false saturated_by_age=false view_change=none")
+	    and (.nested_call_probe.health_summary == "height=78 last_committed=77 queue_depth=1 saturated=false saturated_by_age=false blocker=none")
     and (.config.exists == false)
     and (.config.path == "missing-taira.client.toml")
     and (.artifacts["chain.latest.json"].path == "deployments/testnet/chain.latest.json")
@@ -19377,12 +18486,16 @@ cat > "$preflight_report_dir/nested_call_probe.latest.json" <<EOF
       "http_status": "200",
       "summary": {
         "height": 79,
-        "tx_queue": {
-          "depth": 9,
-          "saturated": false,
-          "saturated_by_age": false
-        },
-        "view_change_last_cause": null
+        "last_committed_height": 78,
+        "blocker": null
+      }
+    },
+    "sumeragi_diagnostics": {
+      "http_status": "200",
+      "summary": {
+        "tx_queue_depth": 9,
+        "tx_queue_saturated": false,
+        "tx_queue_saturated_by_age": false
       }
     }
   }
@@ -19529,6 +18642,7 @@ jq -e \
 preflight_wrong_chain_cfg="$TMP_DIR/taira-preflight-wrong-chain.client.toml"
 cat > "$preflight_wrong_chain_cfg" <<EOF
 chain = "wrong-testnet-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
 torii_url = "https://taira.sora.org/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -19539,7 +18653,6 @@ preflight_wrong_chain_output="$TMP_DIR/taira_preflight_wrong_chain.out"
 preflight_wrong_chain_status=0
 (
   unset SORASWAP_PUBLIC_ENV
-  unset SORASWAP_TESTNET_CHAIN_ID
   export SORASWAP_TORII_URL="$fixture_root"
   export SORASWAP_ROOT="$preflight_root"
   export SORASWAP_CLIENT_CONFIG="$preflight_wrong_chain_cfg"
@@ -19549,7 +18662,7 @@ preflight_wrong_chain_status=0
   run_repo_zsh_script "$ROOT/scripts/taira_preflight.sh"
 ) >"$preflight_wrong_chain_output" 2>&1 || preflight_wrong_chain_status="$?"
 [[ "$preflight_wrong_chain_status" != "0" ]]
-rg -Fq "Taira client config chain wrong-testnet-chain does not match the expected Taira chain" "$preflight_wrong_chain_output"
+rg -Fq "Taira client config chain wrong-testnet-chain does not match the canonical Taira chain $SORASWAP_TESTNET_CHAIN_ID_DEFAULT" "$preflight_wrong_chain_output"
 preflight_wrong_chain_report="$preflight_wrong_chain_report_dir/preflight.latest.json"
 [[ -s "$preflight_wrong_chain_report" ]]
 jq -e \
@@ -19559,43 +18672,14 @@ jq -e \
     and (.config.has_placeholders == false)
     and (.config.environment_mismatch == false)
     and (.environment.mutations_allowed == true)
-    and (.blockers | any(contains("Taira client config chain wrong-testnet-chain does not match the expected Taira chain")))' \
+    and (.blockers | any(contains("Taira client config chain wrong-testnet-chain does not match the canonical Taira chain")))' \
   "$preflight_wrong_chain_report" >/dev/null
 ! rg -Fq "$TMP_DIR" "$preflight_wrong_chain_report"
-
-preflight_wrong_chain_override_report_dir="$TMP_DIR/preflight-wrong-chain-override-reports"
-mkdir -p "$preflight_wrong_chain_override_report_dir"
-preflight_wrong_chain_override_output="$TMP_DIR/taira_preflight_wrong_chain_override.out"
-preflight_wrong_chain_override_status=0
-(
-  unset SORASWAP_PUBLIC_ENV
-  export SORASWAP_TESTNET_CHAIN_ID="wrong-testnet-chain"
-  export SORASWAP_TORII_URL="$fixture_root"
-  export SORASWAP_ROOT="$preflight_root"
-  export SORASWAP_CLIENT_CONFIG="$preflight_wrong_chain_cfg"
-  export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
-  export SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS=2
-  export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$preflight_wrong_chain_override_report_dir"
-  run_repo_zsh_script "$ROOT/scripts/taira_preflight.sh"
-) >"$preflight_wrong_chain_override_output" 2>&1 || preflight_wrong_chain_override_status="$?"
-[[ "$preflight_wrong_chain_override_status" != "0" ]]
-! rg -Fq "Taira client config chain wrong-testnet-chain does not match the expected Taira chain" "$preflight_wrong_chain_override_output"
-preflight_wrong_chain_override_report="$preflight_wrong_chain_override_report_dir/preflight.latest.json"
-[[ -s "$preflight_wrong_chain_override_report" ]]
-jq -e \
-  '.status == "blocked"
-    and (.target_environment == "testnet")
-    and (.config.exists == true)
-    and (.config.has_placeholders == false)
-    and (.config.environment_mismatch == false)
-    and (.environment.mutations_allowed == true)
-    and (.blockers | all(contains("Taira client config chain wrong-testnet-chain does not match the expected Taira chain") | not))' \
-  "$preflight_wrong_chain_override_report" >/dev/null
-! rg -Fq "$TMP_DIR" "$preflight_wrong_chain_override_report"
 
 preflight_placeholder_cfg="$TMP_DIR/taira-preflight-placeholder.client.toml"
 cat > "$preflight_placeholder_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "$fixture_root"
 public_key = "ed0120TODO"
 private_key = "802620DEADBEEF"
@@ -19628,6 +18712,7 @@ jq -e \
 preflight_oracle_placeholder_cfg="$TMP_DIR/taira-preflight-oracle-placeholder.client.toml"
 cat > "$preflight_oracle_placeholder_cfg" <<EOF
 chain = "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://taira.sora.org/"
 public_key = "ed0120DEADBEEF"
 private_key = "802620DEADBEEF"
@@ -19641,51 +18726,48 @@ preflight_oracle_placeholder_status=0
   export SORASWAP_TORII_URL="$fixture_root"
   export SORASWAP_ROOT="$preflight_root"
   export SORASWAP_CLIENT_CONFIG="$preflight_oracle_placeholder_cfg"
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="oracle-public-TBD"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="oracle-private-TODO"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="<oracle client config>"
   export SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS=2
   export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$preflight_oracle_placeholder_report_dir"
   run_repo_zsh_script "$ROOT/scripts/taira_preflight.sh"
 ) >"$preflight_oracle_placeholder_output" 2>&1 || preflight_oracle_placeholder_status="$?"
 [[ "$preflight_oracle_placeholder_status" != "0" ]]
-rg -q "SORASWAP_ORACLE_PUBLIC_KEY_HEX is an example value" "$preflight_oracle_placeholder_output"
-rg -q "SORASWAP_ORACLE_PRIVATE_KEY_HEX is an example value" "$preflight_oracle_placeholder_output"
+rg -q "SORASWAP_ORACLE_CLIENT_CONFIG is an example value" "$preflight_oracle_placeholder_output"
 preflight_oracle_placeholder_report="$preflight_oracle_placeholder_report_dir/preflight.latest.json"
 [[ -s "$preflight_oracle_placeholder_report" ]]
 jq -e \
   '.status == "blocked"
     and (.target_environment == "testnet")
     and (.config.has_placeholders == false)
-    and (.blockers | any(contains("SORASWAP_ORACLE_PUBLIC_KEY_HEX is an example value")))
-    and (.blockers | any(contains("SORASWAP_ORACLE_PRIVATE_KEY_HEX is an example value")))' \
+    and (.blockers | any(contains("SORASWAP_ORACLE_CLIENT_CONFIG is an example value")))' \
   "$preflight_oracle_placeholder_report" >/dev/null
 
-preflight_oracle_mismatch_report_dir="$TMP_DIR/preflight-oracle-mismatch-reports"
-mkdir -p "$preflight_oracle_mismatch_report_dir"
-preflight_oracle_mismatch_output="$TMP_DIR/taira_preflight_oracle_mismatch.out"
-preflight_oracle_mismatch_status=0
+preflight_oracle_missing_report_dir="$TMP_DIR/preflight-oracle-missing-reports"
+mkdir -p "$preflight_oracle_missing_report_dir"
+preflight_oracle_missing_output="$TMP_DIR/taira_preflight_oracle_missing.out"
+preflight_oracle_missing_status=0
 (
   unset SORASWAP_PUBLIC_ENV
   export SORASWAP_TORII_URL="$fixture_root"
   export SORASWAP_ROOT="$preflight_root"
   export SORASWAP_CLIENT_CONFIG="$preflight_oracle_placeholder_cfg"
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xa09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  unset SORASWAP_ORACLE_CLIENT_CONFIG
   export SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS=2
-  export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$preflight_oracle_mismatch_report_dir"
+  export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$preflight_oracle_missing_report_dir"
   run_repo_zsh_script "$ROOT/scripts/taira_preflight.sh"
-) >"$preflight_oracle_mismatch_output" 2>&1 || preflight_oracle_mismatch_status="$?"
-[[ "$preflight_oracle_mismatch_status" != "0" ]]
-preflight_oracle_mismatch_report="$preflight_oracle_mismatch_report_dir/preflight.latest.json"
-[[ -s "$preflight_oracle_mismatch_report" ]]
+) >"$preflight_oracle_missing_output" 2>&1 || preflight_oracle_missing_status="$?"
+[[ "$preflight_oracle_missing_status" != "0" ]]
+preflight_oracle_missing_report="$preflight_oracle_missing_report_dir/preflight.latest.json"
+[[ -s "$preflight_oracle_missing_report" ]]
 jq -e \
   '.status == "blocked"
     and (.target_environment == "testnet")
-    and (.environment.oracle_public_key_present == true)
-    and (.environment.oracle_private_key_present == true)
-    and (.environment.oracle_keypair_verified == false)
+    and (.environment.oracle_client_config_present == false)
+    and (.environment.oracle_client_config_valid == false)
+    and (.environment.oracle_account_derivable == false)
+    and (.environment.oracle_account_distinct == false)
     and ((.blockers // []) | length > 0)' \
-  "$preflight_oracle_mismatch_report" >/dev/null
+  "$preflight_oracle_missing_report" >/dev/null
 
 production_preflight_output="$TMP_DIR/production_preflight.out"
 production_preflight_status=0
@@ -19731,8 +18813,25 @@ jq -e \
 
 public_preflight_cfg="$TMP_DIR/public-preflight.client.toml"
 cat > "$public_preflight_cfg" <<'EOF'
-chain = "fixture-public-chain"
+chain = "fc56984b-2be7-431d-840e-21514d1883f0"
+network_id = "hash:82531CE8EAE8BFF6BEECA4698BFD13A3BC8BEC5F0EE0D23D428C97FC17AB0F3B#3E94"
 torii_url = "https://public.soraswap.dev/"
+
+[account]
+domain = "universal"
+profile = "taira"
+public_key = "ed0120d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
+private_key = "8026201111111111111111111111111111111111111111111111111111111111111111"
+EOF
+production_public_preflight_cfg="$TMP_DIR/production-public-preflight.client.toml"
+cat > "$production_public_preflight_cfg" <<'EOF'
+chain = "fixture-public-chain"
+network_id = "hash:32C903E5B3497E34C2B844EBFE8A39C19E6CF8F95D44C1FFB8BA9DCB42F91149#A2F0"
+torii_url = "https://production.soraswap.dev/"
+
+[account]
+domain = "prod.universal"
+chain_discriminant = 753
 public_key = "ed0120d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
 private_key = "8026201111111111111111111111111111111111111111111111111111111111111111"
 EOF
@@ -19843,7 +18942,7 @@ testnet_missing_chain_preflight_status=0
   export SORASWAP_PUBLIC_ENV=testnet
   export SORASWAP_TORII_URL="$fixture_root"
   export SORASWAP_ROOT="$testnet_missing_chain_preflight_root"
-  export SORASWAP_CLIENT_CONFIG="$public_preflight_cfg"
+  export SORASWAP_CLIENT_CONFIG="$production_public_preflight_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
   export SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS=2
   export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$TMP_DIR/testnet-missing-chain-preflight-reports"
@@ -19869,7 +18968,7 @@ production_missing_chain_preflight_status=0
   unset SORASWAP_PUBLIC_ENV
   export SORASWAP_TORII_URL="$fixture_root"
   export SORASWAP_ROOT="$production_missing_chain_preflight_root"
-  export SORASWAP_CLIENT_CONFIG="$public_preflight_cfg"
+  export SORASWAP_CLIENT_CONFIG="$production_public_preflight_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
   export SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID="fixture-fee"
   export SORASWAP_PRODUCTION_FEE_ASSET_LABEL="Fixture Fee"
@@ -19894,7 +18993,7 @@ production_signer_preflight_status=0
 (
   unset SORASWAP_PUBLIC_ENV
   export SORASWAP_TORII_URL="$fixture_root"
-  export SORASWAP_CLIENT_CONFIG="$public_preflight_cfg"
+  export SORASWAP_CLIENT_CONFIG="$production_public_preflight_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
   export SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID="fixture-fee"
   export SORASWAP_PRODUCTION_FEE_ASSET_LABEL="Fixture Fee"
@@ -19932,7 +19031,7 @@ cat > "$testnet_missing_probe_preflight_root/deployments/testnet/chain.latest.js
   "generated_at": "20260622T000000Z",
   "environment": "testnet",
   "torii_url": "$fixture_root",
-  "chain": "fixture-public-chain",
+  "chain": "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT",
   "block_1_hash": "fixture-block-1"
 }
 EOF
@@ -19982,7 +19081,7 @@ production_missing_probe_preflight_status=0
   unset SORASWAP_PUBLIC_ENV
   export SORASWAP_TORII_URL="$fixture_root"
   export SORASWAP_ROOT="$production_missing_probe_preflight_root"
-  export SORASWAP_CLIENT_CONFIG="$public_preflight_cfg"
+  export SORASWAP_CLIENT_CONFIG="$production_public_preflight_cfg"
   export SORASWAP_ALLOW_PRODUCTION_MUTATIONS=1
   export SORASWAP_PRODUCTION_FEE_ASSET_DEFINITION_ID="fixture-fee"
   export SORASWAP_PRODUCTION_FEE_ASSET_LABEL="Fixture Fee"
@@ -20015,7 +19114,7 @@ cat > "$testnet_non_json_status_preflight_root/deployments/testnet/chain.latest.
   "generated_at": "20260622T000000Z",
   "environment": "testnet",
   "torii_url": "$fixture_root",
-  "chain": "fixture-public-chain",
+  "chain": "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT",
   "block_1_hash": "fixture-block-1"
 }
 EOF
@@ -20025,7 +19124,7 @@ cat > "$testnet_non_json_status_preflight_root/deployments/testnet/nested_call_p
   "environment": "testnet",
   "chain_fingerprint": {
     "torii_url": "$fixture_root",
-    "chain": "fixture-public-chain",
+    "chain": "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT",
     "block_1_hash": "fixture-block-1"
   },
   "supported": true
@@ -20036,14 +19135,12 @@ testnet_non_json_status_preflight_output="$TMP_DIR/testnet_non_json_status_prefl
 testnet_non_json_status_preflight_status=0
 (
   export SORASWAP_PUBLIC_ENV=testnet
-  export SORASWAP_TESTNET_CHAIN_ID="fixture-public-chain"
   export SORASWAP_TORII_URL="$fixture_root"
   export SORASWAP_ROOT="$testnet_non_json_status_preflight_root"
   export SORASWAP_CLIENT_CONFIG="$public_preflight_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
   export SORASWAP_AUTHORITY="fixture-authority@fixture"
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$(write_typed_oracle_fixture_config "$testnet_non_json_status_preflight_root" "$public_preflight_cfg" non-json-status)"
   export SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS=2
   export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$TMP_DIR/testnet-non-json-status-preflight-reports"
   run_repo_zsh_script "$ROOT/scripts/taira_preflight.sh"
@@ -20072,7 +19169,7 @@ cat > "$testnet_signer_preflight_root/deployments/testnet/chain.latest.json" <<E
   "generated_at": "20260622T000000Z",
   "environment": "testnet",
   "torii_url": "$fixture_root",
-  "chain": "fixture-public-chain",
+  "chain": "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT",
   "block_1_hash": "fixture-block-1"
 }
 EOF
@@ -20082,7 +19179,7 @@ cat > "$testnet_signer_preflight_root/deployments/testnet/nested_call_probe.late
   "environment": "testnet",
   "chain_fingerprint": {
     "torii_url": "$fixture_root",
-    "chain": "fixture-public-chain",
+    "chain": "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT",
     "block_1_hash": "fixture-block-1"
   },
   "supported": true
@@ -20091,21 +19188,19 @@ EOF
 testnet_signer_preflight_output="$TMP_DIR/testnet_signer_preflight.out"
 (
   export SORASWAP_PUBLIC_ENV=testnet
-  export SORASWAP_TESTNET_CHAIN_ID="fixture-public-chain"
   export SORASWAP_TORII_URL="$fixture_root"
   export SORASWAP_ROOT="$testnet_signer_preflight_root"
   export SORASWAP_CLIENT_CONFIG="$public_preflight_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
   export SORASWAP_AUTHORITY="fixture-authority@fixture"
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$(write_typed_oracle_fixture_config "$testnet_signer_preflight_root" "$public_preflight_cfg" signer-ready)"
   export SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS=2
   export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$TMP_DIR/testnet-signer-preflight-reports"
   run_repo_zsh_script "$ROOT/scripts/taira_preflight.sh"
 ) >"$testnet_signer_preflight_output" 2>&1
 rg -q "taira preflight: ready" "$testnet_signer_preflight_output"
 rg -q "faucet puzzle endpoint returned HTTP 404" "$testnet_signer_preflight_output"
-rg -q "deploy-testnet will try self-registration/onboard/faucet" "$testnet_signer_preflight_output"
+rg -q "deploy-testnet will invoke the current Iroha Taira write canary and require SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE" "$testnet_signer_preflight_output"
 
 testnet_signer_preflight_report="$TMP_DIR/testnet-signer-preflight-reports/preflight.latest.json"
 [[ -s "$testnet_signer_preflight_report" ]]
@@ -20121,7 +19216,7 @@ jq -e \
     and (.endpoint.faucet_puzzle_http_status == "404")
     and (.signer.account_exists == false)
     and (.warnings | any(contains("faucet puzzle endpoint returned HTTP 404")))
-    and (.warnings | any(contains("deploy-testnet will try self-registration/onboard/faucet")))' \
+    and (.warnings | any(contains("deploy-testnet will invoke the current Iroha Taira write canary and require SORASWAP_TAIRA_ONBOARDING_TOKEN_FILE")))' \
   "$testnet_signer_preflight_report" >/dev/null
 
 preflight_no_build_iroha_root="$TMP_DIR/preflight-no-build-iroha-root"
@@ -20164,7 +19259,7 @@ cat > "$preflight_no_build_report_root/deployments/testnet/chain.latest.json" <<
   "generated_at": "20260622T000000Z",
   "environment": "testnet",
   "torii_url": "$fixture_root",
-  "chain": "fixture-public-chain",
+  "chain": "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT",
   "block_1_hash": "fixture-block-1"
 }
 EOF
@@ -20174,7 +19269,7 @@ cat > "$preflight_no_build_report_root/deployments/testnet/nested_call_probe.lat
   "environment": "testnet",
   "chain_fingerprint": {
     "torii_url": "$fixture_root",
-    "chain": "fixture-public-chain",
+    "chain": "$SORASWAP_TESTNET_CHAIN_ID_DEFAULT",
     "block_1_hash": "fixture-block-1"
   },
   "supported": true
@@ -20187,14 +19282,12 @@ preflight_no_build_output="$TMP_DIR/testnet_preflight_no_build_default.out"
   export SORASWAP_PREFLIGHT_NO_BUILD_FLAG_FILE="$preflight_no_build_flag_file"
   export SORASWAP_PREFLIGHT_NO_BUILD_CARGO_CALLED_FILE="$preflight_no_build_cargo_called_file"
   export PATH="$preflight_no_build_fake_cargo_dir:$PATH"
-  export SORASWAP_TESTNET_CHAIN_ID="fixture-public-chain"
   export SORASWAP_TORII_URL="$fixture_root"
   export SORASWAP_ROOT="$preflight_no_build_report_root"
   export SORASWAP_CLIENT_CONFIG="$public_preflight_cfg"
   export SORASWAP_ALLOW_TESTNET_MUTATIONS=1
   export SORASWAP_AUTHORITY="fixture-authority@fixture"
-  export SORASWAP_ORACLE_PUBLIC_KEY_HEX="0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737"
-  export SORASWAP_ORACLE_PRIVATE_KEY_HEX="1111111111111111111111111111111111111111111111111111111111111111"
+  export SORASWAP_ORACLE_CLIENT_CONFIG="$(write_typed_oracle_fixture_config "$preflight_no_build_report_root" "$public_preflight_cfg" no-build)"
   export SORASWAP_TAIRA_PREFLIGHT_TIMEOUT_SECS=2
   export SORASWAP_TAIRA_PREFLIGHT_REPORT_DIR="$TMP_DIR/testnet-preflight-no-build-reports"
   run_repo_zsh_script "$ROOT/scripts/taira_preflight.sh"
@@ -20369,11 +19462,11 @@ cat > "$rwa_manual_chain_report_dir/preflight.latest.json" <<'JSON'
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
   "endpoint": {
     "mcp_http_status": "200",
@@ -20440,7 +19533,7 @@ jq -e \
 rwa_unverified_oracle_report_dir="$TMP_DIR/rwa-compliance-unverified-oracle"
 cp -R "$rwa_manual_chain_report_dir" "$rwa_unverified_oracle_report_dir"
 rm -f "$rwa_unverified_oracle_report_dir/rwa_compliance.latest.json"
-jq '.environment.oracle_keypair_verified = false' \
+jq '.environment.oracle_client_config_valid = false' \
   "$rwa_unverified_oracle_report_dir/preflight.latest.json" \
   > "$TMP_DIR/rwa-compliance-unverified-oracle-preflight.json"
 mv "$TMP_DIR/rwa-compliance-unverified-oracle-preflight.json" "$rwa_unverified_oracle_report_dir/preflight.latest.json"
@@ -20525,11 +19618,11 @@ cat > "$rwa_report_dir/preflight.latest.json" <<'JSON'
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
   "endpoint": {
     "mcp_http_status": "200",
@@ -20577,11 +19670,11 @@ cat > "$rwa_report_dir/preflight.latest.json" <<'JSON'
   "warnings": [],
   "environment": {
     "mutations_allowed": true,
-    "oracle_public_key_present": true,
-    "oracle_private_key_present": true,
-    "oracle_keypair_verified": true,
-    "oracle_public_key_source": "fixture",
-    "oracle_private_key_source": "fixture"
+    "oracle_client_config_present": true,
+    "oracle_client_config_valid": true,
+    "oracle_account_derivable": true,
+    "oracle_account_distinct": true,
+    "oracle_client_config_source": "fixture"
   },
   "endpoint": {
     "mcp_http_status": "200",

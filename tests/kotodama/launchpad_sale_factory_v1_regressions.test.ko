@@ -1,0 +1,110 @@
+module LaunchpadSaleFactoryV1Regressions {
+  koto_test { target: "../../contracts/launchpad/sale_factory.ko" }
+
+  fixture sale_factory_actors {
+    actor(
+      "owner",
+      AccountId::parse("sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX"),
+      "0x0909090909090909090909090909090909090909090909090909090909090909"
+    );
+    actor(
+      "guardian",
+      AccountId::parse("sorauﾛ1Nﾓf6sfﾈPLMRED1Vr5zｸCﾘｳgｹ7ﾉrMxﾀ2ﾂL9YAｾHUDD6F42")
+    );
+    grant_permission("owner", "Admin");
+    grant_permission("owner", "AssetOps");
+    grant_permission("owner", "Entry");
+    grant_permission("guardian", "Admin");
+  }
+
+  fn hajimari_arguments() -> Json {
+    return Json::parse("{\"executor_contract\":\"0x01\",\"guardian\":\"sorauﾛ1Nﾓf6sfﾈPLMRED1Vr5zｸCﾘｳgｹ7ﾉrMxﾀ2ﾂL9YAｾHUDD6F42\"}");
+  }
+
+  fn sale_arguments() -> Json {
+    return Json::parse("{\"sale\":\"first_sale\",\"sale_asset\":\"6pEP9RjNoZ7beWkT3pLfKoM1dyfi\",\"payment_asset\":\"62Fk4FPcMuLvW5QjDGNF2a4jAmjM\",\"treasury\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\",\"unit_price\":\"1\",\"soft_cap\":\"1\",\"hard_cap\":\"100\",\"claim_start_slot\":\"100\",\"claim_end_slot\":\"200\"}");
+  }
+
+  #[test(fixture = "sale_factory_actors")]
+  fn lifecycle_derives_custody_and_starts_withdrawal_only() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: hajimari_arguments()
+    );
+    test::assert(FactoryInitialized == 1);
+    test::assert(FactoryOwner == test::actor_account("owner"));
+    test::assert(FactoryGuardian == test::actor_account("guardian"));
+    test::assert(FactoryAccount != FactoryOwner);
+    test::assert(FactoryAccount != FactoryGuardian);
+    test::assert(FactoryWithdrawalOnly == 1);
+    test::assert(NextSaleIndex == 1);
+  }
+
+  #[test(fixture = "sale_factory_actors")]
+  fn owner_cannot_also_be_the_guardian() {
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: Json::parse("{\"executor_contract\":\"0x01\",\"guardian\":\"sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX\"}")
+    );
+  }
+
+  #[test(fixture = "sale_factory_actors")]
+  fn guardian_can_close_but_only_owner_can_open_forward_operation() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "exit_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+    test::invoke_kotoage_as(
+      actor: "guardian",
+      kotoage: "enter_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+    test::expect_reject_as(
+      actor: "guardian",
+      kotoage: "exit_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+    test::assert(FactoryWithdrawalOnly == 1);
+  }
+
+  #[test(fixture = "sale_factory_actors")]
+  fn seed_plan_accepts_only_per_sale_quantity2_amounts() {
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "hajimari",
+      arguments: hajimari_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "exit_withdrawal_only",
+      arguments: Json::parse("{}")
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "init_sale",
+      arguments: sale_arguments()
+    );
+    test::invoke_kotoage_as(
+      actor: "owner",
+      kotoage: "configure_seed_liquidity",
+      arguments: Json::parse("{\"sale\":\"first_sale\",\"payment_amount\":\"3\",\"sale_amount\":\"4\"}")
+    );
+    let sale = Name::parse("first_sale");
+    test::assert(SeedPaymentAmount.get(sale).unwrap_or(zero_quantity()) == 3);
+    test::assert(SeedSaleAmount.get(sale).unwrap_or(zero_quantity()) == 4);
+    test::assert(SeedActivationShares.get(sale).unwrap_or(zero_quantity()) == zero_quantity());
+    test::expect_reject_as(
+      actor: "owner",
+      kotoage: "configure_seed_liquidity",
+      arguments: Json::parse("{\"sale\":\"first_sale\",\"payment_amount\":\"3\",\"sale_amount\":\"4\",\"position_id\":\"legacy\",\"bin_id\":\"0\"}")
+    );
+  }
+}

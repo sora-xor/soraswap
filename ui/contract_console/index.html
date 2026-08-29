@@ -224,8 +224,10 @@
             <label class="field">
               <span>Action</span>
               <select id="bridge-action-select">
-                <option value="register_asset">register_asset</option>
+                <option value="register_bridge_asset">register_bridge_asset</option>
+                <option value="bind_asset_vault">bind_asset_vault</option>
                 <option value="activate_route">activate_route</option>
+                <option value="activate_route_governed">activate_route_governed</option>
                 <option value="pause_route">pause_route</option>
                 <option value="resume_route">resume_route</option>
                 <option value="lock_to_remote">lock_to_remote</option>
@@ -237,16 +239,8 @@
               <input id="bridge-asset-definition-input" type="text" placeholder="xor#universal">
             </label>
             <label class="field">
-              <span>Local Asset</span>
-              <input id="bridge-local-asset-input" type="text" placeholder="xor#universal">
-            </label>
-            <label class="field">
               <span>Vault Account</span>
               <input id="bridge-vault-account-input" type="text" placeholder="i105...">
-            </label>
-            <label class="field">
-              <span>Registrant</span>
-              <input id="bridge-registrant-input" type="text" placeholder="i105...">
             </label>
             <label class="field">
               <span>Recipient</span>
@@ -261,12 +255,12 @@
               <input id="bridge-remote-domain-input" type="number" step="1" value="0">
             </label>
             <label class="field">
-              <span>Decimals</span>
-              <input id="bridge-decimals-input" type="number" step="1" value="18">
+              <span>Decimals (from asset definition)</span>
+              <input id="bridge-decimals-input" type="number" step="1" value="" readonly aria-readonly="true" placeholder="Resolve Asset Definition">
             </label>
             <label class="field">
               <span>Amount</span>
-              <input id="bridge-amount-input" type="number" step="1" value="0">
+              <input id="bridge-amount-input" type="number" min="0" step="any" value="0">
             </label>
           </div>
 
@@ -279,8 +273,10 @@
         </div>
 
         <div class="quick-grid">
-          <button data-bridge-template="register_asset" class="secondary-button" type="button">Prefill register_asset</button>
+          <button data-bridge-template="register_bridge_asset" class="secondary-button" type="button">Prefill register_bridge_asset</button>
+          <button data-bridge-template="bind_asset_vault" class="secondary-button" type="button">Prefill bind_asset_vault</button>
           <button data-bridge-template="activate_route" class="secondary-button" type="button">Prefill activate_route</button>
+          <button data-bridge-template="activate_route_governed" class="secondary-button" type="button">Prefill activate_route_governed</button>
           <button data-bridge-template="pause_route" class="secondary-button" type="button">Prefill pause_route</button>
           <button data-bridge-template="resume_route" class="secondary-button" type="button">Prefill resume_route</button>
           <button data-bridge-template="lock_to_remote" class="secondary-button" type="button">Prefill lock_to_remote</button>

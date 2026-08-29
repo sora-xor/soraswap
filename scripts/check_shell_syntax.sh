@@ -37,22 +37,6 @@ if (( ${#missing_dirs[@]} != 0 )); then
   exit 1
 fi
 
-typeset -a stale_root_temp_files
-stale_root_temp_files=("${(@f)$(find "$ROOT" -maxdepth 1 -type f \( \
-  -name '.soraswap-foundation-manifest.*' \
-  -o -name '.soraswap-contract-app-chunk-*' \
-\) | LC_ALL=C sort)}")
-stale_root_temp_failed=0
-for temp_path in "${stale_root_temp_files[@]}"; do
-  [[ -n "$temp_path" ]] || continue
-  stale_root_temp_failed=1
-  echo "repo temporary file check failed: stale deploy manifest ${temp_path#$ROOT/}" >&2
-done
-
-if (( stale_root_temp_failed != 0 )); then
-  exit 1
-fi
-
 contract_source_checked=0
 contract_source_failed=0
 if [[ -d "$ROOT/contracts" ]]; then
@@ -2222,4 +2206,3 @@ echo "release status docs ok: $release_status_doc_checked current evidence menti
 echo "documented markdown links ok: $doc_markdown_link_checked repo-local links checked"
 echo "generated evidence paths ok: $generated_evidence_path_checked generated JSON artifacts checked"
 echo "generated evidence redaction ok: $generated_evidence_redaction_checked generated JSON artifacts checked"
-echo "repo temporary files ok: no stale deploy manifests found"

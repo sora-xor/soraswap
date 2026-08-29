@@ -30,30 +30,87 @@ SCHEMA = "soraswap-production-observation-evidence/v1"
 FIXTURE_SCHEMA = "soraswap-production-observation-fixture/v1"
 MONITORING_SCHEMA = "soraswap-production-monitoring-snapshot/v1"
 HEX64 = re.compile(r"[0-9a-f]{64}")
-VALIDATOR_ID = re.compile(r"ed0120[0-9a-f]{64}")
+HASH_LITERAL = re.compile(r"hash:[0-9A-F]{64}#[0-9A-F]{4}")
+UPPER_HEX64 = re.compile(r"[0-9A-F]{64}")
 CANONICAL_DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?")
 WATCH_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:@/#-]{2,127}")
 SAMPLE_KEYS = {
     "sampled_at", "monitoring_sampled_at", "monitoring_sequence",
     "status_block_height", "status_queue_size", "status_queue_queued",
     "status_queue_inflight", "status_time_since_last_block_ms",
-    "canonical_height", "canonical_phase", "commit_qc_height",
-    "highest_qc_height", "proposal_queue_depth", "tx_queue_depth",
-    "oldest_queue_age_ms", "validators", "validator_set_sha256",
+    "sumeragi", "validators", "validator_set_sha256",
     "api_failures", "oracles", "balances", "readonly_routes", "trader_api",
     "shared_derivatives_regression", "derivatives_pause_mode",
 }
 VALIDATOR_KEYS = {
-    "id", "status_block_height", "canonical_height", "commit_qc_height",
-    "highest_qc_height", "finality_age_ms", "status_queue_size",
-    "status_queue_queued", "status_queue_inflight", "proposal_queue_depth",
-    "tx_queue_depth", "oldest_queue_age_ms", "lane_backlog", "api_failures",
+    "id", "status_block_height", "finality_age_ms", "status_queue_size",
+    "status_queue_queued", "status_queue_inflight", "sumeragi", "api_failures",
 }
 MONITORING_KEYS = {
     "schema", "sampled_at", "sequence", "bindings", "validator_set_sha256",
     "validators", "api_failures", "oracles", "balances", "readonly_routes",
     "shared_derivatives_regression",
 }
+SUMERAGI_STATUS_REQUIRED_KEYS = {
+    "protocol_version", "node_fingerprint", "build_fingerprint", "config_fingerprint",
+    "restart_required", "height_context_id", "height", "view", "phase", "leader",
+    "body_state", "last_committed_height", "height_context", "liveness",
+}
+SUMERAGI_STATUS_OPTIONAL_KEYS = {
+    "locked_prepare_qc", "highest_prepare_qc", "last_timeout_certificate",
+    "pending_persistence_id", "last_committed_subject", "last_commit_qc",
+}
+SUMERAGI_PHASES = {
+    "awaiting_proposal", "reconstructing_payload", "validating_payload", "prepare",
+    "commit", "pending_apply",
+}
+SUMERAGI_BODY_STATES = {
+    "missing", "reconstructing", "stored", "validated", "pending_apply", "applied",
+}
+SUMERAGI_WORK_STAGES = {"idle", "queued", "running", "complete"}
+SUMERAGI_WORK_KEYS = {
+    "candidate", "body_recovery", "body_store", "validation", "application",
+    "successor_height",
+}
+SUMERAGI_QUEUE_KINDS = {
+    "ingress", "deferred_normal", "deferred_progress", "deferred_completion",
+    "runtime_normal", "runtime_progress", "runtime_completion", "effect_completion",
+    "network_ingress", "effect_dispatch",
+}
+SUMERAGI_BLOCKERS = {
+    "missing_proposal", "body_unavailable", "prepare_quorum_missing",
+    "commit_quorum_missing", "timeout_certificate_missing", "scheduler_starvation",
+    "application_pending", "successor_activation_pending", "local_control_pending",
+}
+SUMERAGI_IGNORE_REASONS = {
+    "wrong_height", "wrong_view", "stale_generation", "busy", "duplicate",
+    "no_matching_work", "observer", "view_closed", "already_decided",
+    "recovery_pending", "irrelevant_view", "unsafe_proposal",
+}
+SUMERAGI_OUTBOUND_INTENT_KINDS = {
+    "proposal", "prepare_vote", "commit_vote", "prepare_qc", "commit_qc",
+    "timeout_vote", "timeout_certificate",
+}
+SUMERAGI_OUTBOUND_INTENT_STAGES = {
+    "pending_persistence", "pending_signature", "queued", "sent",
+}
+SUMERAGI_PROGRESS_TRANSITIONS = {
+    "proposal_admitted", "body_available", "body_stored", "body_validated",
+    "prepare_vote_admitted", "commit_vote_admitted", "timeout_vote_admitted",
+    "prepare_quorum", "lock_installed", "commit_quorum",
+    "timeout_certificate_installed", "decision_persisted", "applied",
+    "successor_height_activated", "recovery_replayed",
+}
+SUMERAGI_NATIVE_AMX_EMPTY_ROOT = (
+    "hash:45A5D35A09D284480FBA74A402D7F303B82DA0C153FC1E1083AEFC822ED07C2D#7C0F"
+)
+SUMERAGI_UINT32_MAX = (1 << 32) - 1
+SUMERAGI_UINT64_MAX = (1 << 64) - 1
+SUMERAGI_LIVENESS_REQUIRED_KEYS = {
+    "generation", "prepare_quorums", "commit_quorums", "timeout_quorums",
+    "outbound_intents", "work", "queues", "no_progress_age_ms", "ignore_counts",
+}
+SUMERAGI_LIVENESS_OPTIONAL_KEYS = {"last_progress", "blocker"}
 FORBIDDEN_OVERRIDE_NAMES = (
     "SORASWAP_PRODUCTION_OBSERVATION_DURATION_SECS",
     "SORASWAP_PRODUCTION_OBSERVATION_INTERVAL_SECS",
@@ -399,6 +456,740 @@ def require_object(value: object, label: str) -> dict:
     return value
 
 
+def require_hash_literal(value: object, label: str) -> str:
+    if not isinstance(value, str) or HASH_LITERAL.fullmatch(value) is None:
+        fail(f"{label} must be a canonical Iroha hash literal")
+    return value
+
+
+def require_tagged_unit(
+    value: object,
+    *,
+    label: str,
+    tag: str,
+    allowed: set[str],
+) -> str:
+    if not isinstance(value, dict):
+        fail(f"{label} is not the exact current tagged-enum shape")
+    payload = value
+    if set(payload) != {tag, "details"} or payload.get("details") is not None \
+            or payload.get(tag) not in allowed:
+        fail(f"{label} is not the exact current tagged-enum shape")
+    return payload[tag]
+
+
+def require_exact_object(
+    value: object,
+    label: str,
+    required: set[str],
+    optional: set[str] | None = None,
+) -> dict:
+    payload = require_object(value, label)
+    optional = optional or set()
+    keys = set(payload)
+    if not required <= keys or not keys <= required | optional:
+        fail(f"{label} fields do not match the current Iroha API")
+    return payload
+
+
+def require_bounded_integer(
+    value: object,
+    label: str,
+    maximum: int,
+    *,
+    positive: bool = False,
+) -> int:
+    integer = (
+        require_positive_integer(value, label)
+        if positive
+        else require_nonnegative_integer(value, label)
+    )
+    if integer > maximum:
+        fail(f"{label} exceeds the current Iroha integer bound")
+    return integer
+
+
+def validate_height_context_id(value: object, label: str) -> list:
+    if not isinstance(value, list) or len(value) != 1:
+        fail(f"{label} must be the exact one-hash tuple")
+    require_hash_literal(value[0], label)
+    return value
+
+
+def validate_consensus_round(value: object, label: str) -> dict:
+    round_status = require_exact_object(
+        value, label, {"context_id", "height", "view"}
+    )
+    validate_height_context_id(round_status.get("context_id"), f"{label} context_id")
+    require_bounded_integer(
+        round_status.get("height"), f"{label} height", SUMERAGI_UINT64_MAX, positive=True
+    )
+    require_bounded_integer(
+        round_status.get("view"), f"{label} view", SUMERAGI_UINT64_MAX
+    )
+    return round_status
+
+
+def validate_block_subject(value: object, label: str) -> dict:
+    subject = require_exact_object(
+        value, label, {"parent_block_hash", "block_hash", "payload_hash"}
+    )
+    parent = subject.get("parent_block_hash")
+    if parent is not None:
+        require_hash_literal(parent, f"{label} parent_block_hash")
+    require_hash_literal(subject.get("block_hash"), f"{label} block_hash")
+    require_hash_literal(subject.get("payload_hash"), f"{label} payload_hash")
+    return subject
+
+
+def validate_merkle_tree_commitment(value: object, label: str) -> dict:
+    commitment = require_exact_object(value, label, {"root", "leaf_count"})
+    require_hash_literal(commitment.get("root"), f"{label} root")
+    require_bounded_integer(
+        commitment.get("leaf_count"),
+        f"{label} leaf_count",
+        SUMERAGI_UINT64_MAX,
+        positive=True,
+    )
+    return commitment
+
+
+def validate_execution_commitment(value: object, label: str) -> dict:
+    required = {
+        "parent_state_root", "post_state_root", "ordinary_writes_root",
+        "topup_anchor_root", "topup_anchor_count",
+        "native_amx_application_manifest_version",
+        "native_amx_application_manifest_root",
+        "native_amx_application_manifest_count", "lane_finality_manifest",
+        "merge_carrier", "executed_block_wire_len", "executed_block_wire_hash",
+    }
+    commitment = require_exact_object(value, label, required)
+    for field in (
+        "parent_state_root", "post_state_root", "ordinary_writes_root",
+        "native_amx_application_manifest_root", "executed_block_wire_hash",
+    ):
+        require_hash_literal(commitment.get(field), f"{label} {field}")
+
+    topup_count = require_bounded_integer(
+        commitment.get("topup_anchor_count"), f"{label} topup_anchor_count", 16
+    )
+    topup_root = commitment.get("topup_anchor_root")
+    if topup_root is not None:
+        require_hash_literal(topup_root, f"{label} topup_anchor_root")
+    if (topup_count == 0) != (topup_root is None):
+        fail(f"{label} top-up root/count projection is inconsistent")
+
+    if commitment.get("native_amx_application_manifest_version") != 1:
+        fail(f"{label} native AMX application manifest version is not current")
+    native_count = require_bounded_integer(
+        commitment.get("native_amx_application_manifest_count"),
+        f"{label} native_amx_application_manifest_count",
+        1024,
+    )
+    native_root = commitment["native_amx_application_manifest_root"]
+    if (native_count == 0) != (native_root == SUMERAGI_NATIVE_AMX_EMPTY_ROOT):
+        fail(f"{label} native AMX application manifest root/count is inconsistent")
+
+    lane_manifest = commitment.get("lane_finality_manifest")
+    if lane_manifest is not None:
+        validate_merkle_tree_commitment(
+            lane_manifest, f"{label} lane_finality_manifest"
+        )
+    merge_carrier = commitment.get("merge_carrier")
+    if merge_carrier is not None:
+        merge = require_exact_object(
+            merge_carrier, f"{label} merge_carrier", {"version", "entry_hash"}
+        )
+        if merge.get("version") != 1:
+            fail(f"{label} merge carrier version is not current")
+        require_hash_literal(merge.get("entry_hash"), f"{label} merge_carrier entry_hash")
+    require_bounded_integer(
+        commitment.get("executed_block_wire_len"),
+        f"{label} executed_block_wire_len",
+        SUMERAGI_UINT64_MAX,
+        positive=True,
+    )
+    return commitment
+
+
+def validate_quorum_certificate_ref(value: object, label: str) -> dict:
+    certificate = require_exact_object(
+        value,
+        label,
+        {"round", "proposal_round", "phase", "subject", "execution_commitment"},
+    )
+    validate_consensus_round(certificate.get("round"), f"{label} round")
+    validate_consensus_round(
+        certificate.get("proposal_round"), f"{label} proposal_round"
+    )
+    require_tagged_unit(
+        certificate.get("phase"),
+        label=f"{label} phase",
+        tag="phase",
+        allowed={"prepare", "commit"},
+    )
+    validate_block_subject(certificate.get("subject"), f"{label} subject")
+    validate_execution_commitment(
+        certificate.get("execution_commitment"), f"{label} execution_commitment"
+    )
+    return certificate
+
+
+def validate_timeout_certificate_ref(value: object, label: str) -> dict:
+    certificate = require_exact_object(
+        value, label, {"round", "highest_prepare_qc", "certificate_hash"}
+    )
+    validate_consensus_round(certificate.get("round"), f"{label} round")
+    highest = certificate.get("highest_prepare_qc")
+    if highest is not None:
+        validate_quorum_certificate_ref(highest, f"{label} highest_prepare_qc")
+    require_hash_literal(certificate.get("certificate_hash"), f"{label} certificate_hash")
+    return certificate
+
+
+def validate_partial_quorum_fields(value: dict, label: str) -> tuple[int, int, int, int]:
+    signer_count = require_bounded_integer(
+        value.get("signer_count"), f"{label} signer_count", 31
+    )
+    signed_power = require_bounded_integer(
+        value.get("signed_power"), f"{label} signed_power", SUMERAGI_UINT64_MAX
+    )
+    min_signers = require_bounded_integer(
+        value.get("min_signers"), f"{label} min_signers", 31, positive=True
+    )
+    total_power = require_bounded_integer(
+        value.get("total_power"),
+        f"{label} total_power",
+        SUMERAGI_UINT64_MAX,
+        positive=True,
+    )
+    return signer_count, signed_power, min_signers, total_power
+
+
+def validate_vote_quorum_status(value: object, label: str) -> dict:
+    quorum = require_exact_object(
+        value,
+        label,
+        {
+            "round", "proposal_round", "subject", "execution_commitment",
+            "signer_count", "signed_power", "min_signers", "total_power",
+        },
+    )
+    validate_consensus_round(quorum.get("round"), f"{label} round")
+    validate_consensus_round(quorum.get("proposal_round"), f"{label} proposal_round")
+    validate_block_subject(quorum.get("subject"), f"{label} subject")
+    validate_execution_commitment(
+        quorum.get("execution_commitment"), f"{label} execution_commitment"
+    )
+    validate_partial_quorum_fields(quorum, label)
+    return quorum
+
+
+def validate_timeout_quorum_status(value: object, label: str) -> dict:
+    quorum = require_exact_object(
+        value,
+        label,
+        {
+            "round", "signer_count", "signed_power", "min_signers", "total_power",
+            "certificate_formed",
+        },
+    )
+    validate_consensus_round(quorum.get("round"), f"{label} round")
+    validate_partial_quorum_fields(quorum, label)
+    if not isinstance(quorum.get("certificate_formed"), bool):
+        fail(f"{label} certificate_formed must be boolean")
+    return quorum
+
+
+def validate_outbound_intent_status(value: object, label: str) -> tuple[dict, str]:
+    intent = require_exact_object(
+        value,
+        label,
+        {"kind", "round", "stage"},
+        {"proposal_round", "subject", "execution_commitment"},
+    )
+    kind = require_tagged_unit(
+        intent.get("kind"),
+        label=f"{label} kind",
+        tag="kind",
+        allowed=SUMERAGI_OUTBOUND_INTENT_KINDS,
+    )
+    validate_consensus_round(intent.get("round"), f"{label} round")
+    require_tagged_unit(
+        intent.get("stage"),
+        label=f"{label} stage",
+        tag="stage",
+        allowed=SUMERAGI_OUTBOUND_INTENT_STAGES,
+    )
+    optional_fields = {"proposal_round", "subject", "execution_commitment"}
+    observed_optional = set(intent) & optional_fields
+    if kind == "proposal":
+        expected_optional = {"proposal_round", "subject"}
+    elif kind in {"timeout_vote", "timeout_certificate"}:
+        expected_optional = set()
+    else:
+        expected_optional = optional_fields
+    if observed_optional != expected_optional:
+        fail(f"{label} fields do not match the current outbound-intent kind")
+    if "proposal_round" in intent:
+        validate_consensus_round(intent["proposal_round"], f"{label} proposal_round")
+    if "subject" in intent:
+        validate_block_subject(intent["subject"], f"{label} subject")
+    if "execution_commitment" in intent:
+        validate_execution_commitment(
+            intent["execution_commitment"], f"{label} execution_commitment"
+        )
+    return intent, kind
+
+
+def validate_progress_status(value: object, label: str) -> tuple[dict, str]:
+    progress = require_exact_object(
+        value, label, {"generation", "round", "transition", "age_ms"}
+    )
+    require_bounded_integer(
+        progress.get("generation"), f"{label} generation", SUMERAGI_UINT64_MAX
+    )
+    validate_consensus_round(progress.get("round"), f"{label} round")
+    transition = require_tagged_unit(
+        progress.get("transition"),
+        label=f"{label} transition",
+        tag="transition",
+        allowed=SUMERAGI_PROGRESS_TRANSITIONS,
+    )
+    require_bounded_integer(
+        progress.get("age_ms"), f"{label} age_ms", SUMERAGI_UINT64_MAX
+    )
+    return progress, transition
+
+
+def validate_sumeragi_v2_status(value: object, label: str) -> dict:
+    status = require_object(value, label)
+    keys = set(status)
+    if not SUMERAGI_STATUS_REQUIRED_KEYS <= keys \
+            or not keys <= SUMERAGI_STATUS_REQUIRED_KEYS | SUMERAGI_STATUS_OPTIONAL_KEYS:
+        fail(f"{label} fields do not match SumeragiV2Status")
+    if status.get("protocol_version") != 4:
+        fail(f"{label} protocol_version must be the current Sumeragi v2 protocol version 4")
+    for field in ("node_fingerprint", "build_fingerprint", "config_fingerprint"):
+        require_hash_literal(status.get(field), f"{label} {field}")
+    if not isinstance(status.get("restart_required"), bool):
+        fail(f"{label} restart_required must be boolean")
+    context_id = validate_height_context_id(
+        status.get("height_context_id"), f"{label} height_context_id"
+    )
+    height = require_bounded_integer(
+        status.get("height"), f"{label} height", SUMERAGI_UINT64_MAX, positive=True
+    )
+    view = require_bounded_integer(
+        status.get("view"), f"{label} view", SUMERAGI_UINT64_MAX
+    )
+    phase = require_tagged_unit(
+        status.get("phase"), label=f"{label} phase", tag="phase", allowed=SUMERAGI_PHASES
+    )
+    leader = require_bounded_integer(
+        status.get("leader"), f"{label} leader", SUMERAGI_UINT32_MAX
+    )
+    body_state = require_tagged_unit(
+        status.get("body_state"),
+        label=f"{label} body_state",
+        tag="state",
+        allowed=SUMERAGI_BODY_STATES,
+    )
+    valid_phase_body = {
+        "awaiting_proposal": {"missing"},
+        "reconstructing_payload": {"reconstructing"},
+        "validating_payload": {"stored"},
+        "prepare": {"validated"},
+        "commit": {"validated"},
+        "pending_apply": {"pending_apply", "applied"},
+    }
+    if body_state not in valid_phase_body[phase]:
+        fail(f"{label} phase/body_state pairing is invalid")
+    committed_height = require_bounded_integer(
+        status.get("last_committed_height"),
+        f"{label} last_committed_height",
+        SUMERAGI_UINT64_MAX,
+    )
+    if phase == "pending_apply":
+        if committed_height != height:
+            fail(f"{label} pending_apply commit frontier is inconsistent")
+    elif committed_height >= height:
+        fail(f"{label} active height must be above its committed frontier")
+
+    height_context = require_object(status.get("height_context"), f"{label} height_context")
+    if set(height_context) != {
+        "epoch", "epoch_end_height", "mode", "epoch_seed", "validator_count", "quorum"
+    }:
+        fail(f"{label} height_context fields do not match SumeragiV2HeightContextStatus")
+    require_bounded_integer(
+        height_context.get("epoch"),
+        f"{label} height_context epoch",
+        SUMERAGI_UINT64_MAX,
+    )
+    epoch_end = require_bounded_integer(
+        height_context.get("epoch_end_height"),
+        f"{label} height_context epoch_end_height",
+        SUMERAGI_UINT64_MAX,
+        positive=True,
+    )
+    if epoch_end < height:
+        fail(f"{label} height_context epoch ends before the active height")
+    require_tagged_unit(
+        height_context.get("mode"),
+        label=f"{label} height_context mode",
+        tag="mode",
+        allowed={"permissioned", "npos"},
+    )
+    epoch_seed = height_context.get("epoch_seed")
+    if not isinstance(epoch_seed, str) or UPPER_HEX64.fullmatch(epoch_seed) is None:
+        fail(f"{label} height_context epoch_seed must be canonical uppercase hex")
+    validator_count = require_bounded_integer(
+        height_context.get("validator_count"),
+        f"{label} height_context validator_count",
+        SUMERAGI_UINT32_MAX,
+        positive=True,
+    )
+    if validator_count < 4 or validator_count > 31 or validator_count % 3 != 1:
+        fail(f"{label} height_context validator_count is not a bounded 3f+1 roster")
+    if leader >= validator_count:
+        fail(f"{label} leader is outside the frozen validator roster")
+    quorum = require_object(height_context.get("quorum"), f"{label} height_context quorum")
+    expected_min_signers = 2 * ((validator_count - 1) // 3) + 1
+    if set(quorum) != {"min_signers", "total_power"} \
+            or quorum.get("min_signers") != expected_min_signers \
+            or quorum.get("total_power") != validator_count:
+        fail(f"{label} height_context quorum is not the canonical equal-vote quorum")
+
+    locked_prepare_qc = None
+    if "locked_prepare_qc" in status:
+        locked_prepare_qc = validate_quorum_certificate_ref(
+            status["locked_prepare_qc"], f"{label} locked_prepare_qc"
+        )
+    highest_prepare_qc = None
+    if "highest_prepare_qc" in status:
+        highest_prepare_qc = validate_quorum_certificate_ref(
+            status["highest_prepare_qc"], f"{label} highest_prepare_qc"
+        )
+
+    def validate_active_prepare(certificate: dict, certificate_label: str) -> None:
+        round_status = certificate["round"]
+        if round_status["context_id"] != context_id:
+            fail(f"{certificate_label} context does not match the active height")
+        if round_status["height"] != height:
+            fail(f"{certificate_label} height does not match the active height")
+        if certificate["phase"]["phase"] != "prepare":
+            fail(f"{certificate_label} is not a PrepareQC")
+        if certificate["proposal_round"] != round_status:
+            fail(f"{certificate_label} proposal round differs from its voting round")
+        if round_status["view"] > view:
+            fail(f"{certificate_label} belongs to a future view")
+
+    if locked_prepare_qc is not None:
+        validate_active_prepare(locked_prepare_qc, f"{label} locked_prepare_qc")
+    if highest_prepare_qc is not None:
+        validate_active_prepare(highest_prepare_qc, f"{label} highest_prepare_qc")
+    if locked_prepare_qc is not None and highest_prepare_qc is None:
+        fail(f"{label} locked_prepare_qc requires highest_prepare_qc")
+    if locked_prepare_qc is not None and highest_prepare_qc is not None:
+        locked_view = locked_prepare_qc["round"]["view"]
+        highest_view = highest_prepare_qc["round"]["view"]
+        if locked_view > highest_view \
+                or (locked_view == highest_view and locked_prepare_qc != highest_prepare_qc):
+            fail(f"{label} PrepareQC lock/highest relationship is invalid")
+    if phase == "commit" and locked_prepare_qc is None:
+        fail(f"{label} commit phase does not carry its persisted PrepareQC lock")
+    if phase == "prepare" and locked_prepare_qc is not None:
+        fail(f"{label} prepare phase unexpectedly carries a PrepareQC lock")
+
+    if "last_timeout_certificate" in status:
+        timeout = validate_timeout_certificate_ref(
+            status["last_timeout_certificate"], f"{label} last_timeout_certificate"
+        )
+        timeout_round = timeout["round"]
+        if timeout_round["context_id"] != context_id \
+                or timeout_round["height"] != height \
+                or timeout_round["view"] >= view:
+            fail(f"{label} last_timeout_certificate does not precede the active view")
+        timeout_highest = timeout["highest_prepare_qc"]
+        if timeout_highest is not None:
+            validate_active_prepare(
+                timeout_highest, f"{label} last_timeout_certificate highest_prepare_qc"
+            )
+            if timeout_highest["round"]["view"] > timeout_round["view"]:
+                fail(f"{label} last_timeout_certificate carries a future PrepareQC")
+
+    if "pending_persistence_id" in status:
+        require_bounded_integer(
+            status["pending_persistence_id"],
+            f"{label} pending_persistence_id",
+            SUMERAGI_UINT64_MAX,
+            positive=True,
+        )
+    last_committed_subject = None
+    if "last_committed_subject" in status:
+        last_committed_subject = validate_block_subject(
+            status["last_committed_subject"], f"{label} last_committed_subject"
+        )
+    last_commit_qc = None
+    if "last_commit_qc" in status:
+        last_commit_qc = require_exact_object(
+            status["last_commit_qc"],
+            f"{label} last_commit_qc",
+            {
+                "certificate", "validator_count", "signer_count", "min_signers",
+                "signed_power", "total_power",
+            },
+        )
+        commit_certificate = validate_quorum_certificate_ref(
+            last_commit_qc.get("certificate"), f"{label} last_commit_qc certificate"
+        )
+        commit_validator_count = require_bounded_integer(
+            last_commit_qc.get("validator_count"),
+            f"{label} last_commit_qc validator_count",
+            31,
+            positive=True,
+        )
+        commit_signer_count, commit_signed_power, commit_min_signers, commit_total_power = (
+            validate_partial_quorum_fields(last_commit_qc, f"{label} last_commit_qc")
+        )
+        canonical_commit_min = 2 * ((commit_validator_count - 1) // 3) + 1
+        if commit_validator_count < 4 or commit_validator_count % 3 != 1 \
+                or commit_min_signers != canonical_commit_min \
+                or commit_signer_count != commit_min_signers \
+                or commit_signer_count > commit_validator_count \
+                or commit_signed_power != commit_signer_count \
+                or commit_total_power != commit_validator_count:
+            fail(f"{label} last_commit_qc quorum projection is invalid")
+        if commit_certificate["phase"]["phase"] != "commit" \
+                or commit_certificate["round"]["height"] != committed_height \
+                or commit_certificate["proposal_round"] != commit_certificate["round"]:
+            fail(f"{label} last_commit_qc certificate does not authenticate the commit frontier")
+        if committed_height == height \
+                and commit_certificate["round"]["context_id"] != context_id:
+            fail(f"{label} last_commit_qc context differs from the active commit frontier")
+        if commit_certificate["round"]["context_id"] == context_id \
+                and (
+                    commit_validator_count != validator_count
+                    or commit_min_signers != expected_min_signers
+                    or commit_total_power != validator_count
+                ):
+            fail(f"{label} last_commit_qc quorum differs from the active height context")
+
+    if (last_committed_subject is None) != (last_commit_qc is None):
+        fail(f"{label} commit frontier authentication is incomplete")
+    if committed_height == 0 and last_committed_subject is not None:
+        fail(f"{label} genesis commit frontier unexpectedly carries authentication")
+    if last_commit_qc is not None:
+        if last_commit_qc["certificate"]["subject"] != last_committed_subject:
+            fail(f"{label} last_commit_qc subject differs from the commit frontier")
+    if phase == "pending_apply" \
+            and (last_committed_subject is None or last_commit_qc is None):
+        fail(f"{label} pending_apply commit frontier is unauthenticated")
+
+    liveness = require_object(status.get("liveness"), f"{label} liveness")
+    liveness_keys = set(liveness)
+    if not SUMERAGI_LIVENESS_REQUIRED_KEYS <= liveness_keys \
+            or not liveness_keys <= SUMERAGI_LIVENESS_REQUIRED_KEYS | SUMERAGI_LIVENESS_OPTIONAL_KEYS:
+        fail(f"{label} liveness fields do not match SumeragiV2LivenessStatus")
+    generation = require_bounded_integer(
+        liveness.get("generation"),
+        f"{label} liveness generation",
+        SUMERAGI_UINT64_MAX,
+    )
+
+    def validate_liveness_round(
+        round_status: dict, round_label: str, *, allow_future_finality: bool = False
+    ) -> None:
+        if round_status["context_id"] != context_id or round_status["height"] != height:
+            fail(f"{round_label} does not belong to the active height context")
+        if not allow_future_finality and round_status["view"] > view:
+            fail(f"{round_label} belongs to a future view")
+
+    for field, maximum in (
+        ("prepare_quorums", 31), ("commit_quorums", 32), ("timeout_quorums", 31),
+        ("outbound_intents", 7),
+    ):
+        rows = liveness.get(field)
+        if not isinstance(rows, list) or len(rows) > maximum:
+            fail(f"{label} liveness {field} must be a bounded array of current typed records")
+
+    for field in ("prepare_quorums", "commit_quorums"):
+        for index, raw_quorum in enumerate(liveness[field], 1):
+            quorum_status = validate_vote_quorum_status(
+                raw_quorum, f"{label} liveness {field} {index}"
+            )
+            validate_liveness_round(
+                quorum_status["round"], f"{label} liveness {field} {index} round"
+            )
+            validate_liveness_round(
+                quorum_status["proposal_round"],
+                f"{label} liveness {field} {index} proposal_round",
+            )
+            signer_count, signed_power, min_signers, total_power = (
+                validate_partial_quorum_fields(
+                    quorum_status, f"{label} liveness {field} {index}"
+                )
+            )
+            if quorum_status["proposal_round"] != quorum_status["round"] \
+                    or signer_count > validator_count \
+                    or signed_power != signer_count \
+                    or min_signers != expected_min_signers \
+                    or total_power != validator_count:
+                fail(f"{label} liveness {field} {index} quorum projection is invalid")
+
+    for index, raw_quorum in enumerate(liveness["timeout_quorums"], 1):
+        quorum_status = validate_timeout_quorum_status(
+            raw_quorum, f"{label} liveness timeout_quorums {index}"
+        )
+        validate_liveness_round(
+            quorum_status["round"], f"{label} liveness timeout_quorums {index} round"
+        )
+        signer_count, signed_power, min_signers, total_power = (
+            validate_partial_quorum_fields(
+                quorum_status, f"{label} liveness timeout_quorums {index}"
+            )
+        )
+        if signer_count > validator_count \
+                or signed_power != signer_count \
+                or min_signers != expected_min_signers \
+                or total_power != validator_count \
+                or (quorum_status["certificate_formed"] and signer_count < min_signers):
+            fail(f"{label} liveness timeout_quorums {index} quorum projection is invalid")
+
+    for index, raw_intent in enumerate(liveness["outbound_intents"], 1):
+        intent, intent_kind = validate_outbound_intent_status(
+            raw_intent, f"{label} liveness outbound_intents {index}"
+        )
+        validate_liveness_round(
+            intent["round"],
+            f"{label} liveness outbound_intents {index} round",
+            allow_future_finality=intent_kind == "commit_qc",
+        )
+        if "proposal_round" in intent:
+            validate_liveness_round(
+                intent["proposal_round"],
+                f"{label} liveness outbound_intents {index} proposal_round",
+                allow_future_finality=True,
+            )
+            if intent["proposal_round"] != intent["round"]:
+                fail(f"{label} liveness outbound_intents {index} proposal round is invalid")
+    work = require_object(liveness.get("work"), f"{label} liveness work")
+    if set(work) != SUMERAGI_WORK_KEYS:
+        fail(f"{label} liveness work fields do not match SumeragiV2WorkStatus")
+    for field in SUMERAGI_WORK_KEYS:
+        require_tagged_unit(
+            work.get(field),
+            label=f"{label} liveness work {field}",
+            tag="stage",
+            allowed=SUMERAGI_WORK_STAGES,
+        )
+    queues = liveness.get("queues")
+    if not isinstance(queues, list) or len(queues) > len(SUMERAGI_QUEUE_KINDS):
+        fail(f"{label} liveness queues are malformed")
+    observed_queues: set[str] = set()
+    for index, raw_queue in enumerate(queues, 1):
+        queue = require_object(raw_queue, f"{label} liveness queue {index}")
+        if set(queue) not in (
+            {"queue", "depth", "capacity", "service_debt"},
+            {"queue", "depth", "capacity", "oldest_age_ms", "service_debt"},
+        ):
+            fail(f"{label} liveness queue {index} fields do not match SumeragiV2QueueStatus")
+        queue_kind = require_tagged_unit(
+            queue.get("queue"),
+            label=f"{label} liveness queue {index} kind",
+            tag="queue",
+            allowed=SUMERAGI_QUEUE_KINDS,
+        )
+        if queue_kind in observed_queues:
+            fail(f"{label} liveness queue kinds are duplicated")
+        observed_queues.add(queue_kind)
+        depth = require_bounded_integer(
+            queue.get("depth"),
+            f"{label} liveness queue {index} depth",
+            SUMERAGI_UINT32_MAX,
+        )
+        capacity = require_bounded_integer(
+            queue.get("capacity"),
+            f"{label} liveness queue {index} capacity",
+            SUMERAGI_UINT32_MAX,
+            positive=True,
+        )
+        require_bounded_integer(
+            queue.get("service_debt"),
+            f"{label} liveness queue {index} service_debt",
+            SUMERAGI_UINT64_MAX,
+        )
+        if depth > capacity or (depth == 0) != ("oldest_age_ms" not in queue):
+            fail(f"{label} liveness queue {index} occupancy is inconsistent")
+        if "oldest_age_ms" in queue:
+            require_bounded_integer(
+                queue["oldest_age_ms"],
+                f"{label} liveness queue {index} oldest_age_ms",
+                SUMERAGI_UINT64_MAX,
+            )
+    require_bounded_integer(
+        liveness.get("no_progress_age_ms"),
+        f"{label} liveness no_progress_age_ms",
+        SUMERAGI_UINT64_MAX,
+    )
+    if "blocker" in liveness:
+        require_tagged_unit(
+            liveness["blocker"],
+            label=f"{label} liveness blocker",
+            tag="blocker",
+            allowed=SUMERAGI_BLOCKERS,
+        )
+    ignore_counts = liveness.get("ignore_counts")
+    if not isinstance(ignore_counts, list) or len(ignore_counts) > len(SUMERAGI_IGNORE_REASONS):
+        fail(f"{label} liveness ignore_counts are malformed")
+    observed_reasons: set[str] = set()
+    for index, raw_entry in enumerate(ignore_counts, 1):
+        entry = require_object(raw_entry, f"{label} liveness ignore count {index}")
+        if set(entry) != {"reason", "count"}:
+            fail(f"{label} liveness ignore count {index} fields are malformed")
+        reason = require_tagged_unit(
+            entry.get("reason"),
+            label=f"{label} liveness ignore count {index} reason",
+            tag="reason",
+            allowed=SUMERAGI_IGNORE_REASONS,
+        )
+        if reason in observed_reasons:
+            fail(f"{label} liveness ignore reasons are duplicated")
+        observed_reasons.add(reason)
+        require_bounded_integer(
+            entry.get("count"),
+            f"{label} liveness ignore count {index}",
+            SUMERAGI_UINT64_MAX,
+        )
+    if "last_progress" in liveness:
+        progress, transition = validate_progress_status(
+            liveness["last_progress"], f"{label} liveness last_progress"
+        )
+        validate_liveness_round(
+            progress["round"],
+            f"{label} liveness last_progress round",
+            allow_future_finality=transition in {"commit_quorum", "decision_persisted"},
+        )
+        if progress["generation"] > generation:
+            fail(f"{label} liveness last_progress belongs to a future generation")
+    return status
+
+
+def require_healthy_sumeragi_v2_status(status: dict, label: str, maximum_age_ms: int) -> None:
+    if status["restart_required"]:
+        fail(f"{label} requires a Sumeragi restart")
+    liveness = status["liveness"]
+    if "blocker" in liveness:
+        fail(f"{label} reports a Sumeragi v2 liveness blocker")
+    if liveness["no_progress_age_ms"] > maximum_age_ms:
+        fail(f"{label} Sumeragi v2 no-progress age exceeded the approved maximum")
+    for queue in liveness["queues"]:
+        if queue["depth"] >= queue["capacity"]:
+            fail(f"{label} Sumeragi v2 queue reached capacity")
+        if queue.get("oldest_age_ms", 0) > maximum_age_ms:
+            fail(f"{label} Sumeragi v2 queue age exceeded the approved maximum")
+
+
 def routes_sha256(routes: object) -> str:
     if not isinstance(routes, list) or not routes:
         fail("trader API routes must be a non-empty array")
@@ -466,16 +1257,8 @@ def collect_live_sample(
         return {"sampled_at": sampled_at, "api_failures": len(failures), "errors": failures}
     block_height = require_positive_integer(responses["blocks"], "/status/blocks response")
     status = require_object(responses["status"], "/status response")
-    sumeragi = require_object(responses["sumeragi"], "Sumeragi response")
+    sumeragi = validate_sumeragi_v2_status(responses["sumeragi"], "Sumeragi response")
     monitoring = require_object(responses["monitoring"], "monitoring response")
-    canonical = require_object(sumeragi.get("canonical"), "Sumeragi canonical")
-    commit_qc = require_object(sumeragi.get("commit_qc"), "Sumeragi commit_qc")
-    highest_qc = require_object(sumeragi.get("highest_qc"), "Sumeragi highest_qc")
-    proposal_gate = require_object(sumeragi.get("proposal_gate"), "Sumeragi proposal_gate")
-    tx_queue = require_object(sumeragi.get("tx_queue"), "Sumeragi tx_queue")
-    phase = canonical.get("phase")
-    if not isinstance(phase, str) or not phase:
-        fail("Sumeragi canonical.phase must be a non-empty string")
     if set(monitoring) != MONITORING_KEYS or monitoring.get("schema") != MONITORING_SCHEMA:
         fail("monitoring response schema is invalid")
     if monitoring.get("bindings") != monitoring_bindings:
@@ -493,13 +1276,7 @@ def collect_live_sample(
         "status_queue_queued": status.get("queue_queued"),
         "status_queue_inflight": status.get("queue_inflight"),
         "status_time_since_last_block_ms": status.get("time_since_last_block_ms"),
-        "canonical_height": canonical.get("height"),
-        "canonical_phase": phase,
-        "commit_qc_height": commit_qc.get("height"),
-        "highest_qc_height": highest_qc.get("height"),
-        "proposal_queue_depth": proposal_gate.get("queue_len"),
-        "tx_queue_depth": tx_queue.get("depth"),
-        "oldest_queue_age_ms": tx_queue.get("oldest_queued_age_ms"),
+        "sumeragi": sumeragi,
         "validators": monitoring.get("validators"),
         "validator_set_sha256": monitoring.get("validator_set_sha256"),
         "api_failures": monitoring.get("api_failures"),
@@ -539,36 +1316,32 @@ def validate_sample(
         fail(f"{prefix} monitoring timestamp was repeated or moved backwards")
     if previous_monitoring_sequence is not None and sequence <= previous_monitoring_sequence:
         fail(f"{prefix} monitoring sequence was repeated or moved backwards")
-    positive_fields = (
-        "status_block_height", "canonical_height", "commit_qc_height", "highest_qc_height",
-    )
-    for field in positive_fields:
-        require_positive_integer(sample.get(field), f"{prefix} {field}")
+    require_positive_integer(sample.get("status_block_height"), f"{prefix} status_block_height")
     integer_fields = (
         "status_queue_size",
         "status_queue_queued",
         "status_queue_inflight",
         "status_time_since_last_block_ms",
-        "proposal_queue_depth",
-        "tx_queue_depth",
-        "oldest_queue_age_ms",
         "api_failures",
     )
     for field in integer_fields:
         value = sample.get(field)
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             fail(f"{prefix} {field} must be a nonnegative integer")
-    if not isinstance(sample.get("canonical_phase"), str) or not sample["canonical_phase"]:
-        fail(f"{prefix} canonical phase is missing")
     if any(sample[field] != 0 for field in (
         "status_queue_size", "status_queue_queued", "status_queue_inflight",
-        "proposal_queue_depth", "tx_queue_depth", "oldest_queue_age_ms",
     )):
-        fail(f"{prefix} queue or lane backlog did not drain to zero")
+        fail(f"{prefix} transaction queue did not drain to zero")
     if sample["api_failures"] != 0:
         fail(f"{prefix} recorded API failures")
     if sample["status_time_since_last_block_ms"] > approval["observation"]["maximum_finality_age_ms"]:
         fail(f"{prefix} public Torii finality age exceeded the approved maximum")
+    public_sumeragi = validate_sumeragi_v2_status(sample.get("sumeragi"), f"{prefix} Sumeragi")
+    require_healthy_sumeragi_v2_status(
+        public_sumeragi,
+        f"{prefix} public Torii",
+        approval["observation"]["maximum_finality_age_ms"],
+    )
     validators = sample.get("validators")
     expected_validator_count = approval["observation"]["validator_count"]
     if not isinstance(validators, list) or len(validators) != expected_validator_count:
@@ -579,50 +1352,58 @@ def validate_sample(
         validator_id = validator.get("id")
         if set(validator) != VALIDATOR_KEYS \
                 or not isinstance(validator_id, str) \
-                or VALIDATOR_ID.fullmatch(validator_id) is None \
+                or HASH_LITERAL.fullmatch(validator_id) is None \
                 or validator_id in validator_ids:
             fail(f"{prefix} validator identities are missing or duplicated")
         validator_ids.append(validator_id)
-        for field in ("status_block_height", "canonical_height", "commit_qc_height", "highest_qc_height"):
-            require_positive_integer(
-                validator.get(field), f"{prefix} validator {validator_id} {field}"
-            )
-        for field in VALIDATOR_KEYS - {
-            "id", "status_block_height", "canonical_height", "commit_qc_height", "highest_qc_height"
-        }:
+        require_positive_integer(
+            validator.get("status_block_height"),
+            f"{prefix} validator {validator_id} status_block_height",
+        )
+        for field in VALIDATOR_KEYS - {"id", "status_block_height", "sumeragi"}:
             require_nonnegative_integer(
                 validator.get(field), f"{prefix} validator {validator_id} {field}"
             )
+        validator_sumeragi = validate_sumeragi_v2_status(
+            validator.get("sumeragi"), f"{prefix} validator {validator_id} Sumeragi"
+        )
+        if validator_sumeragi["node_fingerprint"] != validator_id:
+            fail(f"{prefix} validator identity does not match its Sumeragi node fingerprint")
+        require_healthy_sumeragi_v2_status(
+            validator_sumeragi,
+            f"{prefix} validator {validator_id}",
+            approval["observation"]["maximum_finality_age_ms"],
+        )
         if validator["finality_age_ms"] > approval["observation"]["maximum_finality_age_ms"]:
             fail(f"{prefix} validator {validator_id} exceeded the approved finality age")
         if any(validator[field] != 0 for field in (
             "status_queue_size", "status_queue_queued", "status_queue_inflight",
-            "proposal_queue_depth", "tx_queue_depth", "oldest_queue_age_ms",
-            "lane_backlog", "api_failures",
+            "api_failures",
         )):
-            fail(f"{prefix} validator {validator_id} queue, lane, or API health is nonzero")
+            fail(f"{prefix} validator {validator_id} transaction-queue or API health is nonzero")
     if validator_ids != sorted(validator_ids):
         fail(f"{prefix} validators are not in canonical identity order")
     validator_set_hash = sha256(canonical_bytes(validator_ids))
     if sample.get("validator_set_sha256") != validator_set_hash \
             or validator_set_hash != approval["observation"]["validator_set_sha256"]:
         fail(f"{prefix} validator set does not match the signed approval")
-    consensus = {}
-    for field in ("canonical_height", "commit_qc_height", "highest_qc_height"):
-        values = {validator[field] for validator in validators}
+    validator_statuses = [validator["sumeragi"] for validator in validators]
+    shared_fields = (
+        "protocol_version", "build_fingerprint", "config_fingerprint", "height_context_id",
+        "height", "last_committed_height", "height_context",
+    )
+    for field in shared_fields:
+        values = {canonical_bytes(status[field]) for status in validator_statuses}
         if len(values) != 1:
-            fail(f"{prefix} validators disagree on {field}")
-        consensus[field] = values.pop()
-    if consensus["commit_qc_height"] != consensus["highest_qc_height"]:
-        fail(f"{prefix} commit-QC and highest-QC are not aligned")
-    canonical_lead = consensus["canonical_height"] - consensus["commit_qc_height"]
-    if canonical_lead < 0 or canonical_lead > approval["observation"]["maximum_canonical_lead"]:
-        fail(f"{prefix} canonical lead exceeds the approved bound")
-    if any(sample[field] != consensus[field] for field in consensus):
-        fail(f"{prefix} public Torii Sumeragi state differs from the validator set")
-    if sample["status_block_height"] != consensus["commit_qc_height"] \
-            or any(validator["status_block_height"] != consensus["commit_qc_height"] for validator in validators):
-        fail(f"{prefix} committed block height is incoherent with commit-QC finality")
+            fail(f"{prefix} validators disagree on Sumeragi v2 {field}")
+        if canonical_bytes(public_sumeragi[field]) not in values:
+            fail(f"{prefix} public Torii Sumeragi v2 {field} differs from the validator set")
+    if public_sumeragi["node_fingerprint"] not in validator_ids:
+        fail(f"{prefix} public Torii Sumeragi node is outside the approved validator set")
+    committed_height = public_sumeragi["last_committed_height"]
+    if sample["status_block_height"] != committed_height \
+            or any(validator["status_block_height"] != committed_height for validator in validators):
+        fail(f"{prefix} committed block height is incoherent with Sumeragi v2 finality")
 
     oracles = require_object(sample.get("oracles"), f"{prefix} oracle watch")
     if set(oracles) != {"watch_sha256", "feeds"} or not isinstance(oracles.get("feeds"), list) \
@@ -839,7 +1620,6 @@ def main() -> None:
             ("interval_seconds", INTERVAL_SECONDS),
             ("minimum_samples", MINIMUM_SAMPLES),
             ("maximum_monitoring_sample_age_seconds", 30),
-            ("maximum_canonical_lead", 1),
             ("maximum_finality_age_ms", 30000),
             ("derivatives_pause_mode", "external_fail_closed"),
         )
@@ -884,7 +1664,7 @@ def main() -> None:
         fail("observation SoraSwap RC/source does not match the signed approval")
     for key in (
         "iroha_git_sha", "bundle_name", "checksums_sha256", "manifest_sha256",
-        "irohad_sha256", "iroha_sha256", "kagami_sha256", "archive_sha256",
+        "iroha3d_sha256", "iroha_sha256", "kagami_sha256", "archive_sha256",
         "archive_sidecar_sha256",
     ):
         if approval["bindings"].get(key) != iroha_state.get(key):
@@ -1028,7 +1808,8 @@ def main() -> None:
             sample["monitoring_sampled_at"], f"sample {index} monitoring_sampled_at"
         )
         previous_monitoring_sequence = sample["monitoring_sequence"]
-    if samples[-1]["commit_qc_height"] <= samples[0]["commit_qc_height"]:
+    if samples[-1]["sumeragi"]["last_committed_height"] \
+            <= samples[0]["sumeragi"]["last_committed_height"]:
         fail("production finality did not advance during the thirty-minute observation")
     if not test_mode:
         now = dt.datetime.now(dt.timezone.utc)
@@ -1051,8 +1832,9 @@ def main() -> None:
         "completed_at": samples[-1]["sampled_at"],
         "bindings": bindings,
         "summary": {
-            "validator_qc_finality_agreement": True,
-            "queues_drained": True,
+            "sumeragi_v2_finality_agreement": True,
+            "transaction_queues_drained": True,
+            "sumeragi_v2_liveness_healthy": True,
             "api_failures": 0,
             "oracle_fresh": True,
             "minimum_fee_preserved": True,

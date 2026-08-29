@@ -29,6 +29,26 @@ for ((i = 1; i <= ${#args[@]}; i++)); do
   esac
 done
 
+manifest_arg="$manifest"
+manifest_is_repo_relative=0
+if [[ "$manifest" != /* ]]; then
+  manifest="$SORASWAP_ROOT/$manifest"
+  manifest_arg="./${manifest_arg#./}"
+  manifest_is_repo_relative=1
+fi
+for ((i = 1; i <= ${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    --manifest)
+      if (( i + 1 <= ${#args[@]} )); then
+        args[$((i + 1))]="$manifest_arg"
+      fi
+      ;;
+    --manifest=*)
+      args[$i]="--manifest=$manifest_arg"
+      ;;
+  esac
+done
+
 soraswap_require_binary_integer_setting \
   "SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD" \
   "${SORASWAP_SKIP_IROHA_DEV_TOOL_BUILD:-0}" || exit 1
@@ -144,7 +164,13 @@ if [[ -n "$profile_config" ]]; then
       exit 2
     fi
   fi
-  exec "$IROHA_CLI_BIN" -c "$profile_config" contract dev "$@"
+  if (( manifest_is_repo_relative == 1 )); then
+    cd "$SORASWAP_ROOT"
+  fi
+  exec "$IROHA_CLI_BIN" -c "$profile_config" contract dev "${args[@]}"
 fi
 
-exec "$IROHA_CLI_BIN" contract dev "$@"
+if (( manifest_is_repo_relative == 1 )); then
+  cd "$SORASWAP_ROOT"
+fi
+exec "$IROHA_CLI_BIN" contract dev "${args[@]}"

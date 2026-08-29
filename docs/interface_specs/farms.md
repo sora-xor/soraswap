@@ -3,18 +3,18 @@
 Contract: `contracts/farms/farm.ko`
 
 Public entrypoints:
+- `hajimari(stake_asset, reward_asset, treasury, reward_rate)`
 - `main() -> int`
-- `init_farm(stake_asset, reward_asset, treasury, reward_rate)`
-- `sync_slot(current_slot) -> int`
-- `fund_rewards(amount) -> int`
+- `sync_slot() -> quantity`
+- `fund_rewards(amount) -> quantity`
 - `stake(position, amount)`
 - `unstake(position, amount)`
 - `claim(position)`
-- `farm_config() -> (AssetDefinitionId, AssetDefinitionId, AccountId, int)`
-- `farm_state() -> (int, int, int, int)`
-- `mirror_position(position) -> (int, int, int, int, int, int, int, int)`
+- `farm_config() -> (AssetDefinitionId, AssetDefinitionId, AccountId, quantity)`
+- `farm_state() -> (int, int, int, decimal)`
+- `mirror_position(position) -> (int, quantity, quantity, quantity, quantity, quantity, quantity, quantity)`
 
 Notes:
-- Farm config is init-only; `configure_farm` and asset override entrypoints were removed.
+- Farm config is immutable after `hajimari(...)`.
 - Stake positions are caller-owned through `authority()`.
 - Emissions now use slot-based accrual with a global reward index, per-position reward debt, and explicit budget exhaustion through `sync_slot(...)`.

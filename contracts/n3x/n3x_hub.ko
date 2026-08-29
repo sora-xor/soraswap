@@ -187,12 +187,6 @@ seiyaku N3xHub {
     );
   }
 
-  kotoage fn bind_vault_account(AccountId vault_account) authorize("Admin") {
-    assert_initialized_impl();
-    assert_owner();
-    VaultAccount = vault_account;
-  }
-
   view fn mirror_state() -> (int, quantity, quantity, quantity, quantity, int, int, quantity, quantity, int, int, int) {
     assert_initialized_impl();
     return (
